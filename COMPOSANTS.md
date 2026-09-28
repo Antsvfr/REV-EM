@@ -128,6 +128,30 @@ flèche serait un mensonge visuel.
 **Erreur** : la bordure rouge ne porte jamais l'information seule.
 `.field-error` l'écrit et `aria-invalid="true"` la dit aux lecteurs d'écran.
 
+### Champ de recherche — `.lib-search`
+
+Une variante de `.input` qui loge une icône et un bouton d'effacement dans
+le même champ visuel : l'anneau de focus vit sur le CONTENEUR
+(`:focus-within`), l'`<input>` à l'intérieur reste transparent, sans bordure
+propre.
+
+```html
+<div class="lib-search">
+  <label class="sr-only" for="…">Rechercher une matière</label>
+  <span class="lib-search-icon">…</span>
+  <input type="search" class="lib-search-input" placeholder="…">
+  <button class="lib-search-clear" aria-label="Effacer la recherche">×</button>
+</div>
+```
+
+- `.lib-search-clear` n'apparaît dans le DOM que si le champ n'est pas vide —
+  jamais un bouton qui ne ferait rien ;
+- le libellé est un vrai `<label>` (`.sr-only`), jamais seulement un
+  placeholder ;
+- filtre dès la première lettre (événement `input`, pas de bouton, pas
+  d'Entrée) — voir `SUBJECT_SEARCH.md` pour le moteur et le pattern de
+  préservation du focus à chaque ré-rendu.
+
 ---
 
 ## 7. Encadrés

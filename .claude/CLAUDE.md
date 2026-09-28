@@ -26,15 +26,15 @@ JS autonomes chargés en `<script>` classique, dans cet ordre :
 `supabase-config.js` → SDK Supabase (CDN) → `auth.js` → `translations.js`
 → `smart-revision.js` → `statistics.js` → `planning.js` →
 `content-sources.js` → `sync-engine.js` → `source-adapters.js` →
-`user-data.js` → `command-center.js` → `quick-actions.js` → le script
-principal d'`index.html`. `ai-worker.js` est chargé séparément, à
-l'exécution, comme Web Worker. Aucun de ces modules ne modifie ce
-découpage sans raison réelle.
+`user-data.js` → `command-center.js` → `quick-actions.js` →
+`subject-search.js` → le script principal d'`index.html`. `ai-worker.js`
+est chargé séparément, à l'exécution, comme Web Worker. Aucun de ces
+modules ne modifie ce découpage sans raison réelle.
 
 **Le même patron revient partout : un moteur pur, un branchement.**
-`smart-revision.js`, `statistics.js`, `command-center.js` et
-`quick-actions.js` ne connaissent ni le DOM, ni `state`, ni la
-navigation — ils reçoivent des données et rendent un résultat. Ce qui
+`smart-revision.js`, `statistics.js`, `command-center.js`,
+`quick-actions.js` et `subject-search.js` ne connaissent ni le DOM, ni
+`state`, ni la navigation — ils reçoivent des données et rendent un résultat. Ce qui
 sait lire `state` et où mènent les choses vit dans `index.html`. C'est ce
 qui permet de tester ces moteurs sous Node, sans navigateur, en quelques
 millisecondes. Tout nouveau moteur suit ce découpage.

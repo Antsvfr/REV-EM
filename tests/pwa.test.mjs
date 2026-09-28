@@ -231,12 +231,22 @@ try {
        et selon l'environnement d'exécution, ce réseau tiers peut être
        injoignable (proxy de sandbox, pare-feu…) sans que ce soit un défaut
        du service worker lui-même. */
-    check("le cache de l'app shell (v1) existe après le premier chargement",
-      (await page.evaluate(() => caches.keys())).includes("rev-em-v1-shell"));
-
+    /* La version courante est lue dans sw.js plutôt qu'écrite en dur ici :
+       un numéro figé dans ce test se serait déjà décalé du vrai fichier une
+       fois (voir PWA.md — le service worker est passé de v1 à v2 pour la
+       recherche de "Mes matières"), cassant ce test sans rapport avec ce
+       qu'il vérifie réellement. */
     const swPath = path.join(ROOT, "sw.js");
     const original = fs.readFileSync(swPath, "utf8");
-    fs.writeFileSync(swPath, original.replace('"rev-em-v1"', '"rev-em-v1-test-update"'));
+    const versionMatch = original.match(/const CACHE_VERSION = "([^"]+)"/);
+    check("sw.js déclare bien une CACHE_VERSION lisible", !!versionMatch, original.slice(0, 200));
+    const currentVersion = versionMatch[1];
+    const nextVersion = currentVersion + "-test-update";
+
+    check(`le cache de l'app shell (${currentVersion}) existe après le premier chargement`,
+      (await page.evaluate(() => caches.keys())).includes(currentVersion + "-shell"));
+
+    fs.writeFileSync(swPath, original.replace(`"${currentVersion}"`, `"${nextVersion}"`));
     try{
       await page.evaluate(async () => { const reg = await navigator.serviceWorker.getRegistration(); await reg.update(); });
       await page.waitForTimeout(1500);
@@ -261,9 +271,9 @@ try {
 
       const finalCaches = await page.evaluate(() => caches.keys());
       check("le nouveau cache de l'app shell a pris la place de l'ancien",
-        finalCaches.includes("rev-em-v1-test-update-shell"), finalCaches);
-      check("l'ancien cache v1 a bien été purgé (activate nettoie les caches obsolètes)",
-        !finalCaches.some((k) => k.startsWith("rev-em-v1-") && !k.startsWith("rev-em-v1-test-update")), finalCaches);
+        finalCaches.includes(nextVersion + "-shell"), finalCaches);
+      check(`l'ancien cache (${currentVersion}) a bien été purgé (activate nettoie les caches obsolètes)`,
+        !finalCaches.some((k) => k.startsWith(currentVersion + "-") && !k.startsWith(nextVersion)), finalCaches);
     } finally {
       fs.writeFileSync(swPath, original);
     }
