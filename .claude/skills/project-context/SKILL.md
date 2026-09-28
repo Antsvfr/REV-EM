@@ -56,7 +56,16 @@ supabase-config.js          config locale (gitignored), URL + clé anon
 supabase-config.example.js  gabarit documenté de supabase-config.js
 supabase/migrations/000_schema.sql         473 lignes — schéma Postgres/RLS (13 tables, 1 seule réellement utilisée)
 SETUP_SUPABASE.md           guide de configuration Supabase
+manifest.webmanifest        déclaratif PWA — icônes, display:standalone, couleurs
+sw.js                       service worker — app shell hors ligne, mise à jour (voir PWA.md)
+icons/                      icônes de l'application (favicon, apple-touch-icon, any/maskable)
 ```
+
+Cette liste n'a pas été revérifiée dans son ensemble depuis l'ajout de
+`planning.js`, `content-sources.js`, `sync-engine.js`, `source-adapters.js`,
+`user-data.js`, `command-center.js` et `quick-actions.js` — vérifier
+`<script src>` dans `index.html` pour la liste réellement à jour plutôt que
+de se fier uniquement à ce tableau.
 
 Ordre de chargement des `<script>` dans `<head>` (important : chaque
 module suivant peut s'appuyer sur `window.<Précédent>`) :

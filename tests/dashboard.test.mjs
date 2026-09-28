@@ -89,6 +89,12 @@ const SEED = () => {
   /* On repart toujours de la vue par défaut : aujourd'hui, en jour. */
   state.dashPlanView = "day";
   state.dashPlanDay = null;
+  /* …et d'un écran neutre. Depuis « Que veux-tu faire ? », une session
+     laissée en cours par la vérification précédente changerait les actions
+     proposées à la suivante : chaque cas doit partir du même état. */
+  state.screen = "picker"; state.playing = null; state.pool = []; state.index = 0;
+  state.flashScreen = "picker"; state.flashDeck = null;
+  state.smartSession = null; state.planningSession = null;
   switchTab("dashboard");
   render();
 };
@@ -152,7 +158,12 @@ try {
                    memeHauteur: Math.abs(r[0].height - r[1].height) < 2,
                    plusLarge: r[0].width > r[1].width };
         })(),
-        /* Le planning vient juste après la bannière. */
+        /* L'ordre de lecture : la bannière, puis « Que veux-tu faire ? »,
+           puis le planning. On répond à la question qu'on se pose en
+           arrivant avant de dérouler la journée. */
+        bannerBeforeQa: top(banner) < top(document.getElementById("dash-quick-actions")),
+        qaBeforePlan: top(document.getElementById("dash-quick-actions"))
+                    < top(document.getElementById("dash-schedule-card")),
         bannerBeforePlan: top(banner) < top(document.getElementById("dash-schedule-card")),
         planBeforeRevision: top(document.getElementById("dash-schedule-card"))
                           < top(root.querySelector(".dash-panel--priority")),
@@ -169,18 +180,19 @@ try {
     });
 
     eq("la bannière ouvre la page", h.firstChild, "dash-banner");
-    check("quatre grandes sections structurent la page", h.blockCount === 4, h.blockCount);
+    check("cinq grandes sections structurent la page", h.blockCount === 5, h.blockCount);
     eq("leurs titres sont des h2", h.titleTags, ["H2"]);
     eq("une section est une carte, et toutes ont la même forme", h.blockShapes.length, 1);
     check("fond, filet, rayon et ombre",
       /^rgb\(255, 255, 255\)\|1px\|\d+px\|rgba/.test(h.blockShapes[0]), h.blockShapes);
     eq("mais jamais une carte dans une carte", h.nestedCards, 0);
-    eq("chaque carte a son en-tête", h.heads, 4);
-    eq("chaque en-tête porte son icône", h.icons.length, 4);
+    eq("chaque carte a son en-tête", h.heads, 5);
+    eq("chaque en-tête porte son icône", h.icons.length, 5);
     eq("toutes du même jeu de traits", [...new Set(h.icons)], ["1.6"]);
     check("et toutes cachées aux lecteurs d'écran, car décoratives", h.iconsHidden, h.icons);
-    eq("chaque carte dit en une ligne ce qu'elle répond", h.subs, 4);
-    check("le planning suit immédiatement la bannière", h.bannerBeforePlan, h);
+    eq("chaque carte dit en une ligne ce qu'elle répond", h.subs, 5);
+    check("« Que veux-tu faire ? » suit immédiatement la bannière", h.bannerBeforeQa, h);
+    check("puis le planning", h.qaBeforePlan && h.bannerBeforePlan, h);
     check("puis vient la révision", h.planBeforeRevision, h);
     eq("une seule action primaire sur la page", h.primaries, 1);
     eq("le repère d'un groupe reste le rouge de niveau 3", h.panelMark, "rgb(240, 137, 154)");
@@ -188,7 +200,7 @@ try {
     /* La hiérarchie, mesurée : deux cartes de même rang s'alignent, et celle
        qui porte l'action est la plus large. C'est ce qui empêche la page de
        se lire comme une grille de cartes identiques. */
-    eq("les deux cartes du rang 3 sont alignées",
+    eq("les deux cartes du rang 4 sont alignées",
       [h.pair.n, h.pair.memeHaut, h.pair.memeHauteur], [2, true, true]);
     check("et la révision, qui porte l'action, est la plus large", h.pair.plusLarge, h.pair);
     eq("un seul h1 dans la page", h.h1, 1);
@@ -392,14 +404,16 @@ try {
     /* Chaque entrée : un sélecteur du tableau de bord, et ce qu'on doit
        observer après le clic. */
     const ROUTES = [
-      ["[data-dash-import]",        () => state.tab === "library" && state.library.view === "import"],
-      ["#dash-library-btn2",        () => state.tab === "library" && state.library.view === "subjects"],
-      ["[data-dash-add-subject]",   () => state.tab === "library" && state.library.view === "subjectForm"],
-      ["#dash-activities-btn",      () => state.tab === "activities"],
-      ["#dash-start-revision",      () => state.tab === "smart" || state.tab === "activities"],
-      ["#dash-exams-btn",           () => state.tab === "exams"],
-      ["#dash-planning-btn",        () => state.tab === "planning"],
-      ["#dash-ai-btn",              () => state.tab === "ai"],
+      /* La zone « Que veux-tu faire ? » a remplacé la grille de huit boutons
+         fixes. Ce sont donc ses tuiles qu'on clique — avec les données semées,
+         le moteur propose exactement celles-ci, et chacune doit mener quelque
+         part pour de vrai. Les huit anciennes destinations sont vérifiées
+         juste après : aucune n'a disparu. */
+      ['[data-qa="smart_revision"]', () => state.tab === "smart"],
+      ['[data-qa="resume_course"]',  () => state.tab === "quiz" && state.screen === "quiz"],
+      ['[data-qa="planning_today"]', () => state.tab === "planning"],
+      ['[data-qa="quiz_start"]',     () => state.tab === "quiz" && state.screen === "picker"],
+      ['[data-qa="import_course"]',  () => state.tab === "library" && state.library.view === "import"],
       ["#dash-progress-link",       () => state.tab === "progress"],
       ["#dash-stats-link",          () => state.tab === "stats"],
       ["#dash-viewall-subjects",    () => state.tab === "library" && state.library.view === "subjects"],
@@ -420,6 +434,31 @@ try {
         try { return !!new Function("return (" + fn + ")()")(); } catch (e) { return String(e); }
       }, assertFn.toString());
       check(`« ${sel} » mène au bon écran`, ok === true, ok);
+    }
+
+    /* ── LES HUIT ANCIENNES DESTINATIONS SONT TOUJOURS ATTEIGNABLES ────────
+       La grille fixe a disparu du tableau de bord ; les destinations, non.
+       Elles restent servies par le MÊME aiguilleur (`handleNavGoto`) que la
+       barre de navigation, le Command Center et les tuiles ci-dessus — c'est
+       lui qu'on interroge, une destination après l'autre. */
+    const ANCIENNES = [
+      ["import-course", () => state.tab === "library" && state.library.view === "import"],
+      ["library",       () => state.tab === "library" && state.library.view === "subjects"],
+      ["library-add",   () => state.tab === "library" && state.library.view === "subjectForm"],
+      ["activities",    () => state.tab === "activities"],
+      ["smart",         () => state.tab === "smart"],
+      ["exams",         () => state.tab === "exams"],
+      ["planning",      () => state.tab === "planning"],
+      ["ai",            () => state.tab === "ai"],
+    ];
+    for (const [goto, assertFn] of ANCIENNES) {
+      await page.evaluate(SEED);
+      await page.waitForTimeout(200);
+      const ok = await page.evaluate(({ g, fn }) => {
+        handleNavGoto({ goto: g });
+        try { return !!new Function("return (" + fn + ")()")(); } catch (e) { return String(e); }
+      }, { g: goto, fn: assertFn.toString() });
+      check(`la destination « ${goto} » n'a pas disparu`, ok === true, ok);
     }
 
     /* L'ancienne destination « la semaine dans Planning » n'a pas disparu :
@@ -892,7 +931,17 @@ try {
         arrows: [...root.querySelectorAll("*")]
           .filter(el => el.children.length === 0 && /→/.test(el.textContent))
           .map(el => el.textContent.trim()),
-        actions: root.querySelectorAll(".dash-action").length,
+        /* La grille de huit boutons fixes n'existe plus : c'est le moteur
+           d'actions qui décide, et il en affiche cinq au maximum. Son CSS a
+           été retiré avec elle — on vérifie qu'il ne reste ni classe ni
+           règle orpheline pour y rebrancher un bouton par erreur. */
+        actions: root.querySelectorAll(".dash-action, .dash-actions").length,
+        actionsCss: [...document.styleSheets].some(sh => {
+          try { return [...sh.cssRules].some(r => /\.dash-actions?\b/.test(r.selectorText || "")); }
+          catch(e){ return false; }
+        }),
+        qaTuiles: root.querySelectorAll("#dash-quick-actions [data-qa]").length,
+        qaPrimaires: root.querySelectorAll("#dash-quick-actions .qa-item--primary").length,
         /* Aucune animation permanente, aucun flou, aucune 3D. */
         animated: [...root.querySelectorAll("*")]
           .filter(el => {
@@ -908,7 +957,11 @@ try {
     eq("un seul emoji dans la page", r.emojiCount, 1);
     eq("et c'est celui de la salutation", r.emojiWhere, ["dash-banner-title"]);
     eq("aucune flèche typographique postiche", r.arrows, []);
-    eq("les huit destinations sont listées une seule fois", r.actions, 8);
+    eq("la grille de huit boutons fixes a bien disparu", r.actions, 0);
+    eq("et son CSS avec elle", r.actionsCss, false);
+    check("« Que veux-tu faire ? » n'affiche jamais plus de cinq actions",
+      r.qaTuiles >= 1 && r.qaTuiles <= 5, r.qaTuiles);
+    eq("et une seule d'entre elles est principale", r.qaPrimaires, 1);
     eq("aucune animation permanente, aucun flou, aucune 3D", r.animated, []);
     await page.close();
   }
@@ -945,7 +998,12 @@ try {
         viewBtnH: Math.round(root.querySelector('[data-plan-view="day"]').getBoundingClientRect().height),
         stepH: Math.round(root.querySelector('[data-plan-step="1"]').getBoundingClientRect().height),
         pairCols: cols(root.querySelector(".dash-cardrow--pair")),
-        actionCols: cols(root.querySelector(".dash-actions")),
+        /* Les tuiles secondaires de « Que veux-tu faire ? » : deux colonnes
+           sur grand écran, une seule au doigt. */
+        qaCols: cols(root.querySelector(".qa-grid")),
+        qaTuiles: root.querySelectorAll("#dash-quick-actions [data-qa]").length,
+        qaPrimaireLargeur: Math.round(root.querySelector(".qa-item--primary").getBoundingClientRect().width),
+        qaSecondaireLargeur: Math.round(root.querySelector(".qa-grid .qa-item").getBoundingClientRect().width),
         bannerTitle: parseFloat(cs(root.querySelector(".dash-banner-title")).fontSize),
         bannerPad: cs(root.querySelector(".dash-banner")).paddingTop,
       };
@@ -953,7 +1011,7 @@ try {
 
     eq(`[${vp.name}] aucun élément ne déborde`, r.overflowing, []);
     check(`[${vp.name}] pas de défilement horizontal`, !r.pageOverflow, r.pageOverflow);
-    eq(`[${vp.name}] les quatre sections sont rendues`, r.blocks, 4);
+    eq(`[${vp.name}] les cinq sections sont rendues`, r.blocks, 5);
     check(`[${vp.name}] les panneaux sont rendus`, r.panels >= 3, r.panels);
     eq(`[${vp.name}] la timeline garde heure, rail et contenu`, r.rowCols, 3);
     check(`[${vp.name}] le rail reste tracé`, parseFloat(r.railWidth) > 0, r.railWidth);
@@ -963,10 +1021,14 @@ try {
     eq(`[${vp.name}] et l'heure est tracée`, r.now, 1);
     check(`[${vp.name}] le sélecteur de vue se touche (≥ 32px)`, r.viewBtnH >= 32, r.viewBtnH);
     check(`[${vp.name}] les flèches de navigation aussi`, r.stepH >= 32, r.stepH);
+    check(`[${vp.name}] « Que veux-tu faire ? » garde une hiérarchie : une tuile
+      principale au moins aussi large que les secondaires`,
+      r.qaPrimaireLargeur >= r.qaSecondaireLargeur, [r.qaPrimaireLargeur, r.qaSecondaireLargeur]);
+    check(`[${vp.name}] et jamais plus de cinq actions`, r.qaTuiles <= 5, r.qaTuiles);
 
     if (vp.width <= 640) {
       eq(`[${vp.name}] les deux cartes de même rang s'empilent`, r.pairCols, 1);
-      eq(`[${vp.name}] une action par ligne`, r.actionCols, 1);
+      eq(`[${vp.name}] une action par ligne`, r.qaCols, 1);
       check(`[${vp.name}] la salutation est réduite`, r.bannerTitle <= 34, r.bannerTitle);
       eq(`[${vp.name}] la bannière respire moins`, r.bannerPad, "24px");
 
@@ -1018,11 +1080,11 @@ try {
      date et les heures suivent la locale.
      ====================================================================== */
   const ATTENDU = {
-    fr: { today: "Aujourd'hui", day: "Jour", cur: "En cours", next: "Prochain" },
-    en: { today: "Today",       day: "Day",  cur: "Ongoing",  next: "Next" },
-    es: { today: "Hoy",         day: "Día",  cur: "En curso", next: "Siguiente" },
-    de: { today: "Heute",       day: "Tag",  cur: "Läuft",    next: "Als Nächstes" },
-    it: { today: "Oggi",        day: "Giorno", cur: "In corso", next: "Prossimo" },
+    fr: { today: "Aujourd'hui", day: "Jour", cur: "En cours", next: "Prochain", qa: "Que veux-tu faire ?" },
+    en: { today: "Today",       day: "Day",  cur: "Ongoing",  next: "Next", qa: "What do you want to do?" },
+    es: { today: "Hoy",         day: "Día",  cur: "En curso", next: "Siguiente", qa: "¿Qué quieres hacer?" },
+    de: { today: "Heute",       day: "Tag",  cur: "Läuft",    next: "Als Nächstes", qa: "Was möchtest du tun?" },
+    it: { today: "Oggi",        day: "Giorno", cur: "In corso", next: "Prossimo", qa: "Cosa vuoi fare?" },
   };
   for (const lang of ["fr", "en", "es", "de", "it"]) {
     current = `11. ${lang}`;
@@ -1032,7 +1094,17 @@ try {
       const root = document.querySelector(".dashboard");
       const txt = root.textContent.replace(/\s+/g, " ");
       return {
-        sectionTitle: root.querySelector(".dash-section-title").textContent.trim(),
+        sectionTitle: document.getElementById("dash-schedule-card")
+          .querySelector(".dash-section-title").textContent.trim(),
+        /* « Que veux-tu faire ? » : le titre, le sous-titre contextuel et
+           chaque libellé de tuile doivent être traduits, pas seulement
+           présents. */
+        qaTitle: document.querySelector("#dash-quick-actions .dash-section-title").textContent.trim(),
+        qaSub: document.querySelector("#dash-quick-actions .dash-section-sub").textContent.trim(),
+        qaLabels: [...document.querySelectorAll("#dash-quick-actions .qa-item-label")]
+          .map(e => e.textContent.trim()),
+        qaMetas: [...document.querySelectorAll("#dash-quick-actions .qa-item-meta")]
+          .map(e => e.textContent.trim()),
         viewDay: root.querySelector('[data-plan-view="day"]').textContent.trim(),
         todayBtn: document.getElementById("dash-plan-today").textContent.trim(),
         badge: root.querySelector(".dash-live-badge").textContent.trim(),
@@ -1055,6 +1127,13 @@ try {
 
     const exp = ATTENDU[lang];
     eq(`[${lang}] la section « aujourd'hui » est traduite`, l.sectionTitle, exp.today);
+    eq(`[${lang}] « Que veux-tu faire ? » est traduit`, l.qaTitle, exp.qa);
+    check(`[${lang}] son sous-titre aussi, et il n'est pas vide`,
+      l.qaSub.length > 10 && !/^qa\./.test(l.qaSub), l.qaSub);
+    check(`[${lang}] chaque tuile porte un libellé traduit`,
+      l.qaLabels.length >= 1 && l.qaLabels.every(x => x.length > 2 && !/^qa\./.test(x)), l.qaLabels);
+    check(`[${lang}] et chaque seconde ligne porte un vrai chiffre`,
+      l.qaMetas.every(x => /\d/.test(x) || x.length > 3), l.qaMetas);
     eq(`[${lang}] la vue « jour » est traduite`, l.viewDay, exp.day);
     eq(`[${lang}] le bouton « aujourd'hui » est traduit`, l.todayBtn, exp.today);
     eq(`[${lang}] « en cours » est traduit`, l.badge, exp.cur);
@@ -1087,7 +1166,7 @@ try {
       const fakeButtons = [...root.querySelectorAll('[role="button"]')]
         .filter(el => el.tagName !== "BUTTON").map(el => el.className);
       const clickables = [...root.querySelectorAll(
-        ".dash-row, .dash-tl-row, .dash-action, .dash-subject, .dash-next, .dash-month-day, .dash-week-ev")];
+        ".dash-row, .dash-tl-row, .qa-item, .dash-subject, .dash-next, .dash-month-day, .dash-week-ev")];
       return {
         headings,
         fakeButtons,
@@ -1144,6 +1223,101 @@ try {
     eq("mais la timeline est entière", m.rows, 4);
     eq("le cours en cours est là", m.live, 1);
     eq("et l'heure est tracée", m.now, 1);
+    await page.close();
+  }
+
+  /* ======================================================================
+     13. « QUE VEUX-TU FAIRE ? » — LES ACTIONS SUIVENT LA SITUATION
+     ----------------------------------------------------------------------
+     Le moteur est testé séparément, sous Node (tests/quick-actions.test.js).
+     Ici on vérifie ce que Node ne peut pas voir : que la zone lit bien l'état
+     RÉEL de l'application, et qu'un clic fait vraiment ce qu'il annonce.
+     ====================================================================== */
+  current = "13. quick actions contextuelles";
+  {
+    const { page, errors } = await open(browser);
+    const zone = () => page.evaluate(() => {
+      const el = document.getElementById("dash-quick-actions");
+      if (!el) return { absente: true };
+      return {
+        sub: el.querySelector(".dash-section-sub").textContent.trim(),
+        ids: [...el.querySelectorAll("[data-qa]")].map(b => b.dataset.qa),
+        primaire: el.querySelector(".qa-item--primary").dataset.qa,
+        metas: [...el.querySelectorAll("[data-qa]")].map(b => {
+          const m = b.querySelector(".qa-item-meta");
+          return [b.dataset.qa, m ? m.textContent.trim() : ""];
+        }),
+      };
+    });
+
+    /* ── un quiz réellement commencé ─────────────────────────────────────── */
+    await page.evaluate(() => {
+      startQuiz("all", "Tout le programme", "all");
+      selectOption(0); nextQuestion(); selectOption(1); nextQuestion();
+      switchTab("dashboard");
+    });
+    await page.waitForTimeout(350);
+    const q = await zone();
+    eq("un quiz en cours devient l'action principale", q.primaire, "quiz_resume");
+    check("et sa seconde ligne donne la vraie position dans le quiz",
+      /3\s*\/\s*\d+/.test((q.metas.find(m => m[0] === "quiz_resume") || [])[1] || ""), q.metas);
+    check("« Lancer un quiz » disparaît : on en a déjà un",
+      !q.ids.includes("quiz_start"), q.ids);
+
+    /* Reprendre ne relance pas : on retrouve la question où on l'a laissée. */
+    const avant = await page.evaluate(() => state.index);
+    await page.click('[data-qa="quiz_resume"]');
+    await page.waitForTimeout(300);
+    const apres = await page.evaluate(() => ({ tab: state.tab, screen: state.screen, index: state.index }));
+    eq("reprendre rouvre le quiz exactement là où il en était",
+      apres, { tab: "quiz", screen: "quiz", index: avant });
+
+    /* ── des flashcards réellement commencées ────────────────────────────── */
+    await page.evaluate(SEED);
+    await page.waitForTimeout(250);
+    await page.evaluate(() => {
+      startFlashDeck("t-ch1", "Bilan et compte de résultat",
+        findAnyChapter("t-ch1").aiFlashcards.slice());
+      switchTab("dashboard");
+    });
+    await page.waitForTimeout(350);
+    const f = await zone();
+    eq("des flashcards en cours deviennent l'action principale", f.primaire, "flash_resume");
+    await page.click('[data-qa="flash_resume"]');
+    await page.waitForTimeout(300);
+    eq("et le paquet n'est pas rejoué depuis le début",
+      await page.evaluate(() => ({ tab: state.tab, ecran: state.flashScreen })),
+      { tab: "flash", ecran: "play" });
+
+    /* ── aucune donnée : des actions de découverte, et rien d'autre ───────── */
+    const neuf = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    await freezeClock(neuf);
+    await neuf.goto(APP);
+    await neuf.waitForTimeout(1500);
+    const d = await neuf.evaluate(() => {
+      const el = document.getElementById("dash-quick-actions");
+      return {
+        ids: [...el.querySelectorAll("[data-qa]")].map(b => b.dataset.qa),
+        primaire: el.querySelector(".qa-item--primary").dataset.qa,
+        ctx: qaContext(),
+      };
+    });
+    eq("sans la moindre donnée, on propose d'abord d'importer un cours", d.primaire, "import_course");
+    check("et aucune action de reprise ni de révision n'est inventée",
+      !d.ids.some(id => /resume|smart_revision|review_wrong/.test(id)), d.ids);
+    eq("parce que les compteurs correspondants valent réellement zéro",
+      [d.ctx.recoCount, d.ctx.wrongCount, d.ctx.recentChapter], [0, 0, null]);
+    await neuf.close();
+
+    /* ── la zone ne se remplit jamais pour se remplir ─────────────────────── */
+    await page.evaluate(SEED);
+    await page.waitForTimeout(300);
+    const s = await zone();
+    check("au plus cinq tuiles", s.ids.length <= 5, s.ids);
+    eq("aucune tuile en double", [...new Set(s.ids)].length, s.ids.length);
+    check("et aucun libellé ne répète la même intention deux fois de trop",
+      s.ids.filter(id => /^(quiz|flash|session)_resume$|^resume_course$/.test(id)).length <= 2, s.ids);
+    eq("aucune erreur JavaScript", errors, []);
     await page.close();
   }
 } catch (e) {

@@ -1,18 +1,20 @@
 ---
 name: frontend-architecture
-description: Comment ajouter/modifier du code dans un projet monolithique sans build (index.html ~14 600 lignes) sans le dégrader. À consulter avant d'ajouter une fonction, un fichier, ou d'envisager un refactor.
+description: Comment ajouter/modifier du code dans un projet monolithique sans build (index.html ~20 800 lignes) sans le dégrader. À consulter avant d'ajouter une fonction, un fichier, ou d'envisager un refactor.
 ---
 
 # Frontend Architecture
 
 ## Constat réel du projet
 
-`index.html` est un seul fichier de ~14 600 lignes contenant HTML, CSS
-(`<style>`) et JavaScript (`<script>`, ~490 fonctions top-level), sans
-build, sans framework, sans module ES pour le script principal (les
-modules séparés — `auth.js`, `translations.js`, `smart-revision.js`,
-`statistics.js` — sont chargés en `<script>` classique, pas `type="module"`,
-et exposent un objet sur `window`). C'est un fait, pas un problème à
+`index.html` est un seul fichier de ~20 800 lignes contenant HTML, CSS
+(`<style>`) et JavaScript (`<script>`), sans build, sans framework, sans
+module ES pour le script principal (les modules séparés — `auth.js`,
+`translations.js`, `smart-revision.js`, `statistics.js`, `planning.js`,
+`content-sources.js`, `sync-engine.js`, `source-adapters.js`,
+`user-data.js`, `command-center.js`, `quick-actions.js` — sont chargés en
+`<script>` classique, pas `type="module"`, et exposent un objet sur
+`window`). C'est un fait, pas un problème à
 corriger d'urgence : le projet est stable et fonctionne ainsi. Le travail
 consiste à **améliorer progressivement**, jamais à réécrire.
 
@@ -45,10 +47,14 @@ consiste à **améliorer progressivement**, jamais à réécrire.
   sans qu'elles servent réellement plusieurs fonctions.
 - **Créer un module séparé seulement quand ça apporte une vraie valeur.**
   Le critère déjà appliqué avec succès dans ce projet : un module séparé
-  (`smart-revision.js`, `statistics.js`) a du sens quand la logique est
-  **pure** (aucune dépendance DOM/state) et **réutilisable par plusieurs
-  futurs consommateurs** (dashboard, page dédiée, futur assistant IA,
-  future appli mobile). Une logique qui lit/écrit `state` directement n'a
+  (`smart-revision.js`, `statistics.js`, `command-center.js`,
+  `quick-actions.js`) a du sens quand la logique est **pure** (aucune
+  dépendance DOM/state) et **réutilisable par plusieurs futurs
+  consommateurs** (dashboard, page dédiée, futur assistant IA, future
+  appli mobile). Exemple récent : `quick-actions.js` ne contient QUE le
+  catalogue d'actions, leurs conditions et leurs poids ; il ne connaît
+  aucun libellé (ils sont dans `translations.js`) ni aucune destination
+  (elles sont dans `qaRun()`, qui appelle `handleNavGoto()`). Une logique qui lit/écrit `state` directement n'a
   pas vocation à devenir un module séparé — elle reste dans `index.html`
   comme fonction "pont" (voir `buildChapterFacts()`/`getStatistics()`).
 - **Conserver les contrats existants.** Ne pas changer la signature d'une
@@ -73,6 +79,11 @@ future logique de calcul substantielle :
    `getSmartRevisionRecommendations()`).
 4. **UI** : les fonctions `renderX()`/`attachXEvents()` consomment
    uniquement le pont, jamais le moteur pur directement.
+
+Appliqué à « Que veux-tu faire ? » : `qaContext()` (faits) →
+`LyonQuickActions.pick()` (moteur) → `renderQuickActions()` + `qaRun()`
+(pont et UI). Le moteur se teste sous Node en quelques millisecondes ;
+`tests/quick-actions.test.js` le fait en 58 vérifications.
 
 ## Pattern de rendu déjà en place
 

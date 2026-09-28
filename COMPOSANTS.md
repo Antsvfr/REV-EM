@@ -232,6 +232,36 @@ page. `role="status"` + `aria-live="polite"`.
 
 Le nom historique `.app-toast` est conservé : il désigne le même composant.
 
+### Bannière d'action — `showPwaBanner()`
+
+```js
+showPwaBanner({
+  icon: "spark",
+  title: "Nouvelle version disponible",
+  body: "Des améliorations sont prêtes.",
+  actionLabel: "Recharger",
+  dismissLabel: "Plus tard",
+  onAction: () => { /* … */ },
+  onDismiss: () => { /* facultatif */ },
+});
+```
+
+Une bannière propose une **action facultative dont l'utilisateur garde le
+contrôle du moment** — mise à jour disponible, proposition d'installation.
+Ce que ni le toast ni la confirmation ne couvrent : le toast n'a pas
+d'action, la confirmation bloque l'écran en attendant une réponse.
+
+- non modale : ni fond assombri, ni piège à focus, la page reste
+  entièrement utilisable pendant qu'elle attend ;
+- **persiste** jusqu'à une réponse — contrairement au toast, qui s'efface
+  seul : ce qu'elle annonce reste vrai tant qu'on n'a pas agi ;
+- ancrée en bas, à gauche en bureau (jamais sur la bulle IA, à droite),
+  pleine largeur en compact, avec la zone sûre de l'appareil
+  (`env(safe-area-inset-bottom)`) ;
+- une seule à la fois : en appeler une seconde referme la précédente.
+
+Voir `PWA.md` pour ses deux usages réels (mise à jour, installation).
+
 ---
 
 ## Règles transversales

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Icône REV-EM : même glyphe que .brand-mark dans index.html (barres
+       ascendantes), sur un aplat --accent plutôt que sur fond transparent —
+       c'est l'icône d'application, pas la marque dans l'en-tête. Toute
+       modification du glyphe dans index.html doit être répercutée ici. -->
+  <rect width="24" height="24" fill="#E31C3D"/>
+  <rect x="4.2" y="14.8" width="2.8" height="5.6" rx="0.8" fill="#fff" opacity=".55"/>
+  <rect x="8.6" y="12.6" width="2.8" height="7.8" rx="0.8" fill="#fff" opacity=".75"/>
+  <rect x="13"  y="10"   width="2.8" height="10.4" rx="0.8" fill="#fff" opacity=".92"/>
+  <rect x="17.4" y="7"   width="2.8" height="13.4" rx="0.8" fill="#fff"/>
+</svg>

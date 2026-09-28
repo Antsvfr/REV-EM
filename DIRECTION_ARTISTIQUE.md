@@ -477,18 +477,29 @@ fais maintenant ? ».
 >
 > 1. **la bannière** (aplat de marque, cf. « plafond de clarté » plus haut) :
 >    date, salutation, une phrase de contexte vraie, trois mesures réelles ;
-> 2. **« Aujourd'hui »** — le planning, devenu la section majeure : barre de
+> 2. **« Que veux-tu faire ? »** — une action principale pleine largeur sur
+>    aplat rouge, puis deux à quatre tuiles compactes, choisies par
+>    `quick-actions.js` selon la situation réelle. **Deux tailles, et c'est
+>    tout ce qui fait la hiérarchie** : on voit laquelle compte avant d'avoir
+>    lu un mot. Une action dont la condition est fausse n'est pas affichée —
+>    la zone rétrécit, elle ne se remplit pas (voir `QUICK_ACTIONS.md`) ;
+> 3. **« Aujourd'hui »** — le planning, devenu la section majeure : barre de
 >    navigation (jour précédent / Aujourd'hui / jour suivant) et sélecteur
 >    Jour · Semaine · Mois ; en vue jour, le cours en cours sur lavis avec sa
 >    jauge et son temps restant, le prochain avec son décompte, puis une
 >    **timeline verticale** (colonne d'heures, rail continu, un point par
 >    cours à sa couleur, les pauses dites, et le trait rouge de l'heure à sa
 >    place réelle) ;
-> 3. **« Révision »** — la priorité du moteur, la reprise, les cours récents ;
-> 4. **« Ma progression »** — la maîtrise, les quatre mesures, le journal
+> 4. **« Révision »** — la priorité du moteur, la reprise, les cours récents ;
+> 5. **« Ma progression »** — la maîtrise, les quatre mesures, le journal
 >    d'activité (« Activité » n'est plus une section à part : les chiffres et
 >    ce qu'on vient de faire répondent à la même question) ;
-> 5. **« Accès rapides »** — matières puis destinations.
+> 6. **« Mes matières »** — les matières et leur avancement. La grille de
+>    huit boutons fixes qui fermait la page a été retirée : huit
+>    destinations affichées en permanence, c'est huit fois la même
+>    importance. Elles restent servies par la barre de navigation et par le
+>    Command Center, et celles qui comptent remontent d'elles-mêmes au
+>    rang 2.
 >
 > **Une section EST une carte** : fond blanc, filet, rayon, ombre légère, et
 > un en-tête toujours composé de la même façon — icône, titre, sous-titre
@@ -497,7 +508,12 @@ fais maintenant ? ».
 > Ce qui évite le « mur de cartes », ce n'est pas d'en mettre moins, c'est
 > qu'elles **ne pèsent pas le même poids** : la bannière domine, le planning
 > prend toute la largeur, révision et progression se partagent une ligne (la
-> révision plus large, parce qu'elle porte l'action), les accès ferment.
+> révision plus large, parce qu'elle porte l'action), les matières ferment.
+>
+> Le rang 2 répond à la question qu'on se pose en arrivant ; le rang 4
+> explique POURQUOI (la notion, la raison, l'avancement). Un raccourci et son
+> explication ne sont pas un doublon : l'un fait gagner du temps, l'autre fait
+> comprendre.
 > Quatre rangs, pas une grille.
 >
 > **Règle qui en découle : à l'intérieur d'une carte, plus de carte.** Les

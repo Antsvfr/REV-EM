@@ -2,8 +2,39 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>REV-EM</title>
+<meta name="description" content="Matières, quiz, flashcards, examens blancs et révision intelligente — dans une application installable.">
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     PWA — installation, icônes, couleur système. Voir PWA.md pour le détail
+     de chaque choix (pourquoi ces tailles, pourquoi ce theme-color, etc.).
+     Chemins relatifs partout : le site est servi depuis la racine en local
+     et depuis un sous-chemin de projet sur GitHub Pages — jamais de "/" en
+     tête, ici comme dans manifest.webmanifest et sw.js.
+     ══════════════════════════════════════════════════════════════════════ -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/icon-16.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<!-- Couleur système : l'identité REV-EM jusque dans le chrome du navigateur
+     et le sélecteur d'applications — pas seulement une couleur d'appoint,
+     une décision délibérée (voir PWA.md « Design »). -->
+<meta name="theme-color" content="#E31C3D">
+<!-- Installée, l'application s'ouvre en fenêtre autonome, sans barre
+     d'adresse — display:standalone dans le manifeste fait le travail sur
+     Android/desktop ; ces deux balises couvrent Safari iOS, qui ne lit pas
+     le manifeste pour ce réglage. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<!-- "default" plutôt que "black-translucent" : la barre de statut reste
+     opaque et réserve sa place — cohérent avec la barre de navigation
+     blanche de l'app, et ça évite tout le travail de zone sûre (encoche,
+     île dynamique) qu'un contenu passant SOUS la barre exigerait. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="REV-EM">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- Trois familles, trois rôles exclusifs (voir DIRECTION_ARTISTIQUE.md §1) :
@@ -1796,6 +1827,46 @@
   .toast.toast--error::before{   background: #F19A94; opacity: 1; }
 
   /* ==========================================================================
+     BANNIÈRE D'ACTION — mise à jour disponible, proposition d'installation.
+     Voir PWA.md. Non modale à dessein : ni fond assombri, ni piège à focus,
+     ni fermeture forcée — elle propose, elle n'interrompt jamais une
+     révision en cours. Persiste jusqu'à une réponse, contrairement au toast
+     qui disparaît seul : l'information qu'elle porte reste vraie tant qu'on
+     n'a pas répondu, un fait accompli qui s'efface tout seul ne convient pas.
+     ========================================================================== */
+  .pwa-banner{
+    position: fixed; left: var(--space-lg); bottom: var(--space-lg);
+    z-index: 500; width: min(380px, calc(100vw - 32px));
+    display: flex; gap: var(--space-sm); align-items: flex-start;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-modal);
+    padding: var(--space-md);
+    opacity: 0; transform: translateY(12px);
+    transition: opacity var(--motion-enter) var(--ease-enter),
+                transform var(--motion-enter) var(--ease-enter);
+  }
+  .pwa-banner.show{ opacity: 1; transform: translateY(0); }
+  .pwa-banner-icon{
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; flex-shrink: 0; border-radius: var(--radius-sm);
+    background: var(--accent-wash); color: var(--accent);
+  }
+  .pwa-banner-icon svg{ width: 19px; height: 19px; }
+  .pwa-banner-body{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .pwa-banner-title{ font-family: var(--font-ui); font-size: var(--text-small); font-weight: var(--weight-semibold); color: var(--text-primary); }
+  .pwa-banner-text{ font-family: var(--font-ui); font-size: var(--text-metadata); color: var(--text-secondary); line-height: var(--leading-body); }
+  .pwa-banner-actions{ display: flex; flex-direction: column; gap: var(--space-2xs); flex-shrink: 0; }
+  .pwa-banner-actions .btn{ padding: 6px var(--space-sm); font-size: var(--text-metadata); white-space: nowrap; }
+  @media (max-width: 680px){
+    .pwa-banner{
+      left: var(--space-sm); right: var(--space-sm); bottom: calc(var(--space-sm) + env(safe-area-inset-bottom));
+      width: auto; flex-wrap: wrap;
+    }
+    .pwa-banner-actions{ flex-direction: row; width: 100%; margin-top: var(--space-2xs); }
+    .pwa-banner-actions .btn{ flex: 1; }
+  }
+
+  /* ==========================================================================
      MENU DÉROULANT — même famille que les menus de l'en-tête.
      ========================================================================== */
   .menu{
@@ -1934,7 +2005,10 @@
     .stat-row{ gap:var(--space-md); }
     .stat-row > .stat + .stat{ border-left: none; padding-left:0; }
     .field-row{ gap:var(--space-sm); }
-    .toast, .app-toast{ left: var(--space-sm); right: var(--space-sm); bottom: var(--space-sm); transform: translateY(10px); max-width: none; }
+    /* `env(...)` vaut 0 sur un appareil sans encoche/île — cette ligne ne
+       change rien ailleurs que sur un iPhone installé en app autonome, où
+       elle évite que le toast ne s'installe sous la barre gestuelle. */
+    .toast, .app-toast{ left: var(--space-sm); right: var(--space-sm); bottom: calc(var(--space-sm) + env(safe-area-inset-bottom)); transform: translateY(10px); max-width: none; }
     .toast.show, .app-toast.show{ transform: translateY(0); }
   }
 
@@ -3549,43 +3623,100 @@
     color: var(--text-muted);
   }
 
-  /* ── ACTIONS RAPIDES ─────────────────────────────────────────────────── */
-  .dash-actions{ display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); }
-  .dash-action{
-    display: flex; align-items: center; justify-content: space-between;
-    gap: var(--space-sm); min-height: 48px; padding: 0 var(--space-md);
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    background: var(--surface); cursor: pointer; text-align: left;
-    font-family: var(--font-ui); font-size: var(--text-small);
-    font-weight: var(--weight-medium); color: var(--text-primary);
+  /* ── « QUE VEUX-TU FAIRE ? » ──────────────────────────────────────────────
+     Deux tailles, et c'est tout ce qui fait la hiérarchie : une tuile pleine
+     largeur sur aplat rouge, puis des tuiles compactes sur fond blanc. On voit
+     laquelle compte avant d'avoir lu un seul mot.
+     Le blanc sur --accent (#E31C3D) mesure 4,68:1 — au-dessus du seuil AA de
+     4,5:1 — et les DEUX lignes de la tuile principale sont en blanc plein :
+     aucune opacité intermédiaire, comme la bannière l'a tranché au même
+     endroit du produit.                                                      */
+  .qa-item{
+    display: flex; align-items: center; gap: var(--space-md);
+    width: 100%; text-align: left; cursor: pointer;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--surface); color: var(--text-primary);
+    font-family: var(--font-ui);
+    padding: var(--space-sm) var(--space-md); min-height: 56px; min-width: 0;
     transition: border-color var(--motion-micro) var(--ease-enter),
-                background var(--motion-micro) var(--ease-enter);
+                background var(--motion-micro) var(--ease-enter),
+                transform var(--motion-micro) var(--ease-enter);
   }
-  .dash-action:hover{ border-color: var(--border-strong); background: var(--surface-sunken); }
-  .dash-action:active{ background: var(--surface-sunken); }
-  /* L'icône et le libellé forment un seul bloc à gauche ; la chevron reste
-     collée à droite (c'est le ::after ci-dessous). */
-  .dash-action-icon{
+  .qa-item:hover{ border-color: var(--border-strong); background: var(--surface-sunken); }
+  .qa-item:active{ transform: translateY(1px); }
+
+  .qa-item-icon{
     display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; flex-shrink: 0; color: var(--text-muted);
-    transition: color var(--motion-micro) var(--ease-enter);
+    width: 36px; height: 36px; flex-shrink: 0;
+    border-radius: var(--radius-sm);
+    background: var(--accent-wash); color: var(--accent);
+    transition: background var(--motion-micro) var(--ease-enter);
   }
-  .dash-action-icon svg{ width: 18px; height: 18px; }
-  .dash-action-label{ flex: 1; min-width: 0; }
-  .dash-action:hover .dash-action-icon{ color: var(--accent); }
-  .dash-action.is-primary .dash-action-icon{ color: var(--accent); }
-  .dash-action::after{
-    content: ""; flex-shrink: 0; width: 6px; height: 6px;
+  .qa-item-icon svg{ width: 19px; height: 19px; }
+  .qa-item-body{ flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .qa-item-label{
+    font-size: var(--text-small); font-weight: var(--weight-medium);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* La seconde ligne porte un chiffre : la fonte de données, et des chiffres
+     de même largeur pour que « 3 / 12 » ne danse pas d'une tuile à l'autre. */
+  .qa-item-meta{
+    font-family: var(--font-data); font-size: var(--text-label);
+    letter-spacing: var(--tracking-label); text-transform: uppercase;
+    font-variant-numeric: tabular-nums; color: var(--text-muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Le chevron : la même forme que partout ailleurs sur le tableau de bord. */
+  .qa-item-go{
+    flex-shrink: 0; width: 7px; height: 7px;
     border-top: 1.5px solid var(--text-muted); border-right: 1.5px solid var(--text-muted);
     transform: rotate(45deg);
     transition: transform var(--motion-micro) var(--ease-enter);
   }
-  .dash-action:hover::after{ transform: rotate(45deg) translate(1px, -1px); }
-  /* L'action principale des actions rapides : elle porte l'accent, une seule
-     fois, et reste un bouton comme les autres. */
-  .dash-action.is-primary{ border-color: var(--accent); color: var(--accent); }
-  .dash-action.is-primary:hover{ background: var(--accent-wash); }
-  .dash-action.is-primary::after{ border-color: var(--accent); }
+  .qa-item:hover .qa-item-go{ transform: rotate(45deg) translate(2px, -2px); }
+
+  /* ── L'ACTION PRINCIPALE ─────────────────────────────────────────────── */
+  .qa-item--primary{
+    margin-bottom: var(--space-sm);
+    min-height: 68px; padding: var(--space-md) var(--space-lg);
+    border-color: var(--accent); background: var(--accent);
+    color: var(--text-on-accent);
+    box-shadow: var(--shadow-subtle);
+  }
+  .qa-item--primary:hover{ background: var(--accent-hover); border-color: var(--accent-hover); }
+  .qa-item--primary:active{ background: var(--accent-active); }
+  /* Le seul blanc translucide de la zone, et c'est un FOND, pas un texte :
+     le rouge éclairci qu'il produit laisse le trait de l'icône à 3,65:1, au
+     dessus du seuil de 3:1 exigé pour un élément non textuel. */
+  .qa-item--primary .qa-item-icon{
+    width: 40px; height: 40px;
+    background: rgba(255,255,255,.16); color: var(--text-on-accent);
+  }
+  .qa-item--primary .qa-item-icon svg{ width: 21px; height: 21px; }
+  /* L'action principale ne se coupe jamais : elle passe à la ligne. Mesuré à
+     375 px — « Continuar mi cuestionario » (es) et « Continuare il mio quiz »
+     (it) dépassaient la tuile, et un libellé tronqué par des points de
+     suspension se lit moins bien qu'un libellé sur deux lignes. Les tuiles
+     secondaires, elles, tiennent dans les cinq langues aux trois largeurs. */
+  .qa-item--primary .qa-item-label{
+    font-size: var(--text-body); font-weight: var(--weight-semibold);
+    white-space: normal;
+  }
+  /* Blanc plein, et non un blanc translucide : la bannière a tranché la même
+     question au même endroit du produit. Ce qui distingue la seconde ligne de
+     la première, c'est la taille, la graisse et l'interlettrage — pas une
+     opacité, qui fait perdre du contraste sans rien gagner en lisibilité. */
+  .qa-item--primary .qa-item-meta{ color: var(--text-on-accent); }
+  .qa-item--primary .qa-item-go{ border-color: var(--text-on-accent); }
+
+  /* ── LES SECONDAIRES ─────────────────────────────────────────────────── */
+  /* Deux colonnes : quatre tuiles font deux rangs, pas un mur. */
+  /* `minmax(0, 1fr)` et non `1fr` : une colonne `1fr` ne descend pas sous la
+     largeur minimale de son contenu, et la tuile débordait alors de la carte
+     de 6 px au téléphone — mesuré à 375 px, 324 px de tuile dans 293 px de
+     colonne. Même raison pour `min-width: 0` sur la tuile, qui est elle-même
+     une boîte flexible à libellé insécable. */
+  .qa-grid{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-xs); }
 
   /* ── LISTES DE PANNEAU (cours récents) ───────────────────────────────── */
   .dash-row{
@@ -3654,7 +3785,14 @@
     .dash-priority-actions > .btn{ width: 100%; }
     .dash-agenda-row{ grid-template-columns: 1fr auto; gap: var(--space-2xs) var(--space-sm); }
     .dash-agenda-time{ grid-column: 1 / -1; }
-    .dash-actions{ grid-template-columns: 1fr; }
+    /* Sur téléphone, deux tuiles par rang deviennent deux libellés tronqués :
+       on repasse en colonne, la zone reste lisible et courte. */
+    .qa-grid{ grid-template-columns: minmax(0, 1fr); }
+    .qa-item--primary{ padding: var(--space-md); }
+    /* Une seule colonne : la seconde ligne peut passer à la ligne plutôt que
+       d'être coupée. Mesuré à 375 px — « 5 Thema/Themen zu wiederholen » (de)
+       et « 5 argomento/i da ripassare » (it) dépassaient la tuile. */
+    .qa-item-meta{ white-space: normal; }
     .dash-subject-grid{ grid-template-columns: 1fr; }
     /* Sept colonnes de 44px tiennent à 375px : on garde la semaine entière
        plutôt que de la réduire à trois jours. */
@@ -4494,7 +4632,7 @@
      Un geste doit être accusé immédiatement. 1px d'enfoncement pour un
      bouton, un simple assombrissement pour une ligne : pas de mise à
      l'échelle, qui rend le texte flou pendant la transition. */
-  .dash-row:active, .dash-agenda-row:active, .dash-action:active,
+  .dash-row:active, .dash-agenda-row:active,
   .menu-item:active, .qz-opt:active:not(:disabled),
   .course-card:active, .subcard:active, .lib-chcard:active{
     background: var(--surface-sunken);
@@ -4589,6 +4727,42 @@
   .skeleton{ animation: ds-pulse 1.2s var(--ease-enter) infinite; }
 
   /* ==========================================================================
+     ÉCRAN DE LANCEMENT — voir PWA.md.
+     Même aplat que la bannière du tableau de bord et le fond du manifeste
+     (background_color) : c'est le MÊME rouge du premier pixel peint jusqu'au
+     contenu réel, jamais un flash neutre puis une bascule de couleur.
+     -------------------------------------------------------------------------
+     Volontairement écrit en CSS pur, sans variable custom : ce bloc doit
+     rester correct même si, un jour, il finissait extrait dans un fichier
+     séparé chargé avant le design system (il ne l'est pas aujourd'hui, mais
+     rien ne doit dépendre de son ordre de chargement).
+     ========================================================================== */
+  #boot-splash{
+    position: fixed; inset: 0; z-index: 9999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px;
+    background: #E31C3D;
+    opacity: 1; transition: opacity 240ms ease;
+  }
+  #boot-splash.is-hidden{ opacity: 0; pointer-events: none; }
+  .boot-splash-mark{ width: 56px; height: 56px; }
+  .boot-splash-mark svg{ width: 100%; height: 100%; display: block; }
+  .boot-splash-name{
+    font-family: "Public Sans", system-ui, sans-serif;
+    font-size: 15px; font-weight: 600; letter-spacing: 0.06em;
+    color: #fff; text-transform: uppercase;
+  }
+  .boot-splash-spin{
+    width: 22px; height: 22px; margin-top: 4px;
+    border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+    border-radius: 50%;
+    /* Même rotation, même durée que `.spinner` (voir plus haut) : le système
+       n'a qu'une seule anneau de chargement, pas deux qui tournent à des
+       vitesses différentes selon l'écran. */
+    animation: ds-spin 0.7s linear infinite;
+  }
+
+  /* ==========================================================================
      MOUVEMENT RÉDUIT — INTERRUPTEUR GÉNÉRAL
      --------------------------------------------------------------------------
      Quand le système le demande, plus rien ne bouge : ni entrée de vue, ni
@@ -4609,6 +4783,28 @@
 </style>
 </head>
 <body>
+<!-- ══════════════════════════════════════════════════════════════════════
+     ÉCRAN DE LANCEMENT — voir PWA.md « Écran de lancement ».
+     Placé avant TOUT le reste du corps de page : le navigateur peint ce
+     bloc dès qu'il l'a reçu, avant même de rencontrer le gros <script>
+     inline plus bas qui bloque le rendu pendant son exécution. C'est ce qui
+     évite l'écran blanc, sur le web comme dans l'app installée.
+     `aria-hidden` et aucun élément focusable : purement visuel, jamais dans
+     le parcours clavier. Retiré par hideBootSplash() une fois le premier
+     rendu réel posé — voir la fin du <script> principal. ═══════════════ -->
+<div id="boot-splash" aria-hidden="true">
+  <span class="boot-splash-mark">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="1"  y="15" width="4" height="8"  rx="1" fill="#fff" opacity=".55"/>
+      <rect x="7"  y="11" width="4" height="12" rx="1" fill="#fff" opacity=".75"/>
+      <rect x="13" y="6"  width="4" height="17" rx="1" fill="#fff" opacity=".92"/>
+      <rect x="19" y="1"  width="4" height="22" rx="1" fill="#fff"/>
+    </svg>
+  </span>
+  <span class="boot-splash-name">REV-EM</span>
+  <span class="boot-splash-spin"></span>
+</div>
+
 <a class="skip-link" href="#content">Aller au contenu</a>
 
 <div class="topbar">
@@ -4801,6 +4997,10 @@
      aux fautes, classement, regroupement. Aucune dépendance au DOM ni à
      l'état — les sources, elles, sont enregistrées depuis index.html. -->
 <script src="command-center.js"></script>
+<!-- Moteur « Que veux-tu faire ? » : décide quelles actions ont un sens dans
+     la situation réelle de l'utilisateur, et lesquelles n'en ont aucun.
+     Comme les autres moteurs : aucune dépendance au DOM ni à l'état. -->
+<script src="quick-actions.js"></script>
 
 <script>
 /* ============================================================
@@ -6495,6 +6695,7 @@ function cloudRemoteVolume(snap){
 }
 
 const KEY_CLOUD_CHOICE = "cloud-choice";   // namespacé par compte, comme le reste
+const KEY_PWA_INSTALL_DISMISS = "pwa-install-dismiss";   // date du dernier "plus tard"
 
 /* ── PREMIÈRE CONNEXION DE CE COMPTE SUR CET APPAREIL ─────────────────────
    Jamais de migration silencieuse : si cet appareil contient des données que
@@ -7534,6 +7735,199 @@ function continueRevision(){
   window.scrollTo(0,0);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   « QUE VEUX-TU FAIRE ? » — le branchement du moteur d'actions
+   ──────────────────────────────────────────────────────────────────────────
+   `quick-actions.js` décide QUOI proposer ; ce bloc lui dit ce qui est vrai,
+   traduit le résultat, et exécute le choix. Trois responsabilités séparées,
+   comme pour le Command Center :
+
+     qaContext()        ce que l'utilisateur a réellement  →  des chiffres
+     LyonQuickActions   ce qui mérite d'être proposé       →  des identifiants
+     qaRun()            ce que fait un identifiant         →  la navigation
+
+   AUCUN CHIFFRE N'EST INVENTÉ. Chacun vient d'une fonction qui existait déjà :
+     recommandations ... getSmartRevisionRecommendations()  (smart-revision.js)
+     erreurs .......... poolWrong()
+     cours récent ..... state.dash.recentChapters
+     planning ......... state.planning.events, eventsOnCalendarDay()
+     plan de révision . state.studyPlan.days[].tasks
+     contenus ......... QUESTIONS, FLASHCARDS, state.userChapters
+   Quand un chiffre vaut zéro, l'action correspondante n'apparaît pas — c'est
+   le moteur qui s'en charge, et ses tests le vérifient.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* L'indice du jour dans le plan de révision, ou -1. Même clé de date que
+   renderStudyPlanOverview() : un seul calendrier pour toute l'application. */
+function qaPlanTodayIndex(){
+  const plan = state.studyPlan;
+  if(!plan || !plan.days) return -1;
+  return plan.days.findIndex(d => d.dateKey === dateKey(new Date()));
+}
+function qaPlanTasksToday(){
+  const i = qaPlanTodayIndex();
+  if(i === -1) return 0;
+  const day = state.studyPlan.days[i];
+  return day && day.tasks ? day.tasks.filter(tk => tk.status === "pending").length : 0;
+}
+
+/* Le nombre de cartes réellement jouables, intégrées et importées. */
+function qaFlashCount(){
+  let n = 0;
+  Object.keys(FLASHCARDS).forEach(k => { n += (FLASHCARDS[k] || []).length; });
+  state.userChapters.forEach(ch => { n += (ch.aiFlashcards || []).length; });
+  return n;
+}
+function qaQuizCount(){
+  let n = QUESTIONS.length;
+  state.userChapters.forEach(ch => { n += (ch.aiQuiz || []).length; });
+  return n;
+}
+
+function qaContext(){
+  /* Même garde que renderDashboardPriority() : sans le moindre historique, on
+     n'annonce pas « N notions à réviser » — tous les chapitres jamais ouverts
+     qualifieraient, et ce serait un chiffre sans rapport avec la réalité. */
+  const hasAnyData = dashHasRevisionData();
+  const recos = hasAnyData ? getSmartRevisionRecommendations() : [];
+
+  /* Une session guidée (révision intelligente ou plan de révision) possède
+     l'écran de quiz pendant son déroulement : on ne propose donc pas en plus
+     « Continuer mon quiz », ce serait deux fois la même reprise. */
+  const session = state.smartSession || state.planningSession || null;
+  const inQuiz  = !session && state.screen === "quiz" && state.playing && state.pool.length > 0;
+  const inFlash = !session && state.flashScreen === "play" && state.flashDeck
+                  && state.flashDeck.cards && state.flashDeck.cards.length > 0;
+
+  const rc = state.dash.recentChapters && state.dash.recentChapters[0];
+  const rcChapter = rc ? findAnyChapter(rc.chapterId) : null;
+
+  return {
+    quizInProgress: inQuiz
+      ? { label: state.playing.label, index: state.index + 1, total: state.pool.length }
+      : null,
+    flashInProgress: inFlash
+      ? { label: state.flashDeck.label, index: state.flashDeck.idx + 1, total: state.flashDeck.cards.length }
+      : null,
+    sessionInProgress: session
+      ? { kind: state.smartSession ? "smart" : "planning",
+          index: session.stepIndex + 1,
+          total: (session.items || []).length }
+      : null,
+    recoCount:      recos.length,
+    wrongCount:     hasAnyData ? poolWrong().length : 0,
+    recentChapter:  rcChapter ? { id: rcChapter.id, title: rcChapter.title, type: rc.type } : null,
+    planTasksToday: qaPlanTasksToday(),
+    todayEvents:    state.planning.events.length ? eventsOnCalendarDay(new Date()).length : 0,
+    hasPlanning:    state.planning.events.length > 0,
+    quizCount:      qaQuizCount(),
+    flashCount:     qaFlashCount(),
+    subjectCount:   allSubjects().length,
+    hasAnyData:     hasAnyData,
+  };
+}
+
+/* La seconde ligne d'une action : un chiffre ou un titre, jamais une
+   paraphrase du libellé. Vide quand il n'y a rien de vrai à dire. */
+function qaMeta(id, c){
+  if(id === "quiz_resume" && c.quizInProgress)
+    return t("quiz.question_of", {n: c.quizInProgress.index, total: c.quizInProgress.total});
+  if(id === "flash_resume" && c.flashInProgress)
+    return t("qa.meta_card_of", {n: c.flashInProgress.index, total: c.flashInProgress.total});
+  if(id === "session_resume" && c.sessionInProgress && c.sessionInProgress.total)
+    return t("qa.meta_step_of", {n: c.sessionInProgress.index, total: c.sessionInProgress.total});
+  if(id === "smart_revision")   return t("smart.dashboard_count", {n: c.recoCount});
+  if(id === "review_wrong")     return t("dashboard.recent_errors", {n: c.wrongCount});
+  if(id === "resume_course" && c.recentChapter) return escapeHtml(c.recentChapter.title);
+  if(id === "study_plan")       return t("qa.meta_sessions", {n: c.planTasksToday});
+  if(id === "planning_today")   return t("qa.meta_courses", {n: c.todayEvents});
+  if(id === "explore_subjects") return t(c.subjectCount > 1 ? "qa.meta_subjects" : "qa.meta_subject", {n: c.subjectCount});
+  return "";
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LE RENDU — une action forte, deux à quatre appuis
+   ──────────────────────────────────────────────────────────────────────────
+   La principale occupe toute la largeur et porte l'accent ; les secondaires
+   sont des tuiles compactes. Ce contraste EST la hiérarchie : deux tailles,
+   pas huit boutons identiques. Quand le contexte ne justifie qu'une action,
+   la zone se réduit à une action — elle ne se remplit pas.
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderQuickActions(){
+  if(!window.LyonQuickActions) return "";
+  const c = qaContext();
+  const picked = LyonQuickActions.pick(c);
+  if(!picked.primary) return "";
+
+  /* Le sous-titre dit à quoi répond la zone, et il change avec la situation :
+     reprendre, choisir, ou commencer. */
+  const sub = picked.all.some(a => a.family === "resume") ? t("qa.sub_resume")
+            : c.hasAnyData ? t("qa.sub_ready")
+            : t("qa.sub_discover");
+
+  const tile = (a, primary) => {
+    const meta = qaMeta(a.id, c);
+    return `<button type="button" class="qa-item${primary ? " qa-item--primary" : ""}" data-qa="${a.id}">
+      <span class="qa-item-icon">${dashIcon(a.icon)}</span>
+      <span class="qa-item-body">
+        <span class="qa-item-label">${t("qa." + a.id)}</span>
+        ${meta ? `<span class="qa-item-meta">${meta}</span>` : ""}
+      </span>
+      <span class="qa-item-go" aria-hidden="true"></span>
+    </button>`;
+  };
+
+  return `<section class="dash-section-block qa-block" id="dash-quick-actions">
+    ${dashCardHead("compass", t("qa.title"), sub)}
+    ${tile(picked.primary, true)}
+    ${picked.secondary.length
+      ? `<div class="qa-grid">${picked.secondary.map(a => tile(a, false)).join("")}</div>`
+      : ""}
+  </section>`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L'EXÉCUTION — un identifiant, une destination
+   ──────────────────────────────────────────────────────────────────────────
+   Tout ce qui peut passer par `handleNavGoto()` y passe : c'est le MÊME
+   aiguilleur que la barre de navigation et que le Command Center. Les trois
+   reprises sont les seules exceptions, et pour une raison précise —
+   `handleNavGoto` remet l'écran à son état neutre (« picker », « setup »),
+   ce qui perdrait justement la session qu'on veut reprendre.
+   ══════════════════════════════════════════════════════════════════════════ */
+function qaRun(id){
+  switch(id){
+    /* Reprendre : on change d'onglet SANS toucher à l'écran en cours. */
+    case "quiz_resume":  return switchTab("quiz");
+    case "flash_resume": return switchTab("flash");
+    /* Une session guidée enchaîne des quiz ET des flashcards : on retourne
+       sur l'écran de l'étape en cours, quel qu'il soit. */
+    case "session_resume": return switchTab(state.flashScreen === "play" ? "flash" : "quiz");
+
+    case "smart_revision":   return handleNavGoto({goto: "smart"});
+    case "review_wrong":     return handleNavGoto({goto: "review"});
+    case "resume_course":    return continueRevision();
+    case "quiz_start":       return handleNavGoto({goto: "quiz"});
+    case "flash_start":      return handleNavGoto({goto: "flash"});
+    case "exam":             return handleNavGoto({goto: "exam"});
+    case "import_course":    return handleNavGoto({goto: "import-course"});
+    case "new_subject":      return handleNavGoto({goto: "library-add"});
+    case "explore_subjects": return handleNavGoto({goto: "library"});
+    case "ai":               return handleNavGoto({goto: "ai"});
+
+    /* Les deux faces du planning : l'emploi du temps d'un côté, le plan de
+       révision de l'autre — même onglet, deux vues. */
+    case "planning_today":
+    case "planning_setup":
+      state.planning.view = "schedule";
+      return handleNavGoto({goto: "planning"});
+    case "study_plan":
+      state.planning.view = "study";
+      state.studyPlanScreen = "overview";
+      return handleNavGoto({goto: "planning"});
+  }
+}
+
 /* ============================================================
    7ter. DASHBOARD — RENDU
    ============================================================ */
@@ -7560,16 +7954,23 @@ function continueRevision(){
    Quand une donnée manque, on le dit — on ne comble pas.
    ========================================================================== */
 /* ══════════════════════════════════════════════════════════════════════════
-   LA COMPOSITION — QUATRE RANGS, PAS UNE GRILLE
+   LA COMPOSITION — CINQ RANGS, PAS UNE GRILLE
    ──────────────────────────────────────────────────────────────────────────
      1. l'accueil        bannière de marque : qui je suis, quel jour, l'état
                          du jour en trois chiffres réels
-     2. le planning      carte pleine largeur — c'est la journée qui commande
-     3. révision │ progression   une ligne partagée : quoi faire, où j'en suis
-     4. les accès        ce qu'on ouvre souvent, en bas parce qu'on le
+     2. « Que veux-tu faire ? »  une action forte, deux à quatre appuis,
+                         choisis par le moteur selon la situation réelle
+     3. le planning      carte pleine largeur — c'est la journée qui commande
+     4. révision │ progression   une ligne partagée : quoi faire, où j'en suis
+     5. mes matières     ce qu'on ouvre souvent, en bas parce qu'on le
                          cherche seulement quand on sait déjà quoi faire
 
-   Le rang 3 met deux cartes côte à côte : c'est ce qui empêche la page de
+   Le rang 2 répond à la question qu'on se pose en arrivant ; le rang 4
+   explique POURQUOI (la notion, la raison, l'avancement). Un raccourci et son
+   explication ne sont pas un doublon : l'un fait gagner du temps, l'autre
+   fait comprendre.
+
+   Le rang 4 met deux cartes côte à côte : c'est ce qui empêche la page de
    devenir une colonne de blocs identiques, tout en gardant un ordre de
    lecture évident.
    ══════════════════════════════════════════════════════════════════════════ */
@@ -7577,6 +7978,7 @@ function renderDashboard(){
   const subjects = allSubjects();
   let html = `<div class="dashboard">`;
   html += renderDashboardBanner();
+  html += renderQuickActions();
   html += renderDashboardToday();
   html += `<div class="dash-cardrow dash-cardrow--pair">
     ${renderDashboardRevisionSection()}
@@ -7922,11 +8324,20 @@ function renderDashboardProgressSection(subjects){
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SECTION « ACCÈS RAPIDES » — les matières, puis les destinations
+   SECTION « MES MATIÈRES »
+   ──────────────────────────────────────────────────────────────────────────
+   Cette section portait, jusqu'à l'arrivée de « Que veux-tu faire ? », une
+   grille de huit boutons fixes. Huit destinations affichées en permanence,
+   c'est huit fois la même importance : aucune hiérarchie, et six d'entre
+   elles inutiles la plupart du temps. Les destinations n'ont pas disparu —
+   elles restent dans la barre de navigation et dans le Command Center
+   (Ctrl/⌘+K), et celles qui comptent à un instant donné remontent d'elles-
+   mêmes en haut de la page. Il reste ici ce que la section disait vraiment :
+   les matières.
    ══════════════════════════════════════════════════════════════════════════ */
 function renderDashboardAccessSection(subjects){
-  let html = `<section class="dash-section-block">
-    ${dashCardHead("layers", t("dashboard.quick_actions"), t("dashboard.section_access_sub"),
+  let html = `<section class="dash-section-block" id="dash-subjects-section">
+    ${dashCardHead("book", t("dashboard.my_subjects"), t("dashboard.section_access_sub"),
       `<button class="btn btn--tertiary" id="dash-viewall-subjects">${t("dashboard.view_all_subjects")}</button>`)}`;
 
   if(subjects.length === 0){
@@ -7952,26 +8363,7 @@ function renderDashboardAccessSection(subjects){
     html += `</div>`;
   }
 
-  /* Chaque destination porte son icône, du même jeu que les en-têtes de
-     carte : on reconnaît une action à sa forme avant de lire son libellé.
-     L'icône ne remplace jamais le texte — elle l'accompagne. */
-  const ACTIONS = [
-    ["play",     "dashboard.quick_start_revision", ` id="dash-start-revision"`, " is-primary"],
-    ["upload",   "dashboard.quick_import",         ` data-dash-import`,         ""],
-    ["exam",     "dashboard.quick_exam",           ` id="dash-exams-btn"`,      ""],
-    ["spark",    "dashboard.ai_assistant",         ` id="dash-ai-btn"`,         ""],
-    ["book",     "dashboard.quick_view_subjects",  ` id="dash-library-btn2"`,   ""],
-    ["plus",     "dashboard.quick_add_course",     ` data-dash-add-subject`,    ""],
-    ["compass",  "dashboard.quick_activity",       ` id="dash-activities-btn"`, ""],
-    ["calendar", "dashboard.quick_planning",       ` id="dash-planning-btn"`,   ""],
-  ];
-  html += `<div class="dash-actions" style="margin-top: var(--space-lg);">
-      ${ACTIONS.map(([icon, key, attrs, mod]) =>
-        `<button class="dash-action${mod}"${attrs}>
-          <span class="dash-action-icon">${dashIcon(icon)}</span>
-          <span class="dash-action-label">${t(key)}</span>
-        </button>`).join("")}
-    </div></section>`;
+  html += `</section>`;
   return html;
 }
 
@@ -8217,6 +8609,16 @@ function attachModeEvents(){
 }
 
 function attachDashboardEvents(){
+  /* « Que veux-tu faire ? » : un seul écouteur pour toute la zone. Chaque
+     tuile ne porte qu'un identifiant d'action ; c'est `qaRun()` qui sait où
+     elle mène, et lui seul. Une action ajoutée au catalogue n'a donc rien à
+     brancher ici. */
+  const qaZone = document.getElementById("dash-quick-actions");
+  if(qaZone) qaZone.addEventListener("click", (e)=>{
+    const btn = e.target.closest("[data-qa]");
+    if(btn) qaRun(btn.dataset.qa);
+  });
+
   /* Le bouton « Commencer à réviser » du bloc focal : il n'existe que dans
      le cas où l'utilisateur n'a encore ni recommandation ni reprise. */
   const startCta = document.getElementById("dash-banner-cta");
@@ -20710,7 +21112,208 @@ if(window.LyonAuth && typeof bsHandleOAuthReturn === "function"){
 // compte déjà connecté est ensuite détecté, handleAuthUserChange() bascule
 // aussitôt vers son espace — un bref effet de transition possible, jamais
 // de mélange de données entre comptes.
-loadDataAndRefreshUi();
+// L'écran de lancement se retire une fois ce premier rendu posé — dans les
+// deux cas, succès ou échec : une exception pendant le chargement initial ne
+// doit jamais laisser l'écran rouge bloqué indéfiniment (voir hideBootSplash
+// dans la section 17, avec son filet de sécurité).
+loadDataAndRefreshUi().then(hideBootSplash, hideBootSplash);
+
+/* ============================================================
+   17. PWA — INSTALLATION, HORS LIGNE, MISE À JOUR
+   ------------------------------------------------------------
+   Voir PWA.md pour le détail de chaque décision. En résumé :
+     - le service worker (sw.js) précharge l'app shell et décide, requête
+       par requête, s'il sert du cache ou du réseau — ce bloc-ci ne fait
+       QUE l'enregistrer et réagir à ses messages, jamais de logique de
+       cache ici ;
+     - une mise à jour n'est JAMAIS imposée : elle est proposée, et
+       n'agit qu'au clic — un rechargement forcé perdrait un quiz ou un
+       examen en cours, dont l'état n'est qu'en mémoire ;
+     - l'installation réutilise l'événement natif du navigateur plutôt
+       que de réinventer un bouton qui ne ferait rien de réel.
+   ============================================================ */
+
+/* Écran de lancement : un fondu, puis hors du DOM. Idempotent — appelable
+   depuis plusieurs chemins (succès, échec, filet de sécurité) sans risque
+   de double-déclenchement visible. */
+function hideBootSplash(){
+  const el = document.getElementById("boot-splash");
+  if(!el) return;
+  el.classList.add("is-hidden");
+  setTimeout(()=>{ el.remove(); }, 300);
+}
+/* Filet de sécurité : si le chargement initial reste bloqué (réseau très
+   dégradé, promesse qui ne se résout jamais), l'écran de lancement ne doit
+   pas rester rouge indéfiniment — au pire, on découvre l'application dans
+   un état partiel, jamais un écran mort. */
+setTimeout(hideBootSplash, 6000);
+
+/* ── SERVICE WORKER : ENREGISTREMENT ET DÉTECTION DE MISE À JOUR ─────────── */
+let pwaRegistration = null;
+if("serviceWorker" in navigator){
+  /* Sur la TOUTE PREMIÈRE visite (aucun service worker n'a encore jamais
+     contrôlé cette page), l'activation appelle clients.claim() — voir
+     sw.js — et déclenche donc, elle aussi, un "controllerchange", alors
+     qu'aucune nouvelle version n'existe. Sans cette mémorisation, l'écouteur
+     plus bas la confondrait avec une vraie mise à jour et rechargerait la
+     page tout seul : exactement le rechargement intempestif que toute cette
+     section a pour but d'éviter. Elle est MISE À JOUR (pas figée) par
+     l'écouteur lui-même : seule la toute première prise en charge est
+     ignorée, un vrai remplacement plus tard dans la même session recharge
+     normalement. */
+  let controllerEverSet = !!navigator.serviceWorker.controller;
+  /* Après la charge complète : l'enregistrement ne doit pas concurrencer le
+     chargement des ressources dont l'application a besoin tout de suite. */
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("sw.js").then((reg)=>{
+      pwaRegistration = reg;
+
+      /* Un service worker était déjà "en attente" avant même que cette page
+         n'ait fini de s'enregistrer (ouvert dans un autre onglet pendant la
+         mise à jour, par exemple) : la bannière doit le signaler tout de
+         suite, pas seulement pour les mises à jour détectées après coup. */
+      if(reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+
+      reg.addEventListener("updatefound", ()=>{
+        const installing = reg.installing;
+        if(!installing) return;
+        installing.addEventListener("statechange", ()=>{
+          /* "installed" + un controller déjà actif = une MISE À JOUR (pas la
+             toute première installation, qui n'a encore rien à remplacer). */
+          if(installing.state === "installed" && navigator.serviceWorker.controller){
+            showUpdateBanner(reg);
+          }
+        });
+      });
+    }).catch((e)=>{
+      console.warn("[PWA] enregistrement du service worker impossible :", e);
+    });
+  });
+
+  /* Le nouveau service worker vient de prendre la main (après SKIP_WAITING) :
+     on recharge une seule fois pour repartir sur une page entièrement neuve,
+     jamais un mélange d'ancien JS et de nouveau. Jamais pour la première
+     prise en charge (voir controllerEverSet ci-dessus) — seulement pour un
+     VRAI remplacement, premier ou non dans la session. */
+  let pwaReloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+    if(pwaReloading) return;
+    if(!controllerEverSet){ controllerEverSet = true; return; }
+    pwaReloading = true;
+    window.location.reload();
+  });
+}
+
+/* ── BANNIÈRE — mise à jour et installation ────────────────────────────────
+   Un seul composant pour les deux cas (voir COMPOSANTS.md « Bannière
+   d'action ») : un message, une action, une façon de la faire disparaître.
+   Non modale — jamais de fond assombri, jamais de piège à focus : elle ne
+   doit jamais empêcher de continuer à réviser pendant qu'elle attend une
+   réponse. */
+function showPwaBanner(opts){
+  closePwaBanner();
+  const el = document.createElement("div");
+  el.className = "pwa-banner";
+  el.setAttribute("role", "region");
+  el.setAttribute("aria-label", opts.title);
+  el.innerHTML =
+      '<span class="pwa-banner-icon" aria-hidden="true">' + dashIcon(opts.icon) + '</span>'
+    + '<span class="pwa-banner-body">'
+    +   '<span class="pwa-banner-title"></span>'
+    +   '<span class="pwa-banner-text"></span>'
+    + '</span>'
+    + '<span class="pwa-banner-actions">'
+    +   '<button type="button" class="btn btn--tertiary" data-pwa-dismiss></button>'
+    +   '<button type="button" class="btn btn--primary" data-pwa-action></button>'
+    + '</span>';
+  /* Texte par assignation, jamais interpolé dans le gabarit : même règle que
+     dsConfirm — aucune de ces chaînes ne doit pouvoir injecter du HTML. */
+  el.querySelector(".pwa-banner-title").textContent = opts.title;
+  el.querySelector(".pwa-banner-text").textContent = opts.body;
+  el.querySelector("[data-pwa-dismiss]").textContent = opts.dismissLabel;
+  el.querySelector("[data-pwa-action]").textContent = opts.actionLabel;
+  el.querySelector("[data-pwa-dismiss]").addEventListener("click", ()=>{
+    closePwaBanner();
+    if(opts.onDismiss) opts.onDismiss();
+  });
+  el.querySelector("[data-pwa-action]").addEventListener("click", ()=>{
+    opts.onAction();
+    closePwaBanner();
+  });
+  document.body.appendChild(el);
+  requestAnimationFrame(()=> el.classList.add("show"));
+}
+function closePwaBanner(){
+  const el = document.querySelector(".pwa-banner");
+  if(el) el.remove();
+}
+
+/* Une nouvelle version est installée et attend. On le dit, on ne l'impose
+   jamais : SKIP_WAITING n'est envoyé qu'au clic. */
+function showUpdateBanner(reg){
+  if(document.querySelector(".pwa-banner[data-pwa-kind='update']")) return;
+  showPwaBanner({
+    icon: "spark",
+    title: t("pwa.update_title"),
+    body: t("pwa.update_body"),
+    actionLabel: t("pwa.update_action"),
+    dismissLabel: t("pwa.update_later"),
+    onAction: ()=>{
+      if(reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+    },
+  });
+  document.querySelector(".pwa-banner").setAttribute("data-pwa-kind", "update");
+}
+
+/* ── INSTALLATION ──────────────────────────────────────────────────────────
+   `beforeinstallprompt` : Chrome/Edge/Android le déclenchent quand le
+   navigateur juge l'app installable (manifeste + service worker valides) et
+   PAS déjà installée. On intercepte son invite native par défaut pour la
+   remplacer par notre bannière, cohérente avec le reste de l'interface —
+   mais c'est le MÊME événement natif qui s'exécute au clic, jamais une
+   fausse installation. Safari (iOS/macOS) ne déclenche jamais cet
+   événement : l'installation s'y fait via son propre menu de partage,
+   qu'aucun code web ne peut ouvrir à la place de l'utilisateur — voir
+   PWA.md pour ce que ça implique. */
+let pwaInstallEvent = null;
+window.addEventListener("beforeinstallprompt", (e)=>{
+  e.preventDefault();
+  pwaInstallEvent = e;
+  /* Redemander à chaque visite serait une insistance ; une fois refusée ou
+     remise à plus tard dans les 14 derniers jours, on se tait. */
+  const dismissedAt = Number(lsGet(KEY_PWA_INSTALL_DISMISS)) || 0;
+  if(Date.now() - dismissedAt < 14 * 86400000) return;
+  showPwaBanner({
+    icon: "play",
+    title: t("pwa.install_title"),
+    body: t("pwa.install_body"),
+    actionLabel: t("pwa.install_action"),
+    dismissLabel: t("pwa.install_later"),
+    onAction: async ()=>{
+      if(!pwaInstallEvent) return;
+      pwaInstallEvent.prompt();
+      await pwaInstallEvent.userChoice;
+      pwaInstallEvent = null;
+    },
+    onDismiss: ()=>{ lsSet(KEY_PWA_INSTALL_DISMISS, String(Date.now())); },
+  });
+});
+window.addEventListener("appinstalled", ()=>{
+  pwaInstallEvent = null;
+  closePwaBanner();
+  showToast(t("pwa.installed_toast"), "success");
+});
+
+/* ── RECONNEXION ────────────────────────────────────────────────────────────
+   Le moteur de synchro (user-data.js) remet déjà en file tout domaine dont
+   l'écriture a échoué — "la prochaine occasion réessaiera" (voir son
+   commentaire dans runCycle()). Le retour en ligne EST cette occasion :
+   sans cet écouteur, il fallait attendre une écriture supplémentaire ou la
+   prochaine connexion pour que ça se déclenche. Rien de nouveau n'est
+   inventé ici, on appelle juste ce qui existe déjà au bon moment. */
+window.addEventListener("online", ()=>{
+  if(cloud) cloud.flush().catch(()=>{ /* on réessaiera à la prochaine occasion */ });
+});
 </script>
 </body>
 </html>

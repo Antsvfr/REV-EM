@@ -21,13 +21,31 @@ lui présenter une donnée inventée comme si elle était réelle.
 ## Architecture observée (voir `project-context` pour le détail)
 
 Site statique sans build, sans framework, sans bundler : un seul gros
-fichier `index.html` (~14 600 lignes, ~490 fonctions, HTML+CSS+JS inline)
-plus quelques modules JS autonomes chargés en `<script>` classique, dans
-cet ordre : `supabase-config.js` → SDK Supabase (CDN) → `auth.js` →
-`translations.js` → `smart-revision.js` → `statistics.js` → le script
+fichier `index.html` (~20 800 lignes, HTML+CSS+JS inline) plus des modules
+JS autonomes chargés en `<script>` classique, dans cet ordre :
+`supabase-config.js` → SDK Supabase (CDN) → `auth.js` → `translations.js`
+→ `smart-revision.js` → `statistics.js` → `planning.js` →
+`content-sources.js` → `sync-engine.js` → `source-adapters.js` →
+`user-data.js` → `command-center.js` → `quick-actions.js` → le script
 principal d'`index.html`. `ai-worker.js` est chargé séparément, à
 l'exécution, comme Web Worker. Aucun de ces modules ne modifie ce
 découpage sans raison réelle.
+
+**Le même patron revient partout : un moteur pur, un branchement.**
+`smart-revision.js`, `statistics.js`, `command-center.js` et
+`quick-actions.js` ne connaissent ni le DOM, ni `state`, ni la
+navigation — ils reçoivent des données et rendent un résultat. Ce qui
+sait lire `state` et où mènent les choses vit dans `index.html`. C'est ce
+qui permet de tester ces moteurs sous Node, sans navigateur, en quelques
+millisecondes. Tout nouveau moteur suit ce découpage.
+
+Depuis l'étape PWA, le site est aussi une application installable :
+`manifest.webmanifest`, `sw.js` (service worker — app shell hors ligne,
+mise à jour jamais imposée) et `icons/` s'ajoutent aux fichiers ci-dessus.
+`sw.js` tourne dans son propre contexte d'exécution, à part — même
+principe d'isolation que les moteurs purs, mais pour une raison
+différente (un service worker ne PEUT pas partager le contexte de la
+page). Voir `PWA.md`.
 
 ## Règles de modification du code
 

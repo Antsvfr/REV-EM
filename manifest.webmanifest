@@ -1,0 +1,25 @@
+{
+  "name": "REV-EM — Révision",
+  "short_name": "REV-EM",
+  "description": "Matières, quiz, flashcards, examens blancs et révision intelligente — dans une application installable.",
+  "id": ".",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "orientation": "any",
+  "lang": "fr",
+  "dir": "ltr",
+  "background_color": "#FBFAF8",
+  "theme_color": "#E31C3D",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "icons/icon-16.png", "sizes": "16x16", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-32.png", "sizes": "32x32", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
