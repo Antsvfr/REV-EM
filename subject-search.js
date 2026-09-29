@@ -15,23 +15,31 @@
    sens de « architecture future-proof » demandé, sans construire la
    recherche globale elle-même maintenant.
 
-   CLASSEMENT — une CASCADE, pas un mélange de niveaux
+   CLASSEMENT — cinq niveaux, TOUS affichés, du plus pertinent au moins
    ------------------------------------------------------------------------
-   Trois niveaux, du plus strict au plus permissif. Dès qu'un niveau trouve
-   au moins un résultat, les niveaux suivants ne sont PAS consultés : la
-   priorité va TOUJOURS aux correspondances qui commencent par la saisie,
-   jamais un mélange où une correspondance plus faible s'intercalerait entre
-   deux correspondances fortes.
+     1. le nom EST la saisie              "marketing" → "Marketing"
+     2. le nom commence par la saisie     "mar"       → "Marketing"
+     3. un MOT commence par la saisie     "mar"       → "Gestion du marketing"
+     4. le nom contient la saisie         "ting"      → "Marketing"
+     5. (égalité) ordre alphabétique      « Économie » se classe avec les E
 
-     1. commence par la saisie           "mar" → "Marketing"
-     2. un mot commence par la saisie    "mar" → "Gestion du marketing"
-                                          (seulement si le niveau 1 est vide)
-     3. contient la saisie               "commercial" → "Management commercial"
-                                          (seulement si les niveaux 1 et 2 sont vides)
+   Les niveaux se MÉLANGENT dans une seule liste triée par niveau : "mar" sur
+   [Marketing, Management, Management commercial, Gestion du marketing,
+   Finance] donne « Marketing » puis « Gestion du marketing » — la
+   correspondance forte d'abord, la plus faible ensuite, JAMAIS masquée.
+   (Une version précédente n'affichait que le meilleur niveau non vide : un
+   élève qui tapait « mar » ne voyait plus « Gestion du marketing » alors
+   qu'elle correspond bien. Le classement remplace le filtrage en cascade.)
 
-   Dans un même niveau, tri alphabétique sensible à la locale
-   (`Intl.Collator`) : « Économie » se classe avec les E, pas après le Z —
-   un tri par code de caractère brut mettrait la majuscule accentuée à part.
+   Plusieurs mots ("gestion mar") : chaque mot saisi doit commencer un mot du
+   nom (niveau 3) ou apparaître dans le nom (niveau 4).
+
+   Accents et casse : ignorés POUR LA RECHERCHE SEULEMENT. Le nom affiché est
+   toujours l'original ("Économie", pas "economie").
+
+   Tri : `Intl.Collator` (sensible à la locale, insensible aux accents et à la
+   casse, chiffres en ordre naturel : « Chapitre 2 » avant « Chapitre 10 »).
+   Un tri par code de caractère brut mettrait « Économie » après « Zoologie ».
    ========================================================================== */
 (function(global){
   "use strict";
@@ -67,37 +75,56 @@
     return items.slice().sort(function(a, b){ return compareText(getText(a) || "", getText(b) || ""); });
   }
 
-  /* `items` n'est jamais modifié ni recopié au-delà du tri final : la liste
-     réelle (state.userSubjects, etc.) reste la source unique — voir
-     SUBJECT_SEARCH.md pour la règle « pas de deuxième liste ». */
+  var EXACT = 1, STARTS = 2, WORD = 3, CONTAINS = 4;
+
+  /* Niveau d'un nom normalisé pour une saisie normalisée, ou 0 (pas de
+     correspondance). `words` = mots de la saisie. */
+  function tierOf(n, q, words){
+    if(n === q) return EXACT;
+    if(n.indexOf(q) === 0) return STARTS;
+    var nameWords = n.split(" ");
+    if(nameWords.some(function(w){ return w.indexOf(q) === 0; })) return WORD;
+    if(n.indexOf(q) !== -1) return CONTAINS;
+    if(words.length > 1){
+      var allWordStarts = words.every(function(t){ return nameWords.some(function(w){ return w.indexOf(t) === 0; }); });
+      if(allWordStarts) return WORD;
+      if(words.every(function(t){ return n.indexOf(t) !== -1; })) return CONTAINS;
+    }
+    return 0;
+  }
+
+  /* `items` n'est jamais modifié : la liste réelle (state.userSubjects, etc.)
+     reste la source unique — voir SUBJECT_SEARCH.md pour la règle « pas de
+     deuxième liste ». Retourne une NOUVELLE liste. */
   function filterAndSortSubjects(query, items, getText){
     var list = items || [];
     var text = typeof getText === "function" ? getText : defaultGetText;
     var q = normalize(query);
 
-    /* Rien à filtrer : l'ordre existant de l'appelant est respecté, on ne
-       fait que trier — c'est à l'appelant de décider s'il veut même appeler
-       cette fonction quand la recherche est vide (voir index.html : l'état
-       « sans recherche » garde son groupement par semestre, il n'appelle
-       pas cette fonction du tout). */
+    /* Rien à filtrer : on ne fait que trier (l'appelant décide s'il veut même
+       appeler cette fonction quand la recherche est vide — voir index.html :
+       l'état « sans recherche » garde son groupement par semestre). */
     if(!q) return sortByText(list, text);
 
-    var startsWith = [], wordStart = [], contains = [];
-    list.forEach(function(item){
-      var n = normalize(text(item));
+    var words = q.split(" ").filter(Boolean);
+    var ranked = [];
+    list.forEach(function(item, order){
+      var label = text(item) || "";
+      var n = normalize(label);
       if(!n) return;
-      if(n.indexOf(q) === 0){ startsWith.push(item); return; }
-      var isWordStart = n.split(" ").some(function(w){ return w.indexOf(q) === 0; });
-      if(isWordStart){ wordStart.push(item); return; }
-      if(n.indexOf(q) !== -1) contains.push(item);
+      var tier = tierOf(n, q, words);
+      if(tier) ranked.push({ item: item, tier: tier, label: label, order: order });
     });
-
-    var tier = startsWith.length ? startsWith : (wordStart.length ? wordStart : contains);
-    return sortByText(tier, text);
+    ranked.sort(function(a, b){
+      return (a.tier - b.tier) || compareText(a.label, b.label) || (a.order - b.order);
+    });
+    return ranked.map(function(r){ return r.item; });
   }
 
   global.LyonSubjectSearch = {
     normalize: normalize,
     filterAndSortSubjects: filterAndSortSubjects,
+    /* Nom courant demandé par l'architecture : même fonction, sens explicite. */
+    searchSubjects: filterAndSortSubjects,
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);

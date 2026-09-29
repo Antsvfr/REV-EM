@@ -42,6 +42,9 @@ const check = (name, ok, got) => {
 const eq = (name, got, want) =>
   check(name, JSON.stringify(got) === JSON.stringify(want), { attendu: want, obtenu: got });
 async function scenario(name, fn) {
+  /* ONLY=13 : ne rejoue que les scénarios dont le nom correspond (le n° 2
+     est toujours joué, il produit la base de départ des autres). */
+  if (process.env.ONLY && !new RegExp("^(" + process.env.ONLY + ")\\.").test(name) && !/^2\./.test(name)) return;
   current = name; console.log(`\n── ${name} ──`);
   try { await fn(); } catch (e) { check(`« ${name} » s'exécute sans exception`, false, String((e && e.stack) || e)); }
 }
@@ -68,7 +71,16 @@ const FAKE_SDK = `
     activities: ["user_id","ts"], chapter_visits: ["user_id","chapter_key"],
     profiles: ["id"],
   };
+  /* Persistance à travers un rechargement de l'onglet (F5 / réouverture) :
+     la base partagée et la « coupure réseau » simulée vivent dans
+     sessionStorage, comme le serveur réel survit à la fermeture d'un onglet. */
+  const store = (k, v) => { try{ sessionStorage.setItem(k, v); }catch(e){} };
+  const load = (k) => { try{ return sessionStorage.getItem(k); }catch(e){ return null; } };
+  /* Le contenu mémorisé l'emporte sur la graine d'un contexte neuf : après
+     un rechargement, le « serveur » se souvient de ce qu'il a reçu. */
+  try{ const saved = load("__DBSTORE"); if(saved) globalThis.__DB = JSON.parse(saved); }catch(e){}
   const DB = globalThis.__DB = globalThis.__DB || { tables: {}, calls: [], seq: 1 };
+  const netDown = () => load("__NET_DOWN") === "1";
   const rowsOf = (t) => (DB.tables[t] = DB.tables[t] || []);
   const keyOf = (t, r) => (CONFLICT_KEYS[t] || ["id"]).map(k => String(r[k])).join("|");
 
@@ -80,6 +92,7 @@ const FAKE_SDK = `
       : true);
     function run(){
       DB.calls.push({ table: table, op: st.op });
+      if(netDown()) return { data: null, error: { message: "Failed to fetch" } };
       try{
         if(st.op === "select"){
           const data = rowsOf(table).filter(matches).map(r => JSON.parse(JSON.stringify(r)));
@@ -97,12 +110,14 @@ const FAKE_SDK = `
             if(i >= 0) rows[i] = merged; else rows.push(merged);
             out.push(JSON.parse(JSON.stringify(merged)));
           });
+          store("__DBSTORE", JSON.stringify(DB));
           return { data: out, error: null };
         }
         if(st.op === "delete"){
           const rows = rowsOf(table);
           const kept = rows.filter(r => !matches(r));
           DB.tables[table] = kept;
+          store("__DBSTORE", JSON.stringify(DB));
           return { data: [], error: null };
         }
         return { data: null, error: { message: "op inconnue" } };
@@ -123,13 +138,17 @@ const FAKE_SDK = `
   }
 
   const authListeners = [];
+  /* Session mémorisée comme le fait le vrai SDK (clé sb-…-auth-token). */
+  const AUTH_KEY = "sb-test-auth-token";
+  let storedUser = null;
+  try{ storedUser = JSON.parse(localStorage.getItem(AUTH_KEY) || "null"); }catch(e){}
   const auth = {
-    _user: null,
+    _user: storedUser,
     onAuthStateChange(cb){ authListeners.push(cb); setTimeout(()=>cb("INITIAL_SESSION", auth._user ? { user: auth._user } : null), 0); return { data: { subscription: { unsubscribe(){} } } }; },
     async getUser(){ return { data: { user: auth._user }, error: null }; },
     async signUp(){ return { data: { user: null, session: null }, error: null }; },
     async signInWithPassword(){ return { data: { user: auth._user }, error: null }; },
-    async signOut(){ auth._user = null; authListeners.forEach(cb => cb("SIGNED_OUT", null)); return { error: null }; },
+    async signOut(){ auth._user = null; try{ localStorage.removeItem(AUTH_KEY); }catch(e){} authListeners.forEach(cb => cb("SIGNED_OUT", null)); return { error: null }; },
     async resend(){ DB.calls.push({ table: "@auth", op: "resend" }); return { error: null }; },
     async updateUser(p){ DB.calls.push({ table: "@auth", op: "updateUser", payload: p }); return { error: null }; },
     async resetPasswordForEmail(){ DB.calls.push({ table: "@auth", op: "reset" }); return { error: null }; },
@@ -137,6 +156,7 @@ const FAKE_SDK = `
   /* Utilisé par le test pour « connecter » quelqu'un. */
   globalThis.__signInAs = function(id, email){
     auth._user = { id: id, email: email };
+    try{ localStorage.setItem(AUTH_KEY, JSON.stringify(auth._user)); }catch(e){}
     authListeners.forEach(cb => cb("SIGNED_IN", { user: auth._user }));
   };
   globalThis.__signOut = function(){ auth.signOut(); };
@@ -169,6 +189,7 @@ async function device(browser, db) {
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push(String(e)));
+  if (process.env.DEBUG_CONSOLE) page.on("console", m => console.log("  [page]", m.text().slice(0, 300)));
   await page.goto(APP);
   await page.waitForTimeout(1200);
   return { ctx, page, errors };
@@ -469,7 +490,9 @@ try {
       const el = document.getElementById("cloud-indicator");
       return { cache: el.hidden, classe: el.className };
     });
-    check("et redevient discret une fois tout enregistré", idle.cache === true, idle);
+    check("et affiche « synchronisé » une fois tout enregistré", idle.cache === false && /is-synced/.test(idle.classe), idle);
+    const libelle = await d.page.evaluate(() => document.querySelector("#cloud-indicator .cloud-label").textContent);
+    eq("avec un libellé lisible", libelle, "Synchronisé");
 
     /* Une panne doit se voir. */
     const erreur = await d.page.evaluate(async () => {
@@ -479,7 +502,7 @@ try {
       return { cache: el.hidden, classe: el.className, titre: el.getAttribute("title") };
     });
     check("une erreur, elle, est affichée", erreur.cache === false, erreur);
-    check("avec une classe d'état", /is-error/.test(erreur.classe), erreur.classe);
+    check("avec une classe d'état", /is-pending/.test(erreur.classe), erreur.classe);
     check("et un libellé compréhensible, sans jargon",
       erreur.titre && erreur.titre.length > 10 && !/error|exception|null/i.test(erreur.titre), erreur.titre);
     await d.ctx.close();
@@ -658,6 +681,317 @@ try {
     check("et on annonce que la confirmation reste à faire",
       /confirmation|lien/i.test(envoi.toast), envoi.toast);
     eq("aucune erreur JavaScript", d.errors, []);
+    await d.ctx.close();
+  });
+
+
+  /* ======================================================================
+     13. HORS LIGNE — LE TRAVAIL LOCAL N'EST JAMAIS PERDU
+     ====================================================================== */
+  const ADD_OFFLINE = () => {
+    state.userSubjects.push({ id: "subj_off", name: "Créée hors ligne", semesterId: (SEMESTERS[0] || {}).id, color: "#E31C3D" });
+    saveUserSubjects();
+  };
+  const signedInDevice = async (db) => {
+    const d = await device(browser, db);
+    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
+    await d.page.waitForTimeout(1800);
+    return d;
+  };
+  const subjectsInDb = (page) => page.evaluate(() => (globalThis.__DB.tables.subjects || []).map(r => r.name).sort());
+
+  for (const variante of ["app tuée avant tout envoi", "fermeture normale (envoi de dernière minute)"]) {
+  await scenario(`13. modifié hors ligne, rouvert EN LIGNE — ${variante} : rien n'est écrasé`, async () => {
+    const d = await signedInDevice(dbAfterA);
+    await d.ctx.setOffline(true);
+    await d.page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "1"));
+    await d.page.evaluate(ADD_OFFLINE);
+    await d.page.waitForTimeout(1500);
+    const off = await d.page.evaluate(() => ({
+      classe: document.getElementById("cloud-indicator").className,
+      libelle: document.querySelector("#cloud-indicator .cloud-label").textContent,
+      file: cloudPendingOf(LyonAuth.state.user.id),
+    }));
+    check("l'indicateur dit « Hors connexion »", /is-offline/.test(off.classe) && off.libelle === "Hors connexion", off);
+    check("la modification est notée « à envoyer » (persistée)", off.file.includes("subjects"), off.file);
+    eq("rien n'est encore parti", await subjectsInDb(d.page), ["Matière a"]);
+
+    /* L'onglet est fermé, l'appareil retrouve du réseau, l'élève rouvre. */
+    await d.ctx.setOffline(false);
+    await d.page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "0"));
+    /* « App tuée » : le navigateur est fermé sans avoir le temps d'envoyer quoi
+       que ce soit. Seule la file persistée dans le stockage local survit —
+       c'est précisément ce que ce scénario protège. */
+    if (variante.startsWith("app tuée")) await d.page.evaluate(() => cloud.dispose());
+    await d.page.reload();
+    await d.page.waitForTimeout(2600);
+    const apres = await d.page.evaluate(() => ({
+      local: state.userSubjects.map(s => s.name).sort(),
+      file: cloudPendingOf(LyonAuth.state.user.id),
+      classe: document.getElementById("cloud-indicator").className,
+    }));
+    eq("la matière créée hors ligne est TOUJOURS là", apres.local, ["Créée hors ligne", "Matière a"]);
+    eq("elle est arrivée dans le compte", await subjectsInDb(d.page), ["Créée hors ligne", "Matière a"]);
+    eq("la file « à envoyer » est vide", apres.file, []);
+    check("et l'indicateur est revenu à « synchronisé »", /is-synced/.test(apres.classe), apres.classe);
+    eq("aucune erreur JavaScript", d.errors, []);
+    await d.ctx.close();
+  });
+  }
+
+  await scenario("14. la reconnexion envoie sans rechargement (événement « online »)", async () => {
+    const d = await signedInDevice(dbAfterA);
+    await d.ctx.setOffline(true);
+    await d.page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "1"));
+    await d.page.evaluate(ADD_OFFLINE);
+    await d.page.waitForTimeout(1300);
+    eq("hors ligne : rien ne part", await subjectsInDb(d.page), ["Matière a"]);
+    await d.page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "0"));
+    await d.ctx.setOffline(false);
+    await d.page.waitForTimeout(1800);
+    eq("le réseau revient : ça part tout seul", await subjectsInDb(d.page), ["Créée hors ligne", "Matière a"]);
+    eq("aucune erreur JavaScript", d.errors, []);
+    await d.ctx.close();
+  });
+
+  await scenario("15. panne serveur (en ligne) : nouvelle tentative automatique", async () => {
+    const d = await signedInDevice(dbAfterA);
+    await d.page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "1"));
+    await d.page.evaluate(ADD_OFFLINE);
+    await d.page.waitForTimeout(1600);
+    const panne = await d.page.evaluate(() => ({
+      classe: document.getElementById("cloud-indicator").className,
+      toasts: [...document.querySelectorAll(".toast")].map(x => x.textContent.trim()),
+    }));
+    check("l'indicateur dit « à terminer »", /is-pending/.test(panne.classe), panne);
+    await d.page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "0"));
+    await d.page.waitForTimeout(3500);
+    eq("le serveur revient : réessayé sans action de l'élève", await subjectsInDb(d.page), ["Créée hors ligne", "Matière a"]);
+    eq("aucune erreur JavaScript", d.errors, []);
+    await d.ctx.close();
+  });
+
+  for (const reponse of ["yes", "alt"]) {
+  await scenario(`16. première lecture en échec, travail local, puis reprise — l'utilisateur répond « ${reponse === "yes" ? "envoyer" : "utiliser mon compte"} »`, async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    await ctx.addInitScript(`globalThis.__DB = ${JSON.stringify(dbAfterA)};`);
+    await ctx.addInitScript(FAKE_SDK);
+    const page = await ctx.newPage();
+    const errs = []; page.on("pageerror", e => errs.push(String(e)));
+    await page.goto(APP);
+    await page.waitForTimeout(800);
+    await page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "1"));
+    await page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
+    await page.waitForTimeout(1500);
+    const echec = await page.evaluate(() => ({
+      classe: document.getElementById("cloud-indicator").className,
+      toast: [...document.querySelectorAll(".toast")].map(x => x.textContent.trim()).join(" | "),
+      chargement: state.accountLoading,
+    }));
+    check("l'échec est dit à l'élève (une fois)", /récupérer/i.test(echec.toast), echec.toast);
+    check("l'indicateur dit « à terminer »", /is-pending/.test(echec.classe), echec.classe);
+    eq("l'écran de chargement ne reste pas bloqué", echec.chargement, false);
+
+    /* Il travaille quand même : la modification est mise de côté. */
+    await page.evaluate(ADD_OFFLINE);
+    check("elle est notée « à envoyer »",
+      await page.evaluate(() => cloudPendingOf(LyonAuth.state.user.id).includes("subjects")));
+    eq("rien n'est parti", await subjectsInDb(page), ["Matière a"]);
+
+    /* Le réseau revient : cet appareil a du travail ET le compte a des données
+       — c'est la question de première connexion, jamais une fusion en douce. */
+    await page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "0"));
+    await page.waitForTimeout(4500);
+    const modale = await page.evaluate(() => !!document.querySelector(".modal--confirm"));
+    check("la question de première connexion est posée", modale);
+    eq("et rien n'est parti avant la réponse", await subjectsInDb(page), ["Matière a"]);
+    await page.click(reponse === "yes" ? '[data-ds-confirm="yes"]' : '[data-ds-confirm="alt"]');
+    await page.waitForTimeout(2000);
+    const fin = await page.evaluate(() => ({
+      local: state.userSubjects.map(s => s.name).sort(),
+      file: cloudPendingOf(LyonAuth.state.user.id),
+      classe: document.getElementById("cloud-indicator").className,
+    }));
+    if (reponse === "yes") {
+      eq("après fusion : données du compte ET travail local", fin.local, ["Créée hors ligne", "Matière a"]);
+      eq("et le compte a reçu la matière locale", await subjectsInDb(page), ["Créée hors ligne", "Matière a"]);
+    } else {
+      eq("« utiliser mon compte » : le compte fait foi", fin.local, ["Matière a"]);
+      eq("et le compte n'a pas reçu la matière locale écartée", await subjectsInDb(page), ["Matière a"]);
+    }
+    eq("la file « à envoyer » est vide", fin.file, []);
+    check("indicateur « synchronisé »", /is-synced/.test(fin.classe), fin.classe);
+    eq("aucune erreur JavaScript", errs, []);
+    await ctx.close();
+  });
+  }
+
+  /* ======================================================================
+     17. ISOLATION — A puis B puis A, sans fuite ni flash
+     ====================================================================== */
+  await scenario("17. changement de compte : aucune donnée de A visible pour B, même une milliseconde", async () => {
+    const d = await signedInDevice(dbAfterA);
+    await d.page.evaluate(() => {
+      state.tab = "library"; render();
+      window.__leaks = [];
+      window.__sample = setInterval(() => {
+        const uid = currentAuthId();
+        const inState = JSON.stringify([state.userSubjects, state.userChapters, state.progress, state.dash.totalAnswered]).includes("Matière a")
+          || state.dash.totalAnswered === 20;
+        const inDom = (document.getElementById("content").textContent || "").includes("Matière a");
+        if (uid === "22222222-2222-4222-8222-222222222222" && (inState || inDom)) window.__leaks.push({ inState, inDom, t: performance.now() });
+      }, 2);
+    });
+    const avantA = await d.page.evaluate(() => state.userSubjects.map(s => s.name));
+    eq("A voit ses matières", avantA, ["Matière a"]);
+
+    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_B, "b@test.invalid"]);
+    await d.page.waitForTimeout(2200);
+    const b = await d.page.evaluate(() => ({
+      leaks: window.__leaks,
+      subjects: state.userSubjects.length, answered: state.dash.totalAnswered,
+      progress: Object.keys(state.progress).length,
+      nsA: Object.keys(localStorage).filter(k => k.includes("u.11111111") && !k.endsWith(".cloud-choice")).length,
+      texte: document.getElementById("content").textContent,
+    }));
+    eq("aucune fuite observée pendant toute la bascule", b.leaks, []);
+    eq("B démarre sans matière", b.subjects, 0);
+    eq("ni compteur", b.answered, 0);
+    check("l'écran de B ne mentionne pas la matière de A", !/Matière a/.test(b.texte), b.texte.slice(0, 200));
+    eq("le cache de A a été effacé après envoi confirmé (hors choix de migration, conservé)", b.nsA, 0);
+    check("les données de A sont bien dans le compte", (await subjectsInDb(d.page)).includes("Matière a"));
+
+    await d.page.evaluate(() => { ((tag)=>{ state.userSubjects = [{ id: 'subj_'+tag, name: 'Matière '+tag, semesterId: (SEMESTERS[0]||{}).id, color: '#E31C3D' }]; saveUserSubjects(); })('b'); });
+    await d.page.waitForTimeout(1500);
+    await d.page.evaluate(() => globalThis.__signOut());
+    await d.page.waitForTimeout(1500);
+    const invite = await d.page.evaluate(() => ({ subjects: state.userSubjects.length, tab: state.tab }));
+    eq("déconnecté : espace invité vide", invite.subjects, 0);
+
+    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
+    await d.page.waitForTimeout(2200);
+    const a2 = await d.page.evaluate(() => ({
+      subjects: state.userSubjects.map(s => s.name), leaks: window.__leaks,
+    }));
+    eq("A retrouve exactement ses données, sans celles de B", a2.subjects, ["Matière a"]);
+    eq("toujours aucune fuite", a2.leaks, []);
+    eq("aucune erreur JavaScript", d.errors, []);
+    await d.ctx.close();
+  });
+
+  await scenario("18. déconnexion : ce qui attend encore part AVANT la fin de session", async () => {
+    const d = await signedInDevice(dbAfterA);
+    await d.page.evaluate(() => { state.userSubjects.push({ id: 'subj_off', name: 'Créée hors ligne', semesterId: (SEMESTERS[0]||{}).id, color: '#E31C3D' }); saveUserSubjects(); switchTab("myspace"); });
+    await d.page.waitForTimeout(150);
+    await d.page.click("#account-signout-btn");
+    await d.page.waitForTimeout(1800);
+    eq("la matière créée juste avant est dans le compte", await subjectsInDb(d.page), ["Créée hors ligne", "Matière a"]);
+    eq("aucune erreur JavaScript", d.errors, []);
+    await d.ctx.close();
+  });
+
+  await scenario("19. le rechargement (F5) d'un compte connecté ne montre jamais l'espace invité", async () => {
+    const d = await signedInDevice(dbAfterA);
+    await d.page.reload({ waitUntil: "domcontentloaded" });
+    const echant = await d.page.evaluate(() => new Promise(resolve => {
+      const seen = [];
+      const t0 = performance.now();
+      const iv = setInterval(() => {
+        const sp = !!document.getElementById("boot-splash");
+        seen.push({ splash: sp, n: state.userSubjects.length });
+        if (performance.now() - t0 > 1800) { clearInterval(iv); resolve(seen); }
+      }, 20);
+    }));
+    const flash = echant.filter(x => !x.splash && x.n === 0);
+    eq("jamais d'écran vide visible après le lancement", flash.length, 0);
+    check("les matières du compte sont affichées", echant[echant.length - 1].n === 1, echant[echant.length - 1]);
+    await d.ctx.close();
+  });
+
+  await scenario("20. les quatre états de l'indicateur, dans les cinq langues", async () => {
+    const d = await signedInDevice(dbAfterA);
+    const LIBELLES = {
+      fr: ["Synchronisé", "Synchronisation…", "Hors connexion", "Synchronisation à terminer"],
+      en: ["Synced", "Syncing…", "Offline", "Sync to finish"],
+      es: ["Sincronizado", "Sincronizando…", "Sin conexión", "Sincronización pendiente"],
+      de: ["Synchronisiert", "Synchronisierung…", "Offline", "Synchronisierung ausstehend"],
+      it: ["Sincronizzato", "Sincronizzazione…", "Offline", "Sincronizzazione da completare"],
+    };
+    for (const lang of Object.keys(LIBELLES)) {
+      const r = await d.page.evaluate((l) => {
+        LyonI18n.setLang(l);
+        const lu = () => { updateCloudIndicator(); const el = document.getElementById("cloud-indicator"); return el.querySelector(".cloud-label").textContent + "|" + el.className; };
+        const out = [];
+        cloudState = { phase: "idle", at: 1, errors: [] }; out.push(lu());
+        cloudState = { phase: "pulling", at: 1, errors: [] }; out.push(lu());
+        cloudState = { phase: "idle", at: 1, errors: [] };
+        return { out, lecture: null };
+      }, lang);
+      eq(`[${lang}] synchronisé`, r.out[0], LIBELLES[lang][0] + "|cloud-status is-synced");
+      eq(`[${lang}] synchronisation`, r.out[1], LIBELLES[lang][1] + "|cloud-status is-syncing");
+      await d.ctx.setOffline(true);
+      const off = await d.page.evaluate(() => { updateCloudIndicator(); return document.querySelector("#cloud-indicator .cloud-label").textContent; });
+      await d.ctx.setOffline(false);
+      eq(`[${lang}] hors connexion`, off, LIBELLES[lang][2]);
+      const pend = await d.page.evaluate(() => {
+        cloudState = { phase: "error", at: 1, errors: [] }; updateCloudIndicator();
+        const x = document.querySelector("#cloud-indicator .cloud-label").textContent;
+        cloudState = { phase: "idle", at: 1, errors: [] }; updateCloudIndicator();
+        return x;
+      });
+      eq(`[${lang}] à terminer`, pend, LIBELLES[lang][3]);
+    }
+    await d.page.evaluate(() => LyonI18n.setLang("fr"));
+    await d.ctx.close();
+  });
+
+
+  await scenario("21. sauvegarde, restauration et réinitialisation ne touchent que le compte courant", async () => {
+    const d = await signedInDevice(dbAfterA);
+    const P = "revisions-etude-marche:";
+    await d.page.evaluate(([P, B]) => {
+      /* Le cache d'un AUTRE compte, resté sur cet appareil (appareil partagé). */
+      localStorage.setItem(P + "u." + B + ".user-subjects", JSON.stringify([{ id: "secret_b", name: "Secret de B" }]));
+      localStorage.setItem(P + "u." + B + ".sync-pending", JSON.stringify(["subjects"]));
+      window.__exp = null;
+      window.downloadJSON = (obj) => { window.__exp = obj; };
+    }, [P, USER_B]);
+
+    const exp = await d.page.evaluate(() => { exportAllData(); return JSON.stringify(window.__exp); });
+    check("la sauvegarde contient les données du compte courant", /Matière a/.test(exp), exp.slice(0, 200));
+    check("mais RIEN d'un autre compte", !/Secret de B|secret_b/.test(exp), exp.slice(0, 200));
+    check("ni de clé préfixée par un compte", !/"u\./.test(exp), exp.slice(0, 200));
+
+    /* Restauration : une clé d'un autre compte est ignorée, une clé inconnue aussi. */
+    const contenu = JSON.stringify({ app: "REV-EM", data: {
+      "user-subjects": [{ id: "imp1", name: "Importée", semesterId: "s1", color: "#000" }],
+      ["u.22222222-2222-4222-8222-222222222222.badges"]: { intrus: { earnedDate: "2026-01-01" } },
+      "lyon-lang": "de", "cle-inconnue": { x: 1 },
+    } });
+    const r2 = await d.page.evaluate(async (txt) => {
+      window.readFileAsText = async () => txt;
+      await importAllDataFromFile({ name: "sauvegarde.json" });
+      return { subjects: lsGet(KEY_USER_SUBJECTS).map(s => s.name), badges: JSON.stringify(lsGet(KEY_BADGES)),
+               inconnue: localStorage.getItem("revisions-etude-marche:cle-inconnue") };
+    }, contenu);
+    eq("la donnée du fichier est restaurée dans le stockage du compte courant (l'app recharge ensuite)", r2.subjects, ["Importée"]);
+    check("la clé d'un autre compte est ignorée", !/intrus/.test(r2.badges), r2.badges);
+    eq("une clé inconnue n'est pas écrite en vrac dans le stockage", r2.inconnue, null);
+
+    /* Réinitialisation : seul l'espace de A part. */
+    const rst = await d.page.evaluate(([P, B]) => {
+      localStorage.setItem(P + "lyon-lang", JSON.stringify("de"));
+      resetAllData();
+      return {
+        aRestant: Object.keys(localStorage).filter(k => k.indexOf(P + "u.11111111") === 0 && !k.endsWith(".cloud-choice")).length,
+        bIntact: !!localStorage.getItem(P + "u." + B + ".user-subjects"),
+        bFile: !!localStorage.getItem(P + "u." + B + ".sync-pending"),
+        langue: !!localStorage.getItem(P + "lyon-lang"),
+      };
+    }, [P, USER_B]);
+    eq("le cache du compte courant est vidé", rst.aRestant, 0);
+    check("celui de l'autre compte est INTACT (il peut contenir du travail non envoyé)", rst.bIntact && rst.bFile, rst);
+    check("la langue de l'appareil est conservée", rst.langue, rst);
     await d.ctx.close();
   });
 

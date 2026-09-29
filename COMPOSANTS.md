@@ -288,6 +288,24 @@ Voir `PWA.md` pour ses deux usages réels (mise à jour, installation).
 
 ---
 
+## 13. Indicateur de synchronisation (`.cloud-status`)
+
+Un point de 7 px dans la barre du haut (`#cloud-indicator`,
+`role="status"`, `aria-live="polite"`) ; son état est dit en toutes lettres
+dans l'infobulle et pour les lecteurs d'écran (le texte visible débordait la
+navigation). Quatre états —
+`is-synced` (point plein vert), `is-syncing` (cercle qui tourne),
+`is-offline` (cercle vide), `is-pending` (point ambre, « Synchronisation à
+terminer »). **Invisible pour un invité.** Jamais de bandeau. Le seul
+mouvement est la rotation pendant une synchronisation réelle, désactivée avec
+`prefers-reduced-motion`. Couleurs : `--success`, `--warning`, `--accent-3`,
+`--text-muted` — aucune valeur littérale. Logique : `cloudIndicatorState()`
+dans `index.html`, voir `SYNC_AUDIT.md` §8.
+
+**Écran de chargement d'espace** (`.account-loading`) : montré pendant un
+changement de compte, à la place de toute donnée. Même rotation que
+l'indicateur.
+
 ## Règles transversales
 
 - **Responsive** : deux seuils seulement, ceux du système — 1024 (tablette) et

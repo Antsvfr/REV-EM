@@ -909,8 +909,33 @@
        chaque écriture de matières ; les chapitres et documents en dépendent. */
     const ctx = { subjectIdByLocal: {}, subjectLocalByUuid: {} };
 
-    let pending = new Set();       // domaines à pousser
+    /* Ce qui attend d'être poussé doit SURVIVRE à la fermeture de l'onglet.
+       Sans cela, une modification faite hors ligne (ou dans les 900 ms avant
+       de fermer) n'existait plus que dans le cache local — et le pull suivant,
+       pour un compte en mode « cloud », l'écrasait en silence. `onPending`
+       reçoit la liste à CHAQUE changement ; l'appelant la persiste, et la
+       rend par `initialPending` à la session suivante. */
+    const onPending = typeof o.onPending === "function" ? o.onPending : function(){};
+    const isOnline = typeof o.isOnline === "function" ? o.isOnline
+      : (() => (typeof navigator === "undefined" || navigator.onLine !== false));
+    /* Nouvelle tentative après un échec : 2 s, 4 s, 8 s… plafonné à 60 s.
+       `retryBaseMs: 0` la désactive (tests déterministes). */
+    const retryBaseMs = o.retryBaseMs === undefined ? 2000 : o.retryBaseMs;
+    const setT = typeof o.setTimeout === "function" ? o.setTimeout : setTimeout;
+
+    let pending = new Set(Array.isArray(o.initialPending) ? o.initialPending.filter(n => BY_NAME[n]) : []);
+    let inFlightDomains = new Set(); // domaines dont l'écriture est en cours
+    let retryTimer = null;
+    let retryAttempt = 0;
     let timer = null;
+    let disposed = false;
+
+    /* Ensemble à persister = en attente + en cours d'envoi : un domaine en vol
+       n'est pas encore confirmé, il doit donc rester « à terminer » si
+       l'onglet se ferme à cet instant. */
+    function notifyPending(){
+      try { onPending([...new Set([...pending, ...inFlightDomains])]); } catch (e) { /* jamais bloquant */ }
+    }
     let inFlight = null;           // promesse du cycle d'écriture en cours
     let lastSnapshot = null;       // fourni par l'appelant, relu à chaque cycle
     let snapshotFn = typeof o.snapshot === "function" ? o.snapshot : null;
@@ -1044,9 +1069,11 @@
     }
 
     async function runCycle(){
+      if (disposed) return { ok: false, written: 0, errors: [] };
       const todo = [...pending];
       pending = new Set();
-      if (!todo.length) return { ok: true, written: 0, errors: [] };
+      if (!todo.length) { notifyPending(); return { ok: true, written: 0, errors: [] }; }
+      inFlightDomains = new Set(todo);
 
       const snap = currentSnapshot();
       onStatus({ phase: "pushing", domains: todo });
@@ -1070,12 +1097,31 @@
       }
 
       failed.forEach(f => errors.push(f));
+      inFlightDomains = new Set();
+      notifyPending();
+      if (failed.length) scheduleRetry(); else { retryAttempt = 0; }
       onStatus({ phase: failed.length ? "error" : "idle", errors: failed, at: now() });
       return { ok: !failed.length, written: written, errors: failed };
     }
 
+    /* Une coupure réseau temporaire ne doit pas laisser des données en attente
+       jusqu'à la prochaine écriture de l'élève : on retente, de plus en plus
+       lentement. Hors ligne, inutile d'essayer — c'est l'événement « online »
+       (voir index.html) qui relance. */
+    function scheduleRetry(){
+      if (disposed || !retryBaseMs || retryTimer || !pending.size || !isOnline()) return;
+      const delay = Math.min(60000, retryBaseMs * Math.pow(2, retryAttempt));
+      retryAttempt++;
+      retryTimer = setT(() => {
+        retryTimer = null;
+        if (!pending.size) return;
+        inFlight = (inFlight || Promise.resolve()).then(runCycle);
+      }, delay);
+      if (retryTimer && typeof retryTimer.unref === "function") retryTimer.unref();
+    }
+
     function schedule(){
-      if (timer) return;
+      if (disposed || timer) return;
       timer = setTimeout(() => {
         timer = null;
         inFlight = (inFlight || Promise.resolve()).then(runCycle);
@@ -1089,10 +1135,11 @@
          terminer un quiz écrit quatre clés locales d'affilée, ça ne doit pas
          faire quatre allers-retours réseau. */
       push(domainNames){
+        if (disposed) return false;
         const names = Array.isArray(domainNames) ? domainNames : [domainNames];
         let any = false;
         names.forEach(n => { if (BY_NAME[n]) { pending.add(n); any = true; } });
-        if (any) schedule();
+        if (any) { notifyPending(); schedule(); }
         return any;
       },
 
@@ -1101,6 +1148,7 @@
       pushAll(snap){
         lastSnapshot = snap || lastSnapshot;
         DOMAINS.forEach(d => pending.add(d.name));
+        notifyPending();
         if (timer) { clearTimeout(timer); timer = null; }
         inFlight = (inFlight || Promise.resolve()).then(runCycle);
         return inFlight;
@@ -1113,12 +1161,43 @@
          poussé perdrait la donnée pour de bon. */
       async flush(){
         if (timer) { clearTimeout(timer); timer = null; }
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
         if (pending.size) inFlight = (inFlight || Promise.resolve()).then(runCycle);
         const r = await (inFlight || Promise.resolve({ ok: true, written: 0, errors: [] }));
         return { ok: !!(r && r.ok) && pending.size === 0, pending: [...pending] };
       },
 
       setSnapshotSource(fn){ snapshotFn = typeof fn === "function" ? fn : null; },
+
+      /* Oublie les clés vues : plus aucune suppression ne sera déduite de
+         « présent chez le compte, absent ici ». À utiliser quand l'état local
+         n'a PAS encore absorbé ce que le compte contient (première connexion,
+         reprise après une coupure) : sans cela, l'envoi effacerait les
+         éléments qu'un autre appareil a ajoutés entre-temps. Mieux vaut qu'une
+         suppression faite hors ligne réapparaisse plutôt qu'une création
+         disparaisse. */
+      forgetKnownKeys(){
+        DOMAINS.forEach(d => { knownKeys[d.name] = new Set(); });
+      },
+
+      /* Abandonne ce que la file contient (l'utilisateur a choisi « utiliser
+         mon compte » : ses modifications locales non envoyées sont écartées). */
+      discardPending(){
+        pending = new Set();
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        notifyPending();
+      },
+
+      /* Arrête tout : plus de minuterie, plus d'écriture, plus de notification.
+         Une instance abandonnée (lecture initiale en échec, compte changé) ne
+         doit jamais pousser plus tard un état qui n'est plus le sien. La file
+         déjà persistée par `onPending` reste intacte pour la reprise. */
+      dispose(){
+        disposed = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      },
       get userId(){ return userId; },
       get pendingDomains(){ return [...pending]; },
       get errors(){ return errors.slice(); },
@@ -1126,6 +1205,11 @@
   }
 
   global.LyonUserData = {
+    /* Version du contrat entre ce module et index.html. index.html refuse de
+       synchroniser avec un module plus ancien (voir userDataModuleIsCurrent) :
+       un service worker peut servir un ancien user-data.js à côté d'un
+       index.html tout neuf, le temps d'une session. */
+    API_VERSION: 2,
     createCloud,
     rebuildWrongQuestions,
     DOMAINS_BY_STORAGE_KEY,

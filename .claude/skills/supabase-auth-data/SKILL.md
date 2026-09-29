@@ -36,7 +36,7 @@ description: Authentification (auth.js), session, schéma Supabase réel, et le 
 frontend (`profiles`, depuis `auth.js`). Depuis, **`user-data.js`
 (`window.LyonUserData`) lit et écrit les 18 tables de données
 personnelles** : Supabase est la source de vérité pour un compte connecté,
-`localStorage` est devenu un cache. Voir `SYNC_UTILISATEUR.md` pour
+`localStorage` est devenu un cache. Voir `SYNC_UTILISATEUR.md` (fonctionnement) et `SYNC_AUDIT.md` (audit, défauts corrigés, limites) pour
 l'architecture complète (domaines, stratégie de conflit, suppressions).
 
 Migrations : **tout est dans `supabase/migrations/`, dans l'ordre numérique

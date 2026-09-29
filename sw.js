@@ -19,7 +19,7 @@
    Ce n'est PAS ce qui garantit que index.html reste à jour — voir la
    stratégie « réseau d'abord » plus bas, qui s'en charge sans dépendre d'un
    humain qui penserait à incrémenter ce numéro à chaque déploiement. */
-const CACHE_VERSION = "rev-em-v2";
+const CACHE_VERSION = "rev-em-v3";
 const SHELL_CACHE = CACHE_VERSION + "-shell";
 const RUNTIME_CACHE = CACHE_VERSION + "-runtime";
 
@@ -168,6 +168,15 @@ self.addEventListener("fetch", (event) => {
 
   const sameOrigin = url.origin === self.location.origin;
   const allowedThirdParty = THIRDPARTY_HOSTS.includes(url.hostname);
+
+  /* Les modules JavaScript de l'application : réseau d'abord, comme la page
+     qui les charge. Ils dépendent les uns des autres (index.html ↔
+     user-data.js…) : servir un ancien module à côté d'une page neuve casse
+     le contrat entre les deux. Hors ligne, le cache reprend la main. */
+  if(sameOrigin && /\.js$/.test(url.pathname)){
+    event.respondWith(networkFirst(request));
+    return;
+  }
 
   if(sameOrigin || allowedThirdParty){
     event.respondWith(staleWhileRevalidate(request, sameOrigin ? SHELL_CACHE : RUNTIME_CACHE));

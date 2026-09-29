@@ -13,31 +13,48 @@ index.html                affiche, et exécute le clic sur un résultat
 Même découpage que `smart-revision.js`, `command-center.js`,
 `quick-actions.js` : un moteur pur, un branchement. `subject-search.js` se
 teste sous Node en quelques millisecondes — `tests/subject-search.test.js`,
-19 vérifications.
+25 vérifications.
 
-## Le classement — une cascade, jamais un mélange
+## Le classement — cinq niveaux, tous affichés
 
-Trois niveaux, du plus strict au plus permissif :
+Du plus pertinent au moins pertinent :
 
-1. **commence par la saisie** — `"mar"` → *Marketing*
-2. **un mot commence par la saisie** — `"mar"` → *Gestion du marketing*
-3. **contient la saisie** — `"commercial"` → *Management commercial*
+1. **le nom EST la saisie** — `"marketing"` → *Marketing*
+2. **le nom commence par la saisie** — `"mar"` → *Marketing*
+3. **un mot commence par la saisie** — `"mar"` → *Gestion du marketing*
+4. **le nom contient la saisie** — `"ting"` → *Marketing*
+5. **égalité : ordre alphabétique** (`Intl.Collator`), puis ordre d'origine
 
-Dès qu'un niveau trouve au moins un résultat, les niveaux suivants ne sont
-**pas** consultés. C'est ce qui empêche une correspondance faible de
-s'intercaler entre deux correspondances fortes : pour `"mar"` sur
-`[Management, Marketing, Gestion du marketing]`, seule *Marketing*
-apparaît — *Gestion du marketing* ne sort que si rien ne COMMENCE par
-`"mar"`.
+Les niveaux se **mélangent dans une seule liste**, triée par niveau. Pour
+`"mar"` sur `[Marketing, Management, Management commercial, Gestion du
+marketing, Finance]` : *Marketing*, puis *Gestion du marketing* — la
+correspondance forte d'abord, la plus faible ensuite, jamais masquée.
 
-Dans un même niveau, tri alphabétique via `Intl.Collator("fr", {sensitivity:
-"base"})` : *Économie* se classe avec les E, jamais après le Z d'un tri par
-code de caractère brut.
+> **Changement délibéré (étape « Recherche premium + synchronisation »).**
+> La première version était une *cascade* : dès qu'un niveau trouvait un
+> résultat, les suivants n'étaient pas consultés — pour `"mar"`, seule
+> *Marketing* sortait, et *Gestion du marketing* disparaissait alors qu'elle
+> correspond bien. Le cahier des charges de cette étape exige le contraire
+> (exemple `"mar"` → *Marketing*, *Gestion du marketing*). Le classement
+> remplace donc le filtrage en cascade ; les tests qui affirmaient
+> l'ancienne cascade ont été réécrits en conséquence, pas contournés.
 
-Accents et casse n'ont pas à être tapés justes : `"eco"` trouve *Économie*,
-`"MARKETING"` trouve *Marketing* — même normalisation (NFD, marques
-combinantes retirées) que `command-center.js`, dupliquée à dessein plutôt
-que partagée, pour que ce fichier reste utilisable seul.
+**Plusieurs mots** (`"gestion mar"`) : chaque mot saisi doit commencer un mot
+du nom (niveau 3) ou apparaître dans le nom (niveau 4).
+
+**Accents et casse** : ignorés *pour la recherche seulement*. Le nom affiché
+est toujours l'original (*Économie*, jamais *economie*). Même normalisation
+(NFD, marques combinantes retirées) que `command-center.js`, dupliquée à
+dessein plutôt que partagée, pour que ce fichier reste utilisable seul.
+
+**Tri** : `Intl.Collator("fr", {sensitivity: "base", numeric: true})` —
+*Économie* se classe avec les E, et *Chapitre 2* vient avant *Chapitre 10*.
+
+**Vitesse** : 2 000 matières classées en quelques millisecondes, à chaque
+frappe, sans index (mesuré dans `tests/subject-search.test.js`, scénario
+6 septies : seuil 30 ms). Un index pré-calculé n'est donc **pas** construit :
+il n'aurait à résoudre aucun problème réel, et il ajouterait un état à
+invalider à chaque création/renommage de matière.
 
 ## Future-proof, sans construire la recherche globale
 
@@ -53,10 +70,18 @@ plus.
 
 - **Aucun bouton, aucune touche Entrée** : le filtrage part de l'événement
   `input`, comme le Command Center.
-- **Le focus ne se perd jamais.** Un ré-rendu complet à chaque frappe
-  détruit et recrée l'`<input>` — sans restitution explicite du focus et de
-  la position du curseur juste après, taper une seconde lettre serait
-  impossible. Même pattern que `ccRender()` (voir COMMAND_CENTER.md).
+- **Le champ n'est jamais recréé.** Une frappe ne réécrit que la zone de
+  résultats (`#lib-results`, voir `updateLibrarySearch()`) : le champ garde
+  son focus, son curseur et une éventuelle composition de clavier mobile en
+  cours. (La première version ré-affichait toute la page à chaque frappe et
+  restituait le focus après coup ; la mise à jour ciblée supprime ce
+  contournement.) Les cartes sont cliquables par délégation d'événement sur
+  leur conteneur — un seul écouteur, jamais un par carte à ré-attacher.
+- **Aucune requête réseau par lettre** — ni Supabase, ni rien d'autre : tout
+  part de `allSubjects()`, déjà en mémoire (vérifié au navigateur : aucune
+  requête sortante pendant la frappe).
+- **Échap et ×** effacent la saisie et remettent le focus dans le champ ; le
+  bouton × n'existe dans le DOM que s'il y a quelque chose à effacer.
 - **Pas de focus automatique à l'arrivée sur la page.** Contrairement au
   Command Center — une palette qu'on ouvre exprès pour taper — cette
   recherche vit dans une page normale : voler le focus au premier rendu
@@ -80,5 +105,5 @@ part de ce qui est déjà chargé côté client.
 
 | Suite | Vérifie |
 |---|---|
-| `tests/subject-search.test.js` — 19 | la cascade des trois niveaux, le tri sensible à la locale, les accents/la casse, un accesseur de texte personnalisé, la non-mutation de la liste d'origine, les entrées limites |
-| `tests/library-search.test.mjs` — 61 | le champ réel, la frappe lettre par lettre, le focus qui survit au ré-rendu, le curseur qui ne revient jamais au début, le bouton ×, Échap, la tabulation, l'état « aucun résultat », le responsive à trois largeurs, les cinq langues, le mode invité, et qu'aucune navigation existante (ouvrir une matière, importer un cours, en ajouter une) n'a été cassée — depuis la liste groupée ET depuis un résultat de recherche |
+| `tests/subject-search.test.js` — 25 | les cinq niveaux mélangés (exemple « mar »), les mots multiples, l'égalité stable, l'alias `searchSubjects`, la vitesse, le tri sensible à la locale, les accents/la casse, un accesseur de texte personnalisé, la non-mutation de la liste d'origine, les entrées limites |
+| `tests/library-search.test.mjs` — 73 | le champ réel qui n'est jamais recréé (même nœud, focus, curseur, zéro rendu complet), aucune requête réseau, la frappe lettre par lettre, le focus qui survit au ré-rendu, le curseur qui ne revient jamais au début, le bouton ×, Échap, la tabulation, l'état « aucun résultat », le responsive à trois largeurs, les cinq langues, le mode invité, et qu'aucune navigation existante (ouvrir une matière, importer un cours, en ajouter une) n'a été cassée — depuis la liste groupée ET depuis un résultat de recherche |

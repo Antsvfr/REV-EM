@@ -672,20 +672,55 @@
     to{   opacity: 1; transform: translateY(0); }
   }
 
-  /* Indicateur de synchronisation : 7 px, pas de texte, pas d'animation
-     permanente. Il dit trois choses seulement — je lis, j'écris, ça n'a pas
-     marché — et disparaît le reste du temps. Une pastille qui pulse en
-     continu serait du bruit ; une erreur muette serait un mensonge. */
+  /* Indicateur de synchronisation : un point de 7 px et quelques mots, sur
+     ordinateur seulement (sur mobile, le point seul, avec son libellé pour les
+     lecteurs d'écran). Quatre états, pas de bandeau, pas d'animation
+     permanente — le seul mouvement est une rotation lente PENDANT une
+     synchronisation réelle. Une erreur muette serait un mensonge ; une
+     pastille qui clignote en continu serait du bruit. */
+  .cloud-status{
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+    color: var(--text-muted); font-size: var(--text-metadata);
+    font-weight: var(--weight-medium);
+  }
+  .cloud-status[hidden]{ display: none; }
   .cloud-dot{
     width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
     background: var(--border-strong);
     transition: background var(--motion-state) var(--ease-enter);
   }
-  .cloud-dot.is-pulling,
-  .cloud-dot.is-pushing{ background: var(--accent-3); }
-  .cloud-dot.is-error{ background: var(--danger, #B3261E); }
-  .cloud-dot.is-partial{ background: var(--warning, #8F5C00); }
-  @media (prefers-reduced-motion: reduce){ .cloud-dot{ transition: none; } }
+  .cloud-status.is-synced .cloud-dot{ background: var(--success); }
+  .cloud-status.is-syncing .cloud-dot{
+    background: transparent; box-sizing: border-box;
+    border: 1.5px solid var(--accent-3); border-top-color: transparent;
+    animation: cloud-spin 1200ms linear infinite;
+  }
+  .cloud-status.is-offline .cloud-dot{ background: transparent; box-sizing: border-box; border: 1.5px solid var(--text-muted); }
+  .cloud-status.is-pending{ color: var(--warning); }
+  .cloud-status.is-pending .cloud-dot{ background: var(--warning); }
+  @keyframes cloud-spin{ to{ transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce){
+    .cloud-dot{ transition: none; }
+    .cloud-status.is-syncing .cloud-dot{ animation: none; border-top-color: var(--accent-3); }
+  }
+  /* Le libellé n'est PAS affiché dans la barre : mesuré, ses 100 à 150 px
+     font déborder la navigation (la loupe chevauche « Progression ») à toutes
+     les largeurs, la barre étant plafonnée. Le point porte l'état ; le texte
+     reste dans l'infobulle et pour les lecteurs d'écran. */
+  .cloud-label{
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+  .account-loading{
+    display: flex; align-items: center; justify-content: center; gap: var(--space-xs, 10px);
+    min-height: 40vh; color: var(--text-secondary); font-size: var(--text-body);
+  }
+  .account-loading-dot{
+    width: 14px; height: 14px; border-radius: 50%; box-sizing: border-box;
+    border: 2px solid var(--accent-3); border-top-color: transparent;
+    animation: cloud-spin 1200ms linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce){ .account-loading-dot{ animation: none; } }
   .topbar-divider{ width:1px; height:20px; background: var(--border); margin:0 var(--space-2xs); }
   .profile-chip{
     display:flex; align-items:center; gap:8px; color: var(--text-secondary);
@@ -4944,7 +4979,7 @@
         <!-- État de la synchronisation : un point, et rien de plus tant que
              tout va bien. Caché quand il n'y a rien à dire (compte absent, ou
              tout est enregistré) — mais jamais silencieux sur une erreur. -->
-        <span class="cloud-dot is-off" id="cloud-indicator" role="status" hidden></span>
+        <span class="cloud-status" id="cloud-indicator" role="status" aria-live="polite" hidden><span class="cloud-dot" aria-hidden="true"></span><span class="cloud-label"></span></span>
         <div class="mainnav-item topbar-lang" data-nav="lang">
           <button class="lang-btn" data-menu-toggle="lang" id="lang-trigger-btn" aria-label="Langue de l'interface" data-i18n-attr="aria-label:lang.selector_label">
             <span id="lang-trigger-code">FR</span><svg class="nav-chevron" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -5990,6 +6025,9 @@ const FLASHCARDS = {
 let state = {
   tab: "dashboard", // dashboard | library | review | exam | quiz | fiches | flash | ai | oral | progress | settings | myspace
 
+  // --- changement de compte en cours : rien à montrer tant que le bon espace n'est pas chargé ---
+  accountLoading: false,
+
   // --- navigation principale (menus déroulants / mobile) — état d'interface, non persisté ---
   openMenu: null,
   mobileMenuOpen: false,
@@ -6563,8 +6601,19 @@ function lsGet(key){
   }
 }
 
+/* L'espace de stockage dont l'état EN MÉMOIRE est issu. Change au tout début
+   de loadAllData(), jamais avant : tant qu'il diffère de l'espace courant, la
+   mémoire contient encore les données d'un AUTRE compte, et les écrire sous
+   l'identifiant du compte qui vient de se connecter les lui attribuerait
+   (voir handleAuthUserChange). */
+let stateNamespace = "";
+
 function lsSet(key, value){
   const nsKey = currentStorageNamespace() + key;
+  if(stateNamespace !== currentStorageNamespace() && KEY_SYNC_PENDING !== key){
+    console.warn("[isolation] écriture refusée : l'état en mémoire n'appartient pas à ce compte", key);
+    return false;
+  }
   memoryFallback[nsKey] = value;
   let ok = true;
   try{
@@ -6598,14 +6647,51 @@ function lsSet(key, value){
 let cloud = null;            // instance LyonUserData pour le compte connecté
 let cloudHydrating = false;  // vrai pendant qu'on écrit les données reçues
 let cloudState = { phase: "off", at: null, errors: [] };
+/* Compte dont la lecture initiale a échoué (réseau coupé, base pas prête).
+   Tant qu'il est renseigné, le travail de l'élève continue d'être enregistré
+   en local ET marqué « à envoyer » — puis envoyé avant tout pull à la reprise. */
+let cloudRetryUserId = null;
+let cloudRetryTimer = null;
+let cloudRetryAttempt = 0;
+let cloudStarting = null;    // userId dont cloudStart() est en cours (anti-doublon)
+
+/* Le stockage du compte X, écrit explicitement dans l'espace de X : un
+   rappel asynchrone peut arriver APRÈS un changement de compte, et ne doit
+   jamais déposer la liste de X dans l'espace de Y. */
+function lsGetForUser(userId, key){
+  try{
+    const raw = localStorage.getItem(LS_PREFIX + "u." + userId + "." + key);
+    return raw === null ? null : JSON.parse(raw);
+  }catch(e){ return null; }
+}
+function lsSetForUser(userId, key, value){
+  try{ localStorage.setItem(LS_PREFIX + "u." + userId + "." + key, JSON.stringify(value)); }
+  catch(e){ /* stockage plein ou indisponible : le cache local reste la seule copie */ }
+}
+function cloudPendingOf(userId){
+  const v = lsGetForUser(userId, KEY_SYNC_PENDING);
+  return Array.isArray(v) ? v : [];
+}
+function cloudMarkDirty(userId, domains){
+  const cur = cloudPendingOf(userId);
+  const next = [...new Set(cur.concat(domains))];
+  if(next.length !== cur.length) lsSetForUser(userId, KEY_SYNC_PENDING, next);
+  updateCloudIndicator();
+}
 
 /* Pendant l'hydratation, on réécrit le cache local avec ce qui vient d'arriver
    de Supabase : le renvoyer aussitôt serait un aller-retour inutile, et ferait
    repartir des données qu'on vient de recevoir. */
 function cloudNoteLocalWrite(key){
-  if(!cloud || cloudHydrating) return;
+  if(cloudHydrating) return;
   const domains = window.LyonUserData && LyonUserData.DOMAINS_BY_STORAGE_KEY[key];
-  if(domains) cloud.push(domains);
+  if(!domains) return;
+  if(cloud){ cloud.push(domains); return; }
+  /* Pas de moteur (lecture initiale en échec, hors ligne au démarrage) : on
+     n'envoie rien, mais on NOTE ce qui reste à envoyer. Sans cette trace, le
+     pull suivant écraserait la modification (LOCAL FIRST : la donnée locale
+     n'est jamais sacrifiée à la donnée distante quand elle est plus récente). */
+  if(cloudRetryUserId && currentStorageNamespace() === "u." + cloudRetryUserId + ".") cloudMarkDirty(cloudRetryUserId, domains);
 }
 
 /* L'instantané que le moteur lit. Une fonction, pas un objet figé : il est
@@ -6746,6 +6832,7 @@ function cloudRemoteVolume(snap){
 }
 
 const KEY_CLOUD_CHOICE = "cloud-choice";   // namespacé par compte, comme le reste
+const KEY_SYNC_PENDING = "sync-pending";   // domaines modifiés localement, pas encore confirmés par Supabase
 const KEY_PWA_INSTALL_DISMISS = "pwa-install-dismiss";   // date du dernier "plus tard"
 
 /* ── PREMIÈRE CONNEXION DE CE COMPTE SUR CET APPAREIL ─────────────────────
@@ -6787,52 +6874,130 @@ async function cloudDecideMigration(remoteSnapshot){
 /* ── CONNEXION ────────────────────────────────────────────────────────────
    Ordre volontaire : on LIT d'abord (pour savoir ce que le compte contient),
    on demande ensuite, on écrit enfin. Demander avant de lire reviendrait à
-   faire choisir à l'aveugle. */
+   faire choisir à l'aveugle.
+
+   Règle d'or, ajoutée avec l'audit : LE LOCAL D'ABORD. Ce que l'élève a
+   modifié sur cet appareil et qui n'est pas encore parti (hors ligne, onglet
+   fermé dans les 900 ms) est noté dans `sync-pending` ; on l'ENVOIE avant de
+   lire, jamais l'inverse — sinon la lecture écraserait sa modification. */
+function currentAuthId(){
+  const authed = window.LyonAuth && LyonAuth.available && LyonAuth.state.status === "signed-in" && LyonAuth.state.user;
+  return authed ? LyonAuth.state.user.id : null;
+}
+
+function cloudClearRetry(){
+  if(cloudRetryTimer){ clearTimeout(cloudRetryTimer); cloudRetryTimer = null; }
+}
+
+/* Nouvelle tentative de démarrage : 3 s, 6 s, 12 s… plafonné à 60 s. Hors
+   ligne on n'essaie pas : l'événement « online » relance (voir plus bas). */
+function cloudScheduleRetry(userId){
+  cloudClearRetry();
+  cloudRetryUserId = userId;
+  if(navigator.onLine === false) return;
+  const delay = Math.min(60000, 3000 * Math.pow(2, cloudRetryAttempt));
+  cloudRetryAttempt++;
+  cloudRetryTimer = setTimeout(()=>{ cloudRetryTimer = null; cloudRetryNow(); }, delay);
+}
+
+async function cloudRetryNow(){
+  const id = cloudRetryUserId;
+  if(!id || cloud) return;
+  if(currentAuthId() !== id){ cloudRetryUserId = null; return; }
+  await cloudStart(id);
+}
+
+/* Un service worker peut servir un ancien user-data.js (cache) à côté d'un
+   index.html tout neuf, le temps d'une session. Synchroniser avec un module qui
+   ne connaît pas le contrat actuel (file persistée, reprise, dispose…) serait
+   pire que ne pas synchroniser : on recharge UNE fois pour récupérer les
+   modules frais (déjà revalidés en arrière-plan), sans jamais boucler. */
+const USER_DATA_API_EXPECTED = 2;
+function userDataModuleIsCurrent(){
+  return !!window.LyonUserData && LyonUserData.API_VERSION === USER_DATA_API_EXPECTED;
+}
+function reloadOnceForFreshModules(){
+  console.warn("[LyonUserData] module de synchronisation plus ancien que la page");
+  try{
+    if(sessionStorage.getItem("rev-em-module-reload")) return;
+    sessionStorage.setItem("rev-em-module-reload", "1");
+  }catch(e){ return; }
+  location.reload();
+}
+
 async function cloudStart(userId){
   if(!window.LyonUserData) return;
   if(!window.LyonAuth || !LyonAuth.available || !LyonAuth.client) return;
+  if(!userDataModuleIsCurrent()){ reloadOnceForFreshModules(); return; }
   if(cloud && cloud.userId === userId) return;
+  if(cloudStarting === userId) return;
+  cloudStarting = userId;
+  cloudClearRetry();
+  try{ await cloudStartRun(userId); }
+  finally{ if(cloudStarting === userId) cloudStarting = null; updateCloudIndicator(); }
+}
 
-  cloud = LyonUserData.createCloud({
+async function cloudStartRun(userId){
+  const isCurrent = ()=> currentAuthId() === userId;
+  const engine = LyonUserData.createCloud({
     client: LyonAuth.client,
     userId: userId,
     snapshot: cloudSnapshot,
+    initialPending: cloudPendingOf(userId),
+    /* La file, écrite dans l'espace de CE compte — un rappel peut arriver
+       après un changement de compte, il ne doit jamais toucher l'autre. */
+    onPending: (list)=>{ lsSetForUser(userId, KEY_SYNC_PENDING, list); if(isCurrent()) updateCloudIndicator(); },
     onStatus: (s)=>{
-      /* Un toast seulement au moment où ça CASSE (jamais à chaque nouvelle
-         tentative qui échoue encore) : sinon une coupure réseau de dix
-         minutes en spammerait un par cycle de nouvelle tentative. */
+      if(!isCurrent()) return;
+      /* Un toast seulement au moment où ça CASSE, jamais à chaque nouvelle
+         tentative — et jamais hors ligne : « Hors connexion » est déjà dit
+         par l'indicateur, ce n'est pas une panne. */
       const wasOk = cloudState.phase !== "error";
       cloudState = { phase: s.phase, at: s.at || cloudState.at, errors: s.errors || [] };
       updateCloudIndicator();
-      if(wasOk && s.phase === "error") showToast(t("cloud.error"), "error");
+      if(wasOk && s.phase === "error" && navigator.onLine !== false) showToast(t("cloud.error"), "error");
     },
   });
+  cloud = engine;
   cloudState = { phase: "pulling", at: null, errors: [] };
   updateCloudIndicator();
 
-  let pulled = null;
-  try{
-    pulled = await cloud.pullAll(cloudSnapshot());
-  }catch(e){
-    /* Jusqu'ici, cet échec ne changeait que la couleur d'un petit point dans
-       l'en-tête — personne ne le remarque. Sans ce toast, un élève dont la
-       lecture initiale échoue (compte Supabase pas encore configuré côté
-       base, ex. migrations non appliquées) ne voit JAMAIS ses matières
-       apparaître, et rien ne le lui dit : il croit les avoir perdues. */
-    console.error("[LyonUserData] lecture initiale", e);
-    cloudState = { phase: "error", at: Date.now(), errors: [{domain: "*", error: String(e)}] };
+  const abandon = ()=>{ engine.dispose(); if(cloud === engine) cloud = null; };
+  /* Lecture ratée (réseau, base pas prête) : on n'applique RIEN qui écraserait
+     du travail non envoyé, on note ce qui reste à envoyer, on réessaiera. */
+  const failStart = (errs, applyPartial, pulledSnapshot)=>{
+    console.warn("[LyonUserData] démarrage incomplet", errs);
+    if(applyPartial && pulledSnapshot) cloudApplySnapshot(pulledSnapshot);
+    engine.dispose();
+    if(cloud === engine) cloud = null;
+    cloudState = { phase: "error", at: Date.now(), errors: errs };
+    cloudScheduleRetry(userId);
     updateCloudIndicator();
-    showToast(t("cloud.pull_error"), "error");
-    return;   // le cache local reste en place : on ne perd rien, on réessaiera
+    if(navigator.onLine !== false && cloudRetryAttempt <= 1) showToast(t("cloud.pull_error"), "error");
+  };
+  const stale = ()=> !isCurrent() || cloud !== engine;
+  /* Lecture ratée SUR LES MATIÈRES = base injoignable : rien de fiable n'est
+     arrivé. Une lecture ratée sur un autre domaine seulement = panne partielle,
+     on garde ce qui est arrivé. */
+  const isTotalFailure = (r)=> !!(r.errors && r.errors.some(e => e.domain === "subjects" || e.domain === "*"));
+
+  let pulled = await engine.pullAll(cloudSnapshot());
+  if(stale()){ abandon(); return; }
+  if(isTotalFailure(pulled)){
+    /* Rien n'a été appliqué : le travail local reste tel quel. */
+    failStart(pulled.errors, false, null);
+    return;
   }
 
+  const decidedBefore = lsGet(KEY_CLOUD_CHOICE);
   const choice = await cloudDecideMigration(pulled.snapshot);
+  if(stale()){ abandon(); return; }
 
   if(choice === "later"){
     /* Rien ne part, rien n'arrive. L'utilisateur garde exactement ce qu'il
        avait, et on ne pousse pas non plus « par accident » à la première
        écriture : le moteur est désactivé jusqu'à la prochaine connexion. */
-    cloud = null;
+    abandon();
     cloudState = { phase: "off", at: null, errors: [] };
     updateCloudIndicator();
     return;
@@ -6842,15 +7007,41 @@ async function cloudStart(userId){
     /* Fusion réelle, pas un écrasement : les compteurs prennent le maximum,
        les journaux font l'union, les collections s'ajoutent (voir
        user-data.js). Puis on relit, pour repartir de la vérité commune. */
-    await cloud.pushAll(cloudSnapshot());
-    try{ pulled = await cloud.pullAll(cloudSnapshot()); }
-    catch(e){ console.error("[LyonUserData] relecture après fusion", e); }
+    engine.forgetKnownKeys();   // le local n'a pas encore absorbé le compte : on AJOUTE, on ne supprime rien
+    const pushed = await engine.pushAll(cloudSnapshot());
+    if(stale()){ abandon(); return; }
+    if(!pushed.ok){ failStart(pushed.errors, false, null); return; }
+    pulled = await engine.pullAll(cloudSnapshot());
+    /* La fusion est faite : cet appareil est désormais aligné sur le compte.
+       Les connexions suivantes lisent le compte, elles ne re-fusionnent pas. */
+    if(!isTotalFailure(pulled)) lsSet(KEY_CLOUD_CHOICE, "cloud");
+  } else if(decidedBefore !== "cloud" && engine.pendingDomains.length){
+    /* Choix « utiliser mon compte » pris à l'instant : les modifications
+       locales non envoyées sont écartées, volontairement, par l'utilisateur. */
+    engine.discardPending();
+  } else if(engine.pendingDomains.length){
+    /* Modifications faites hors ligne / non envoyées : d'abord elles partent,
+       ensuite seulement on relit. */
+    engine.forgetKnownKeys();   // un autre appareil a pu ajouter des éléments entre-temps : on ne les supprime pas
+    const flushed = await engine.flush();
+    if(stale()){ abandon(); return; }
+    if(!flushed.ok){ failStart(engine.errors, false, null); return; }
+    pulled = await engine.pullAll(cloudSnapshot());
   }
+  if(stale()){ abandon(); return; }
+  if(isTotalFailure(pulled)){ failStart(pulled.errors, false, null); return; }
 
   cloudApplySnapshot(pulled.snapshot);
+  cloudRetryUserId = null; cloudRetryAttempt = 0; cloudClearRetry();
   if(pulled.errors && pulled.errors.length){
     console.warn("[LyonUserData] domaines non chargés :", pulled.errors);
+    cloudState = { phase: "partial", at: Date.now(), errors: pulled.errors };
+    showToast(t("cloud.partial"), "error");
+  } else {
+    cloudState = { phase: "idle", at: Date.now(), errors: [] };
   }
+  state.accountLoading = false;
+  updateCloudIndicator();
   render();
 }
 
@@ -6859,24 +7050,43 @@ async function cloudStart(userId){
    compte. Purger avant d'avoir poussé perdrait la donnée pour de bon — et
    « vider le cache à la déconnexion » n'est une bonne idée que parce que
    Supabase la détient déjà. Si l'écriture échoue (hors ligne), on GARDE le
-   cache : perdre le travail de l'élève serait pire que le laisser sur cet
-   appareil. */
-async function cloudStop(previousUserId){
+   cache ET la liste de ce qui reste à envoyer : perdre le travail de l'élève
+   serait pire que le laisser sur cet appareil. À sa prochaine connexion sur
+   cet appareil, cette liste repart avant toute lecture.
+
+   `frozen` : l'instantané du compte SORTANT, pris AVANT la remise à zéro de
+   la mémoire — sinon on enverrait, au nom de l'ancien compte, un état vide. */
+async function cloudStop(previousUserId, frozen){
   const c = cloud;
   cloud = null;
+  cloudClearRetry();
+  cloudRetryUserId = null; cloudRetryAttempt = 0;
   cloudState = { phase: "off", at: null, errors: [] };
   updateCloudIndicator();
   if(!c || !previousUserId) return;
 
+  if(frozen) c.setSnapshotSource(()=> frozen);
   let flushed = { ok: false, pending: [] };
   try{ flushed = await c.flush(); }
   catch(e){ console.error("[LyonUserData] écriture finale", e); }
+  c.dispose();
 
   if(!flushed.ok){
     console.warn("[LyonUserData] cache conservé : des données n'ont pas pu être envoyées", flushed.pending);
     return;
   }
   cloudPurgeCache(previousUserId);
+}
+
+/* Envoi immédiat de ce qui attend, tant que la session du compte courant est
+   encore valide (avant de se déconnecter, de changer de compte, de fermer).
+   Best-effort : bornée dans le temps, jamais bloquante pour l'interface. */
+async function cloudFlushNow(maxMs){
+  const c = cloud;
+  if(!c || !c.pendingDomains.length) return true;
+  const cap = new Promise(res => setTimeout(()=> res({ ok: false }), maxMs || 4000));
+  try{ const r = await Promise.race([c.flush(), cap]); return !!(r && r.ok); }
+  catch(e){ return false; }
 }
 
 /* Efface les données de CE compte dans le stockage local. N'est appelée
@@ -6892,19 +7102,54 @@ function cloudPurgeCache(userId){
      reconnexion serait une question déjà tranchée. */
 }
 
-/* Indicateur discret : l'état de la synchronisation n'a pas à occuper
-   l'écran, mais il ne doit jamais être caché non plus. */
+/* Le réseau revient : ce qui attendait part, ou le démarrage raté reprend.
+   Il repart de zéro (délai remis à 3 s) : la coupure vient de se terminer. */
+window.addEventListener("online", ()=>{
+  cloudRetryAttempt = 0;
+  if(cloud && cloud.pendingDomains.length) cloud.flush();
+  else if(!cloud && cloudRetryUserId) cloudRetryNow();
+  updateCloudIndicator();
+});
+window.addEventListener("offline", ()=> updateCloudIndicator());
+/* Onglet masqué / fermé : dernier envoi au mieux. Si le navigateur coupe la
+   requête, rien n'est perdu — la file est déjà dans le stockage local. */
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "hidden" && cloud && cloud.pendingDomains.length) cloud.flush();
+});
+window.addEventListener("pagehide", ()=>{
+  if(cloud && cloud.pendingDomains.length) cloud.flush();
+});
+
+/* ── INDICATEUR DE SYNCHRONISATION ────────────────────────────────────────
+   Un point et (sur ordinateur) quelques mots, dans la barre du haut. Quatre
+   états, jamais de bandeau :
+     ● Synchronisé   ⟳ Synchronisation…   ○ Hors connexion   ⚠ À terminer
+   Invisible pour un invité : sans compte il n'y a rien à synchroniser, ce
+   n'est pas un état dégradé. */
+function cloudIndicatorState(){
+  if(!currentAuthId()) return null;
+  if(!cloud && !cloudRetryUserId && !cloudStarting) return null;
+  if(navigator.onLine === false) return "offline";
+  const phase = cloudState.phase;
+  if(phase === "pulling" || phase === "pushing") return "syncing";
+  if(phase === "error" || phase === "partial" || cloudRetryUserId) return "pending";
+  if(cloud && cloud.pendingDomains.length) return "syncing";
+  return "synced";
+}
+
 function updateCloudIndicator(){
   const el = document.getElementById("cloud-indicator");
   if(!el) return;
-  const phase = cloudState.phase;
-  el.className = "cloud-dot is-" + phase;
-  el.hidden = (phase === "off" || phase === "idle");
-  const label = phase === "pulling" ? t("cloud.loading")
-              : phase === "pushing" ? t("cloud.saving")
-              : phase === "error"   ? t("cloud.error")
-              : phase === "partial" ? t("cloud.partial")
+  const st = cloudIndicatorState();
+  el.hidden = !st;
+  el.className = "cloud-status" + (st ? " is-" + st : "");
+  const label = st === "synced" ? t("cloud.synced")
+              : st === "syncing" ? t("cloud.syncing")
+              : st === "offline" ? t("cloud.offline")
+              : st === "pending" ? t("cloud.pending")
               : "";
+  const lab = el.querySelector(".cloud-label");
+  if(lab) lab.textContent = label;
   el.setAttribute("aria-label", label);
   el.setAttribute("title", label);
 }
@@ -6932,6 +7177,7 @@ async function loadKey(key, fallback){
 }
 
 async function loadAllData(){
+  stateNamespace = currentStorageNamespace();
   state.progress      = await loadKey(KEY_QUIZ, {});
   state.flashProgress = await loadKey(KEY_FLASH, {});
   state.aiHistory     = await loadKey(KEY_AI, []);
@@ -6996,6 +7242,58 @@ async function loadAllData(){
   evaluateBadges(); // rattrape les badges déjà mérités par l'historique existant
 }
 
+/* ── ISOLATION : REMISE À ZÉRO DE LA MÉMOIRE ─────────────────────────────
+   Appelée, de façon SYNCHRONE, dès qu'un vrai changement de compte est
+   détecté — avant tout `await`. Les données de l'ancien compte disparaissent
+   de la mémoire (et donc de tout rendu possible) au même instant où le
+   nouveau compte devient courant. Ce qui vient ensuite (écriture finale de
+   l'ancien compte, chargement du nouveau) peut prendre du temps ; pendant ce
+   temps, l'écran n'a plus RIEN de l'ancien compte à montrer.
+
+   Couvre les données ET les sessions en cours (quiz, flashcards, révision
+   intelligente, examen, planning, vues de bibliothèque, assistant d'import) :
+   une session ouverte référence des questions/matières de l'ancien compte.
+   `stateNamespace` est invalidé : tant que loadAllData() n'a pas rattaché
+   l'état au nouvel espace, lsSet() refuse toute écriture. */
+function resetUserStateInMemory(){
+  stateNamespace = "\u0000";
+  state.progress = {}; state.flashProgress = {}; state.aiHistory = [];
+  state.qstats = {}; state.badges = {}; state.aiCards = {};
+  state.userSubjects = []; state.userChapters = [];
+  state.documents = []; state.courseData = {}; state.studyPlan = null;
+  Object.assign(state.dash, {
+    totalAnswered: 0, totalCorrect: 0, dailyStats: {}, activityDates: [],
+    timeSpentSeconds: 0, recentActivity: [], recentChapters: [], wrongQuestions: {},
+    correctStreak: 0, bestCorrectStreak: 0, quizzesCompleted: 0, best90Achieved: false,
+    recentAdds: [], dailyTimeSeconds: {},
+  });
+  Object.assign(state.planning, {
+    events: [], officialUrl: "", lastSyncAt: null, selectedEventId: null,
+    lastImportMsg: "", focusNotesOnOpen: false, expandedMonthDay: null,
+  });
+  // sessions en cours
+  Object.assign(state, {
+    screen: "picker", playing: null, pool: [], index: 0, score: 0, answered: false,
+    selectedOpt: null, recap: [], flashScreen: "picker", flashDeck: null,
+    smartScreen: "home", smartSession: null, planningSession: null,
+    studyPlanScreen: "overview", statsView: { view: "overview", subjectId: null, chapterId: null },
+    aiFiles: [], aiError: null, openMenu: null, mobileMenuOpen: false,
+  });
+  Object.assign(state.exam, {
+    screen: "setup", chapters: [], pool: [], answers: [], idx: 0, startTs: null,
+    limitSec: null, result: null, history: [],
+  });
+  Object.assign(state.library, {
+    view: "subjects", subjectId: null, chapterId: null,
+    editingSubjectId: null, editingChapterId: null, search: "",
+  });
+  Object.assign(state.catalog, { query: "", subjectId: "all", semesterId: "all" });
+  Object.assign(state.studyWizard, { step: 1, goal: null, deadlineEventId: null, subjectIds: [], chapterIds: [] });
+  Object.assign(state.courseImport, { step: "pick", busy: false, files: [], activeIndex: 0, pasteText: "", genSignal: null });
+  Object.assign(state.courseAIUI, { question: "", busy: false, error: null, activeEventId: null });
+  stopExamTimer();
+}
+
 /* Toutes les clés de données locales concernées par le scoping par compte
    (voir currentStorageNamespace) — fonction (pas une const) car certaines
    clés (KEY_AIMODEL) sont déclarées plus bas dans le fichier ; évaluée
@@ -7004,7 +7302,7 @@ function storageNamespacedKeys(){
   return [
     KEY_QUIZ, KEY_FLASH, KEY_AI, KEY_DASH, KEY_QSTATS, KEY_EXAM, KEY_AICARDS,
     KEY_BADGES, KEY_USER_SUBJECTS, KEY_USER_CHAPTERS, KEY_PLANNING, KEY_DOCUMENTS,
-    KEY_COURSE_DATA, KEY_AIBUBBLE, KEY_AIMODEL, KEY_STUDY_PLAN,
+    KEY_COURSE_DATA, KEY_AIBUBBLE, KEY_AIMODEL, KEY_STUDY_PLAN, KEY_SYNC_PENDING,
   ];
 }
 
@@ -7569,6 +7867,15 @@ function switchTab(tab){
 
 function render(){
   updateNavDynamic();
+  if(state.accountLoading){
+    /* Un compte vient de changer : aucune donnée à montrer (ni l'ancienne, ni
+       un espace vide qui ferait croire à une perte). */
+    document.body.classList.remove("exam-focus");
+    const box = document.getElementById("content");
+    box.className = "wrap";
+    box.innerHTML = `<div class="account-loading" role="status" aria-live="polite"><span class="account-loading-dot" aria-hidden="true"></span><span>${escapeHtml(t("account.loading"))}</span></div>`;
+    return;
+  }
   renderGlobalCourseModal();
   renderAccountEditModal();
 
@@ -8907,24 +9214,32 @@ function renderSubjectsList(){
      tout (l'état vide historique reste inchangé, cf. plus bas). */
   if(subjects.length > 1) html += renderLibrarySearch(query);
 
+  html += `<div id="lib-results">${renderSubjectsResults(subjects, query)}</div>`;
+  return html;
+}
+
+/* La zone qui change à chaque frappe : les cartes (ou l'état vide), rien
+   d'autre. Rendue seule pour que le champ de recherche — son focus, son
+   curseur, une composition de clavier mobile en cours — ne soit JAMAIS
+   détruit par une frappe (voir updateLibrarySearch). */
+function renderSubjectsResults(subjects, query){
   if(query){
     const results = window.LyonSubjectSearch
-      ? LyonSubjectSearch.filterAndSortSubjects(query, subjects)
+      ? (LyonSubjectSearch.searchSubjects || LyonSubjectSearch.filterAndSortSubjects)(query, subjects)
       : subjects;
     if(results.length === 0){
-      html += `<div class="empty">
+      return `<div class="empty">
         <span class="empty-icon">${dashIcon("search")}</span>
         <h2 class="empty-title">${t("library.search_no_results")}</h2>
         <p class="empty-text">${t("library.search_no_results_hint")}</p>
       </div>`;
-    } else {
-      html += `<div class="flash-deckgrid">${results.map(renderSubjectCard).join("")}</div>`;
     }
-    return html;
+    return `<div class="flash-deckgrid">${results.map(renderSubjectCard).join("")}</div>`;
   }
 
   /* Aucune recherche en cours : l'organisation par semestre, INCHANGÉE —
      c'est l'ordre par défaut que le cahier des charges demande de conserver. */
+  let html = "";
   SEMESTERS.forEach(sem=>{
     const subs = subjects.filter(s => s.semesterId === sem.id);
     if(subs.length === 0) return;
@@ -8937,6 +9252,35 @@ function renderSubjectsList(){
   }
 
   return html;
+}
+
+/* Mise à jour ciblée à chaque frappe : seule la zone de résultats est
+   réécrite. Le bouton × est créé/retiré selon qu'il y a une saisie. */
+function updateLibrarySearch(){
+  const box = document.getElementById("lib-results");
+  if(!box){ render(); return; }
+  const raw = state.library.search || "";
+  box.innerHTML = renderSubjectsResults(allSubjects(), raw.trim());
+  const bar = document.querySelector(".lib-search");
+  const clear = document.getElementById("lib-search-clear");
+  if(bar && raw && !clear){
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "lib-search-clear"; btn.id = "lib-search-clear";
+    btn.setAttribute("aria-label", t("library.search_clear"));
+    btn.textContent = "×";
+    btn.addEventListener("click", ()=> libSearchSet("", true));
+    bar.appendChild(btn);
+  } else if(clear && !raw){
+    clear.remove();
+  }
+}
+
+function libSearchSet(value, refocus){
+  state.library.search = value;
+  const input = document.getElementById("lib-search-input");
+  if(input && input.value !== value) input.value = value;
+  updateLibrarySearch();
+  if(refocus && input) input.focus({ preventScroll: true });
 }
 
 function renderSubjectDetail(){
@@ -9232,52 +9576,34 @@ function attachLibraryEvents(){
     if(addBtn) addBtn.addEventListener("click", ()=> libGoto("subjectForm", {editingSubjectId:null}));
     const importBtn = document.getElementById("lib-import-course-btn");
     if(importBtn) importBtn.addEventListener("click", ()=> goToCourseImport());
-    document.querySelectorAll("[data-open-subject]").forEach(el=>{
-      el.addEventListener("click", ()=> libGoto("subjectDetail", {subjectId: el.dataset.openSubject}));
+    /* Les cartes sont réécrites à chaque frappe : un seul écouteur sur leur
+       conteneur (délégation), jamais un par carte à ré-attacher. */
+    const results = document.getElementById("lib-results");
+    if(results) results.addEventListener("click", (e)=>{
+      const card = e.target.closest("[data-open-subject]");
+      if(card) libGoto("subjectDetail", {subjectId: card.dataset.openSubject});
     });
 
-    /* Recherche en temps réel — même pattern que le Command Center
-       (voir ccRender()) : un ré-rendu complet à chaque frappe est le plus
-       simple à maintenir dans une page qui n'a pas de rendu granulaire, mais
-       il DÉTRUIT l'<input> et son focus. On les restitue donc explicitement
-       juste après, curseur compris — sinon taper une seconde lettre serait
-       impossible. */
+    /* Recherche en temps réel, côté navigateur uniquement (jamais de requête
+       réseau par lettre). Seule la zone de résultats est réécrite : le champ
+       garde son focus, son curseur et une éventuelle composition de clavier. */
     const searchInput = document.getElementById("lib-search-input");
     if(searchInput){
-      /* PAS de focus automatique à l'arrivée sur la page : contrairement au
-         Command Center (une palette qu'on ouvre explicitement pour taper),
-         cette recherche vit dans une page normale — voler le focus au
-         premier rendu ferait surgir le clavier sur mobile sans qu'on l'ait
-         demandé. On ne restitue le focus et la position du curseur qu'après
-         un ré-rendu déclenché PAR une frappe dans ce même champ (voir
-         l'écouteur "input" ci-dessous), jamais au chargement de la page. */
-      searchInput.addEventListener("input", ()=>{
-        state.library.search = searchInput.value;
-        const pos = searchInput.value.length;
-        render();
-        const again = document.getElementById("lib-search-input");
-        if(again){ again.focus({ preventScroll: true }); again.setSelectionRange(pos, pos); }
-      });
+      /* PAS de focus automatique à l'arrivée sur la page : cette recherche vit
+         dans une page normale — voler le focus au premier rendu ferait
+         surgir le clavier sur mobile sans qu'on l'ait demandé. */
+      searchInput.addEventListener("input", ()=> libSearchSet(searchInput.value, false));
       /* Échap n'efface QUE s'il y a quelque chose à effacer — sinon la
-         touche doit rester libre pour son usage habituel (rien ici, mais un
-         champ vide n'a pas de raison de "consommer" la touche). */
+         touche reste libre pour son usage habituel. */
       searchInput.addEventListener("keydown", (e)=>{
         if(e.key === "Escape" && searchInput.value){
           e.stopPropagation();
-          state.library.search = "";
-          render();
-          const again = document.getElementById("lib-search-input");
-          if(again) again.focus({ preventScroll: true });
+          libSearchSet("", true);
         }
       });
     }
     const clearBtn = document.getElementById("lib-search-clear");
-    if(clearBtn) clearBtn.addEventListener("click", ()=>{
-      state.library.search = "";
-      render();
-      const again = document.getElementById("lib-search-input");
-      if(again) again.focus();
-    });
+    if(clearBtn) clearBtn.addEventListener("click", ()=> libSearchSet("", true));
   }
 
   if(lib.view === "subjectDetail"){
@@ -17492,14 +17818,23 @@ async function importUserCoursesFromFile(file){
   return {addedSubjects, addedChapters};
 }
 
+/* Les clés de données que l'utilisateur peut sauvegarder/restaurer : celles de
+   SON espace uniquement. `sync-pending` est un détail de synchronisation, pas
+   une donnée à emporter. */
+function backupKeys(){
+  return storageNamespacedKeys().filter(k => k !== KEY_SYNC_PENDING);
+}
+
+/* Sauvegarde = l'espace du compte COURANT, sous des noms portables (sans le
+   préfixe de compte). Sur un appareil partagé, le localStorage contient aussi
+   le cache d'autres comptes : les exporter dans le fichier de celui-ci serait
+   une fuite de données entre comptes. */
 function exportAllData(){
   const data = {};
-  for(let i=0;i<localStorage.length;i++){
-    const k = localStorage.key(i);
-    if(k && k.indexOf(LS_PREFIX) === 0){
-      try{ data[k.slice(LS_PREFIX.length)] = JSON.parse(localStorage.getItem(k)); }catch(e){}
-    }
-  }
+  backupKeys().forEach(k => {
+    const v = lsGet(k);
+    if(v !== null && v !== undefined) data[k] = v;
+  });
   downloadJSON({
     app: "REV-EM", type: "full-backup", exportedAt: new Date().toISOString(), data,
   }, "rev-em-sauvegarde-" + todayKey() + ".json");
@@ -17517,16 +17852,35 @@ async function importAllDataFromFile(file){
   }
   const data = parsed && parsed.data ? parsed.data : parsed;
   if(!data || typeof data !== "object") throw new Error("Format de sauvegarde non reconnu. Utilise « Importer un cours » si tu voulais importer un document de cours.");
+  /* Restauration dans l'espace du compte courant, par le chemin normal (lsSet :
+     cloisonnement + synchronisation). Une clé préfixée par un AUTRE compte
+     (ancienne sauvegarde faite avant ce correctif, sur un appareil partagé) est
+     ignorée : elle ne peut pas être la donnée de celui qui importe. */
+  const allowed = new Set(backupKeys());
+  const ns = currentStorageNamespace();
+  let restored = 0;
   Object.keys(data).forEach(k=>{
-    localStorage.setItem(LS_PREFIX + k, JSON.stringify(data[k]));
+    let key = k;
+    if(/^u\.[^.]+\./.test(k)){
+      if(!ns || k.indexOf(ns) !== 0) return;
+      key = k.slice(ns.length);
+    }
+    if(!allowed.has(key)) return;
+    lsSet(key, data[k]);
+    restored++;
   });
+  if(!restored) throw new Error("Aucune donnée reconnue dans ce fichier.");
 }
 
+/* Ne vide que l'espace du compte COURANT (ou l'espace invité) : ni le cache
+   des autres comptes de cet appareil, ni la langue, ni le marqueur de
+   propriété des données invité. */
 function resetAllData(){
-  for(let i=localStorage.length-1;i>=0;i--){
-    const k = localStorage.key(i);
-    if(k && k.indexOf(LS_PREFIX) === 0) localStorage.removeItem(k);
-  }
+  const ns = currentStorageNamespace();
+  backupKeys().concat([KEY_SYNC_PENDING]).forEach(k=>{
+    try{ localStorage.removeItem(LS_PREFIX + ns + k); }catch(e){ /* non bloquant */ }
+    delete memoryFallback[ns + k];
+  });
 }
 
 function renderSettings(){
@@ -17874,6 +18228,10 @@ function attachAccountEvents(){
 
   const signoutBtn = document.getElementById("account-signout-btn");
   if(signoutBtn) signoutBtn.addEventListener("click", async ()=>{
+    /* Ce qui attend encore part TANT QUE la session est valide : une fois
+       déconnecté, Supabase refuserait l'écriture (RLS), et le travail
+       resterait seulement dans le cache de cet appareil. */
+    await cloudFlushNow(4000);
     await LyonAuth.signOut();
     showToast(t("auth.signed_out_toast"));
   });
@@ -21144,8 +21502,8 @@ document.addEventListener("keydown", (e)=>{
 
 setInterval(updateCurrentTimeIndicator, 1000);
 
-async function loadDataAndRefreshUi(){
-  await loadAllData();
+async function loadDataAndRefreshUi(alreadyLoaded){
+  if(!alreadyLoaded) await loadAllData();
   if(state.aiBubble.side && typeof state.aiBubble.y === "number"){
     setAIFabSideY(state.aiBubble.side, state.aiBubble.y, false);
   } else {
@@ -21158,6 +21516,18 @@ async function loadDataAndRefreshUi(){
 
 // undefined = pas encore de premier événement d'auth reçu ; null = invité.
 let lastKnownAuthUserId;
+let resolveBootAuth = function(){};
+const bootAuthSettled = new Promise(res => { resolveBootAuth = res; });
+function hasStoredAuthSession(){
+  try{
+    for(let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i) || "";
+      if(/^sb-.+-auth-token$/.test(k)) return true;
+    }
+  }catch(e){ /* stockage indisponible : pas d'attente */ }
+  return false;
+}
+
 
 /* Recharge tout l'état local depuis le bon espace de stockage (voir
    currentStorageNamespace) dès qu'un VRAI changement de compte survient —
@@ -21172,32 +21542,61 @@ let lastKnownAuthUserId;
    attendre l'auth pour un premier affichage rapide) a déjà chargé le bon
    espace, par défaut invité — recharger serait un travail inutile. */
 async function handleAuthUserChange(){
-  const authed = window.LyonAuth && LyonAuth.available && LyonAuth.state.status === "signed-in" && LyonAuth.state.user;
-  const currentId = authed ? LyonAuth.state.user.id : null;
+  const currentId = currentAuthId();
   const isFirstEvent = lastKnownAuthUserId === undefined;
   const changed = !isFirstEvent && currentId !== lastKnownAuthUserId;
   const previousId = isFirstEvent ? null : lastKnownAuthUserId;
   lastKnownAuthUserId = currentId;
 
-  if(isFirstEvent && currentId === null) return;
+  if(isFirstEvent && currentId === null){ resolveBootAuth(); return; }
   if(!isFirstEvent && !changed){ render(); return; }
 
-  /* Un vrai changement de compte : on arrête la synchronisation du compte
-     PRÉCÉDENT avant toute chose. L'écriture en attente part d'abord ; le
-     cache de ce compte n'est effacé qu'une fois l'écriture confirmée. */
-  if(previousId) await cloudStop(previousId);
+  /* Un vrai changement de compte. TOUT ce qui suit jusqu'au premier `await`
+     est synchrone, et c'est voulu : l'instantané de l'ancien compte est pris,
+     puis la mémoire est vidée, puis l'écran passe en « chargement » — avant
+     que la moindre donnée de l'ancien compte ait eu le temps d'être vue
+     à côté du nouveau. */
+  const frozen = (previousId && cloud) ? cloudSnapshot() : null;
+  resetUserStateInMemory();
+  state.accountLoading = true;
+  render();
+
+  /* On arrête la synchronisation du compte PRÉCÉDENT : l'écriture en attente
+     part d'abord (avec l'instantané figé) ; le cache de ce compte n'est
+     effacé qu'une fois l'écriture confirmée. */
+  if(previousId) await cloudStop(previousId, frozen);
+
+  /* Pendant cet `await`, un autre changement de compte a pu survenir : le
+     dernier gagne, celui-ci n'a plus rien à charger. */
+  if(lastKnownAuthUserId !== currentId) return;
 
   if(currentId) claimGuestDataForUser(currentId);
   /* Sauf si l'utilisateur vient de cliquer un lien reçu par e-mail : dans ce
      cas l'écran qui lui explique ce qui s'est passé doit rester affiché. */
   if(!state.accountUI.linkResult) state.tab = "dashboard";
-  await loadDataAndRefreshUi();
+
+  /* Premier passage de ce compte sur cet appareil : le cache est vide. Montrer
+     un tableau de bord vide ferait croire à une perte de données — on garde
+     l'écran de chargement jusqu'à la première lecture (8 s au plus). */
+  await loadAllData();
+  const emptyCache = !!currentId && cloudLocalVolume() === 0;
+  state.accountLoading = emptyCache;
+  await loadDataAndRefreshUi(true);
+  resolveBootAuth();
+  if(emptyCache) setTimeout(()=>{
+    if(state.accountLoading && lastKnownAuthUserId === currentId){ state.accountLoading = false; render(); }
+  }, 8000);
 
   /* Puis on branche le nouveau compte : lecture depuis Supabase, arbitrage
      éventuel de la migration, hydratation. L'affichage local (déjà rendu
      ci-dessus depuis le cache de CE compte) sert de premier écran — jamais
      celui d'un autre compte, le cache étant cloisonné par identifiant. */
-  if(currentId) await cloudStart(currentId);
+  if(currentId){
+    try{ await cloudStart(currentId); }
+    finally{
+      if(state.accountLoading && lastKnownAuthUserId === currentId){ state.accountLoading = false; render(); }
+    }
+  }
 }
 
 /* ── RETOUR D'UN LIEN REÇU PAR E-MAIL ──────────────────────────────────────
@@ -21266,7 +21665,15 @@ if(window.LyonAuth && typeof bsHandleOAuthReturn === "function"){
 // deux cas, succès ou échec : une exception pendant le chargement initial ne
 // doit jamais laisser l'écran rouge bloqué indéfiniment (voir hideBootSplash
 // dans la section 17, avec son filet de sécurité).
-loadDataAndRefreshUi().then(hideBootSplash, hideBootSplash);
+/* Compte déjà connecté (session mémorisée par le SDK) : le premier événement
+   d'authentification arrive quelques dizaines de millisecondes plus tard et
+   change d'espace. L'écran de lancement reste en place jusque-là (1,5 s au
+   plus) : ni espace invité vide, ni bascule visible au démarrage. Sans session
+   mémorisée, aucune attente. */
+const bootWait = (window.LyonAuth && LyonAuth.available && hasStoredAuthSession())
+  ? Promise.race([bootAuthSettled, new Promise(res => setTimeout(res, 1500))])
+  : Promise.resolve();
+Promise.all([loadDataAndRefreshUi(), bootWait]).then(hideBootSplash, hideBootSplash);
 
 /* ============================================================
    17. PWA — INSTALLATION, HORS LIGNE, MISE À JOUR

@@ -89,8 +89,8 @@ try {
   {
     const { page } = await open(browser);
     await type(page, "#lib-search-input", "M");
-    eq('"M" → les quatre matières qui commencent par M, alphabétique',
-      await cardNames(page), ["Management", "Management commercial", "Marketing", "Mathématiques"]);
+    eq('"M" → celles qui commencent par M (alphabétique), puis un mot qui commence par M, puis qui contient M',
+      await cardNames(page), ["Management", "Management commercial", "Marketing", "Mathématiques", "Analyse de marché", "Économie"]);
     await page.close();
   }
 
@@ -98,9 +98,9 @@ try {
   {
     const { page } = await open(browser);
     await type(page, "#lib-search-input", "Ma");
-    eq('"Ma"', await cardNames(page), ["Management", "Management commercial", "Marketing", "Mathématiques"]);
+    eq('"Ma"', await cardNames(page), ["Management", "Management commercial", "Marketing", "Mathématiques", "Analyse de marché"]);
     await type(page, "#lib-search-input", "r");
-    eq('"Mar" (après avoir tapé "Ma" puis "r")', await cardNames(page), ["Marketing"]);
+    eq('"Mar" (après avoir tapé "Ma" puis "r")', await cardNames(page), ["Marketing", "Analyse de marché"]);
     await page.close();
   }
 
@@ -123,8 +123,8 @@ try {
       await cardNames(page), ["Management commercial"]);
     await page.fill("#lib-search-input", "");
     await type(page, "#lib-search-input", "mar");
-    eq('"mar" : seule "Marketing" (préfixe) sort, jamais mélangée à un résultat plus faible',
-      await cardNames(page), ["Marketing"]);
+    eq('"mar" : "Marketing" (commence par) AVANT "Analyse de marché" (un mot commence par) — rien n\'est masqué',
+      await cardNames(page), ["Marketing", "Analyse de marché"]);
     await page.close();
   }
 
@@ -269,7 +269,7 @@ try {
     const status = await page.evaluate(() => window.LyonAuth ? LyonAuth.state.status : "no-auth-module");
     check("fonctionne en invité (pas de compte connecté)", status !== "signed-in", status);
     await type(page, "#lib-search-input", "mar");
-    eq("la recherche filtre normalement, sans compte", await cardNames(page), ["Marketing"]);
+    eq("la recherche filtre normalement, sans compte", await cardNames(page), ["Marketing", "Analyse de marché"]);
     eq("aucune erreur JavaScript", errors, []);
     await page.close();
   }
@@ -358,6 +358,57 @@ try {
       await page.evaluate(() => state.library.view === "subjectForm"), true);
 
     eq("aucune erreur JavaScript sur l'ensemble du scénario", errors, []);
+    await page.close();
+  }
+
+  current = "20. mise à jour ciblée : le champ n'est jamais détruit, aucun réseau";
+  {
+    const { page, errors } = await open(browser);
+    const requetes = [];
+    page.on("request", r => { if (!/localhost/.test(r.url())) requetes.push(r.url()); });
+    await page.evaluate(() => { window.__champ = document.getElementById("lib-search-input"); window.__renders = 0;
+      const orig = render; window.render = function () { window.__renders++; return orig.apply(this, arguments); }; });
+    await page.click("#lib-search-input");
+    await page.keyboard.type("mar", { delay: 20 });
+    await page.waitForTimeout(150);
+    const r = await page.evaluate(() => ({
+      memeNoeud: window.__champ === document.getElementById("lib-search-input"),
+      focus: document.activeElement === window.__champ,
+      curseur: window.__champ.selectionStart,
+      rendersComplets: window.__renders,
+      croix: !!document.getElementById("lib-search-clear"),
+    }));
+    check("c'est le MÊME champ après trois frappes (jamais recréé)", r.memeNoeud, r);
+    check("il garde le focus", r.focus, r);
+    eq("et le curseur reste à la fin", r.curseur, 3);
+    eq("aucun rendu complet de la page pendant la frappe", r.rendersComplets, 0);
+    check("le bouton × est apparu", r.croix, r);
+    eq("aucune requête réseau externe pendant la recherche", requetes, []);
+
+    /* Une carte reste cliquable après plusieurs réécritures de la zone. */
+    await page.click(".flash-deckcard[data-open-subject]");
+    await page.waitForTimeout(200);
+    eq("cliquer un résultat ouvre bien la matière",
+      await page.evaluate(() => state.library.view), "subjectDetail");
+
+    /* Retour, puis effacement : le × disparaît, les semestres reviennent. */
+    await page.evaluate(() => libGoto("subjects"));
+    await page.waitForTimeout(150);
+    await page.click("#lib-search-input");
+    await page.keyboard.type("ma", { delay: 15 });
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(150);
+    const apresEsc = await page.evaluate(() => ({
+      valeur: document.getElementById("lib-search-input").value,
+      croix: !!document.getElementById("lib-search-clear"),
+      groupes: document.querySelectorAll(".level-heading").length,
+      focus: document.activeElement === document.getElementById("lib-search-input"),
+    }));
+    eq("Échap vide le champ", apresEsc.valeur, "");
+    check("le × disparaît", !apresEsc.croix, apresEsc);
+    check("le groupement par semestre revient", apresEsc.groupes > 0, apresEsc);
+    check("le focus reste dans le champ", apresEsc.focus, apresEsc);
+    eq("aucune erreur JavaScript", errors, []);
     await page.close();
   }
 

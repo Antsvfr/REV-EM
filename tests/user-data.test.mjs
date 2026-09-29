@@ -559,6 +559,108 @@ try {
     eq("et elle n'a pas été dupliquée", n, 1);
   });
 
+
+  /* ======================================================================
+     12. LA FILE « À ENVOYER » SURVIT À LA FERMETURE DE L'ONGLET
+     ====================================================================== */
+  await scenario("12. ce qui attend est persistable et repart à la session suivante", async () => {
+    const seen = [];
+    const snap = { subjects: [{ id: "subj_file", name: "Créée avant la coupure", semesterId: "s1", icon: "", color: "#000", description: "" }] };
+    const c1 = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0,
+      snapshot: () => snap, onPending: (list) => seen.push(list.slice().sort()) });
+    c1.push("subjects");
+    check("la file est annoncée dès la modification (avant tout envoi)", seen.length > 0 && seen[0].includes("subjects"), seen);
+    /* Fermeture avant l'envoi : c1 est abandonnée, seule `seen` (= le stockage local) survit. */
+    c1.dispose();
+    eq("rien n'est parti", Number((await asService(
+      "select count(*) from public.subjects where user_id=$1 and name='Créée avant la coupure'", [USER_B]))[0].count), 0);
+
+    const c2 = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0,
+      snapshot: () => snap, initialPending: seen[seen.length - 1] });
+    eq("la session suivante retrouve ce qui attendait", c2.pendingDomains, ["subjects"]);
+    const r = await c2.flush();
+    check("et l'envoie", r.ok === true, r);
+    eq("la matière est en base", Number((await asService(
+      "select count(*) from public.subjects where user_id=$1 and name='Créée avant la coupure'", [USER_B]))[0].count), 1);
+
+    const finalSeen = [];
+    const c3 = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0,
+      snapshot: () => snap, initialPending: ["subjects", "domaine_inconnu"], onPending: l => finalSeen.push(l) });
+    eq("un nom de domaine inconnu est ignoré, jamais propagé", c3.pendingDomains, ["subjects"]);
+    await c3.flush();
+    eq("la file annoncée est vide une fois tout confirmé", finalSeen[finalSeen.length - 1], []);
+  });
+
+  await scenario("13. une panne temporaire est retentée toute seule, jamais hors ligne", async () => {
+    let up = false;
+    const flaky = { from(table) {
+      if (!up) { const boom = { error: { message: "503" }, data: null };
+        const b = { select: () => b, upsert: () => b, delete: () => b, eq: () => b, in: () => b, then: (r) => Promise.resolve(boom).then(r) }; return b; }
+      return clientFor(USER_B).from(table);
+    } };
+    const snap = { subjects: [{ id: "subj_retry", name: "Retentée", semesterId: "s1", icon: "", color: "#000", description: "" }] };
+    const c = UD.createCloud({ client: flaky, userId: USER_B, debounceMs: 0, retryBaseMs: 30, snapshot: () => snap });
+    c.push("subjects");
+    await new Promise(r => setTimeout(r, 15));
+    up = true;
+    await new Promise(r => setTimeout(r, 200));
+    eq("le serveur revient : la file s'est vidée sans action", c.pendingDomains, []);
+    eq("et la donnée est en base", Number((await asService(
+      "select count(*) from public.subjects where user_id=$1 and name='Retentée'", [USER_B]))[0].count), 1);
+
+    /* Hors ligne : aucune tentative programmée (c'est l'événement « online » qui relance). */
+    let calls = 0;
+    const dead = { from() { calls++; const boom = { error: { message: "offline" }, data: null };
+      const b = { select: () => b, upsert: () => b, delete: () => b, eq: () => b, in: () => b, then: (r) => Promise.resolve(boom).then(r) }; return b; } };
+    const c2 = UD.createCloud({ client: dead, userId: USER_B, debounceMs: 0, retryBaseMs: 20, isOnline: () => false, snapshot: () => snap });
+    c2.push("subjects");
+    await new Promise(r => setTimeout(r, 60));
+    const afterFirst = calls;
+    await new Promise(r => setTimeout(r, 150));
+    eq("hors ligne : une seule tentative, pas de boucle", calls, afterFirst);
+    eq("la donnée reste en attente", c2.pendingDomains, ["subjects"]);
+    c2.dispose();
+  });
+
+  await scenario("14. une instance abandonnée n'écrit plus jamais rien", async () => {
+    const snap = { subjects: [{ id: "subj_zombie", name: "Zombie", semesterId: "s1", icon: "", color: "#000", description: "" }] };
+    const c = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 20, retryBaseMs: 10, snapshot: () => snap });
+    c.push("subjects");
+    c.dispose();
+    await new Promise(r => setTimeout(r, 120));
+    eq("aucune écriture après dispose()", Number((await asService(
+      "select count(*) from public.subjects where user_id=$1 and name='Zombie'", [USER_B]))[0].count), 0);
+    check("push() le refuse", c.push("subjects") === false);
+    const f = await c.flush();
+    check("flush() ne prétend pas avoir réussi", f.ok === false, f);
+  });
+
+  await scenario("15. envoyer avant d'avoir absorbé le compte ne supprime rien chez lui", async () => {
+    const mk = (id, name) => ({ id, name, semesterId: "s1", icon: "", color: "#000", description: "" });
+    /* Appareil 1 : deux matières. */
+    const dev1 = { subjects: [mk("subj_m1", "Multi 1"), mk("subj_m2", "Multi 2")] };
+    const c1 = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0, snapshot: () => dev1 });
+    c1.push("subjects"); await c1.flush();
+
+    /* Appareil 2 : a lu le compte, puis n'a localement qu'une matière + une nouvelle (travail hors ligne). */
+    const dev2 = { subjects: [mk("subj_m1", "Multi 1"), mk("subj_m3", "Multi 3")] };
+    const c2 = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0, snapshot: () => dev2 });
+    await c2.pullAll({});
+    c2.forgetKnownKeys();
+    c2.push("subjects"); await c2.flush();
+    const names = (await asService("select name from public.subjects where user_id=$1 and name like 'Multi %' order by name", [USER_B])).map(r => r.name);
+    eq("Multi 2 (ajoutée ailleurs) est conservée, Multi 3 est ajoutée", names, ["Multi 1", "Multi 2", "Multi 3"]);
+
+    /* Témoin : sans oubli des clés, la même écriture supprimerait « Multi 2 » —
+       c'est le comportement normal QUAND l'appareil est aligné sur le compte
+       (scénario 6), et c'est exactement ce qu'on ne veut pas au démarrage. */
+    const c3 = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0, snapshot: () => dev2 });
+    await c3.pullAll({});
+    c3.push("subjects"); await c3.flush();
+    const after = (await asService("select name from public.subjects where user_id=$1 and name like 'Multi %' order by name", [USER_B])).map(r => r.name);
+    eq("témoin : sans forgetKnownKeys(), la suppression a bien lieu", after, ["Multi 1", "Multi 3"]);
+  });
+
 } catch (e) {
   fail++;
   console.log(`FAIL — exception hors scénario : ${(e && e.stack) || e}`);

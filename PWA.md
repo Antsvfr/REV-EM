@@ -56,9 +56,19 @@ réponse fixe la stratégie, jamais l'inverse.
 | Requête | Stratégie | Pourquoi |
 |---|---|---|
 | Navigation (la page elle-même) | **réseau d'abord**, cache en secours | Un utilisateur en ligne reçoit TOUJOURS la version la plus récente — voir « Mise à jour » |
-| Module applicatif, police, icône (même origine ou CDN autorisé) | **cache d'abord**, réseau en tâche de fond | Rapide à servir ; jamais périmé de plus d'une session |
+| Module JavaScript de l'application (`*.js`, même origine) | **réseau d'abord**, cache en secours | Les modules dépendent les uns des autres (`index.html` ↔ `user-data.js`…) : une page neuve avec un ancien module casse le contrat. Depuis `rev-em-v3` |
+| Police, icône (même origine ou CDN autorisé) | **cache d'abord**, réseau en tâche de fond | Rapide à servir ; jamais périmé de plus d'une session |
 | Le projet Supabase (`*.supabase.co`) | **jamais intercepté** | Une donnée de compte ne doit jamais venir d'un cache — voir « Sécurité » |
 | Tout le reste (imports différés `esm.run`, requêtes imprévues) | **ignoré** | Moins de surface interceptée, moins de risque de servir une version bloquée d'une dépendance lourde |
+
+> **Première session après ce changement.** Un utilisateur dont l'ancien
+> service worker (`rev-em-v2`) est encore actif reçoit une page neuve mais,
+> pour cette seule session, un ancien `user-data.js` servi par le cache.
+> `index.html` le détecte (`LyonUserData.API_VERSION`, voir
+> `userDataModuleIsCurrent()`), ne synchronise pas avec un module trop ancien
+> et recharge **une seule fois** (garde `sessionStorage`, jamais de boucle)
+> pour récupérer les modules revalidés en arrière-plan. Rien n'est perdu :
+> la file « à envoyer » est déjà persistée.
 
 ### Pourquoi « réseau d'abord » pour la page, et pas une simple version de cache
 

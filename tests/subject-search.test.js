@@ -4,7 +4,7 @@
    Exécution :  node tests/subject-search.test.js
    Aucune dépendance, aucun réseau, aucun navigateur : le moteur est pur.
 
-   Ce qui est testé ici : le filtrage lui-même, la cascade de niveaux, le tri
+   Ce qui est testé ici : le filtrage lui-même, le classement à cinq niveaux, le tri
    sensible à la locale. Ce qui est testé AILLEURS (tests/library-search.test.mjs,
    au navigateur) : le champ réel, le bouton ×, Échap, le rendu, les cinq
    langues, le responsive.
@@ -37,10 +37,10 @@ const SUBJECTS = named([
 /* ══════════════════════════════════════════════════════════════════════════
    1. DÈS LA PREMIÈRE LETTRE, ET PAR PRÉFIXE
    ══════════════════════════════════════════════════════════════════════════ */
-scenario("1. une seule lettre, triée alphabétiquement", () => {
+scenario("1. une seule lettre : ce qui COMMENCE par M d'abord (alphabétique), puis ce qui le contient", () => {
   const r = S.filterAndSortSubjects("M", SUBJECTS);
-  eq("« M » trouve les quatre matières qui commencent par M, dans l'ordre alphabétique",
-    names(r), ["Management", "Management commercial", "Marketing", "Mathématiques"]);
+  eq("les quatre qui commencent par M, alphabétiquement, puis « Économie » (contient un m)",
+    names(r), ["Management", "Management commercial", "Marketing", "Mathématiques", "Économie"]);
 });
 
 scenario("2. affiner la recherche resserre les résultats", () => {
@@ -73,16 +73,52 @@ scenario("5. correspondance partielle quand rien ne commence par la saisie", () 
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
-   6. LE CLASSEMENT EST UNE CASCADE — jamais un mélange de niveaux
+   6. LE CLASSEMENT MÉLANGE LES NIVEAUX — le plus fort d'abord, rien de masqué
    ══════════════════════════════════════════════════════════════════════════ */
-scenario("6. la priorité va toujours à ce qui COMMENCE par la saisie", () => {
-  const subs = named(["Management", "Management commercial", "Marketing", "Gestion du marketing"]);
+scenario("6. l'exemple du cahier des charges : « mar »", () => {
+  const subs = named(["Marketing", "Management", "Management commercial", "Gestion du marketing", "Finance"]);
   const r = S.filterAndSortSubjects("mar", subs);
-  eq("seule « Marketing » commence par « mar » : elle seule sort, malgré un mot "
-    + "« marketing » dans « Gestion du marketing »", names(r), ["Marketing"]);
+  eq("« Marketing » (commence par) puis « Gestion du marketing » (un mot commence par)",
+    names(r), ["Marketing", "Gestion du marketing"]);
 });
 
-scenario("7. un mot qui commence par la saisie, si rien ne commence par elle au début", () => {
+scenario("6 bis. les cinq niveaux, dans un même résultat", () => {
+  const subs = named(["Économie du marketing digital", "Supermarché", "Marché du travail", "Mar", "Marketing", "Marge"]);
+  eq("exact, commence par (alphabétique), un mot commence par, contient",
+    names(S.filterAndSortSubjects("mar", subs)),
+    ["Mar", "Marché du travail", "Marge", "Marketing", "Économie du marketing digital", "Supermarché"]);
+});
+
+scenario("6 ter. plusieurs mots saisis", () => {
+  const subs = named(["Gestion du marketing", "Gestion financière", "Marketing de la gestion"]);
+  eq("« gestion mar » : chaque mot commence un mot du nom",
+    names(S.filterAndSortSubjects("gestion mar", subs)), ["Gestion du marketing", "Marketing de la gestion"]);
+});
+
+scenario("6 quater. égalité de niveau : ordre alphabétique, puis ordre d'origine", () => {
+  const subs = [{ id: "1", name: "Droit B" }, { id: "2", name: "droit b" }, { id: "3", name: "Droit A" }];
+  eq("« droit » : A avant B, et les deux « B » gardent leur ordre",
+    S.filterAndSortSubjects("droit", subs).map(x => x.id), ["3", "1", "2"]);
+});
+
+scenario("6 quinquies. le nom affiché reste l'original (accents et casse intacts)", () => {
+  const r = S.filterAndSortSubjects("eco", named(["Économie"]));
+  eq("« Économie » n'est pas réécrit en « economie »", names(r), ["Économie"]);
+});
+
+scenario("6 sexies. searchSubjects est le même moteur", () => {
+  check("alias exposé", S.searchSubjects === S.filterAndSortSubjects);
+});
+
+scenario("6 septies. rapide : 2 000 matières, une frappe en moins de 30 ms", () => {
+  const many = Array.from({ length: 2000 }, (_, i) => ({ id: "s" + i, name: (i % 3 ? "Gestion du marketing " : "Marketing ") + i }));
+  const t0 = process.hrtime.bigint();
+  const r = S.filterAndSortSubjects("mar", many);
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  check(`classées en ${ms.toFixed(1)} ms`, ms < 30 && r.length === 2000, ms);
+});
+
+scenario("7. un mot qui commence par la saisie, même si rien ne commence par elle au début", () => {
   const subs = named(["Gestion du marketing", "Analyse financière"]);
   const r = S.filterAndSortSubjects("mar", subs);
   eq("« Gestion du marketing » sort car son second mot commence par « mar »",

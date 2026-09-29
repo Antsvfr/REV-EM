@@ -19,6 +19,13 @@ Appareil A                                     Appareil B
                                               state → interface
 ```
 
+> **Audit et durcissement (étape « Recherche premium + synchronisation »)** :
+> l'audit complet, les défauts trouvés et corrigés (perte hors ligne, reprise
+> après échec, fusion qui supprimait, envoi après fin de session, fuite
+> d'affichage au changement de compte…) sont dans
+> [`SYNC_AUDIT.md`](SYNC_AUDIT.md). Ce document-ci décrit le fonctionnement
+> nominal.
+
 ## Ce qui a changé
 
 **Avant :** le compte servait à afficher un prénom. Les données de révision
@@ -160,14 +167,45 @@ Le choix est mémorisé par compte et par appareil : il n'est pas redemandé à
 chaque connexion. Quand l'appareil n'a rien à envoyer, aucune question n'est
 posée — il n'y a rien à arbitrer.
 
+## Le travail non envoyé survit à tout
+
+La liste des domaines qui **attendent d'être envoyés** est persistée
+(`sync-pending`, dans l'espace du compte) à chaque changement. Une
+modification faite hors ligne, ou dans les 900 ms avant de fermer l'onglet,
+n'est donc pas « seulement dans le cache » : à la reconnexion, ce qui attendait
+est **envoyé avant** toute lecture, sinon la lecture l'aurait écrasé.
+
+- échec d'écriture → nouvelle tentative à 2 s, 4 s, 8 s… (60 s au plus), **sauf
+  hors ligne** (l'événement `online` relance) ;
+- première lecture ratée → l'application reste utilisable, chaque modification
+  est mise de côté, reprise automatique (3 s, 6 s… 60 s), un seul toast ;
+- fermeture de l'onglet → envoi de dernière minute au mieux ; s'il est coupé,
+  la file est déjà persistée.
+
+Au démarrage (première connexion, reprise après coupure), l'envoi n'**ajoute
+et ne modifie** que : il ne déduit **aucune suppression** de « présent chez le
+compte, absent ici », puisque l'appareil n'a pas encore absorbé le compte —
+sinon il effacerait ce qu'un autre appareil a ajouté entre-temps.
+
 ## La déconnexion
 
-On **écrit d'abord** ce qui attend, **ensuite seulement** on efface le cache de
-ce compte. Purger avant d'avoir poussé perdrait la donnée pour de bon.
+L'envoi de ce qui attend part **avant** la fin de session (une fois
+déconnecté, Supabase refuserait l'écriture). On **écrit d'abord**, **ensuite
+seulement** on efface le cache de ce compte. Purger avant d'avoir poussé
+perdrait la donnée pour de bon.
 
-Si l'écriture échoue (hors ligne), **le cache est conservé** : perdre le
-travail de l'élève serait pire que le laisser sur cet appareil. Vider le cache
-n'est une bonne idée que parce que Supabase le détient déjà.
+Si l'écriture échoue (hors ligne), **le cache et la file « à envoyer » sont
+conservés** : perdre le travail de l'élève serait pire que le laisser sur cet
+appareil. À sa prochaine connexion sur cet appareil, ils repartent avant toute
+lecture.
+
+## Le changement de compte
+
+Au premier instant où un autre compte devient courant — avant tout `await` —
+l'instantané du compte sortant est figé, la mémoire est vidée (données **et**
+sessions en cours) et l'écran passe en « Chargement de ton espace… ». Aucune
+donnée de l'ancien compte n'est jamais visible pendant le chargement du
+nouveau. Voir `SYNC_AUDIT.md` §3.
 
 ## La sécurité
 
@@ -186,8 +224,8 @@ aucune colonne de notre schéma n'en contient.
 
 | Suite | Ce qui est RÉEL | Ce qui est remplacé |
 |---|---|---|
-| `tests/user-data.test.mjs` (113) | PostgreSQL, le schéma, les contraintes, **les policies RLS**, deux identités distinctes, le moteur tel quel | le transport HTTP de PostgREST, la vérification de signature du JWT |
-| `tests/account-sync.test.mjs` (101) | Chromium, index.html, auth.js, user-data.js, **deux contextes = deux appareils**, chacun son `localStorage` | le SDK Supabase (données en mémoire, partagées) |
+| `tests/user-data.test.mjs` (129) | PostgreSQL, le schéma, les contraintes, **les policies RLS**, deux identités distinctes, le moteur tel quel | le transport HTTP de PostgREST, la vérification de signature du JWT |
+| `tests/account-sync.test.mjs` | Chromium, index.html, auth.js, user-data.js, **deux contextes = deux appareils**, chacun son `localStorage` | le SDK Supabase (données en mémoire, partagées) |
 | `supabase/tests/user_sync_tests.sql` (18) | PostgreSQL : unicité, clés étrangères, RLS, cascade | — |
 
 **Ce qu'aucune des trois ne prouve**, et qui exige un vrai projet Supabase et
@@ -195,28 +233,26 @@ une vraie boîte mail : qu'un e-mail de confirmation part et arrive, et qu'un
 vrai téléphone retrouve les données via le vrai réseau. Voir le rapport de
 l'étape.
 
-## Un échec de synchronisation n'est plus silencieux
+## Un échec de synchronisation n'est jamais silencieux
 
-Jusqu'ici, si la toute première lecture depuis le compte échouait (exemple
-réel : les migrations `supabase/migrations/` pas encore appliquées sur le
-projet, donc `relation "subjects" does not exist`), `cloudStart()`
-l'attrapait proprement — mais ne changeait que la couleur d'un petit point
-discret dans l'en-tête (`#cloud-indicator`). Un élève dans ce cas ne voit
-jamais ses matières apparaître, et rien ne le lui dit : il croit les avoir
-perdues, alors qu'elles existent toujours sur son premier appareil.
+Trois signaux, du plus discret au plus explicite :
 
-`cloudStart()` déclenche maintenant un toast (`cloud.pull_error`) à cet
-instant précis, et un second (`cloud.error`) si l'écriture échoue plus tard
-pendant l'usage — dans les deux cas une seule fois par passage à l'état
-d'erreur, pas à chaque nouvelle tentative. Vérifié en simulant un
-`pullAll()` qui échoue, dans les cinq langues.
+- **l'indicateur** de la barre du haut (Synchronisé / Synchronisation… / Hors
+  connexion / Synchronisation à terminer), voir `SYNC_AUDIT.md` §8 ;
+- **un toast** (`cloud.pull_error`, `cloud.error`, `cloud.partial`) au moment
+  où ça casse — une seule fois par passage à l'erreur, jamais hors ligne
+  (« Hors connexion » n'est pas une panne) ;
+- **la reprise automatique**, qui fait disparaître les deux premiers d'elles-mêmes quand ça repart.
+
+`pullAll()` ne lève jamais : il renvoie `{snapshot, errors}`. `cloudStart()`
+regarde donc `errors` (une première version attrapait une exception qui
+n'arrive jamais — le toast ne s'affichait pas).
 
 **Ce que ça ne remplace pas** : un projet Supabase mal configuré (migrations
-non appliquées, URL/clé absentes) reste un problème à résoudre côté
-Supabase, pas quelque chose que le frontend peut corriger tout seul — voir
-`SETUP_SUPABASE.md` et `supabase/tests/00_diagnostic.sql`. Ce correctif fait
-seulement en sorte que l'élève le SACHE, au lieu de croire que ses données
-ont disparu.
+non appliquées, URL/clé absentes) reste un problème à résoudre côté Supabase —
+voir `SETUP_SUPABASE.md` et `supabase/tests/00_diagnostic.sql`. Ces signaux
+font seulement en sorte que l'élève le SACHE, au lieu de croire que ses
+données ont disparu.
 
 ## Ce qui reste local, et pourquoi
 
