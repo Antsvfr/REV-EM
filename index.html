@@ -698,6 +698,8 @@
   .cloud-status.is-offline .cloud-dot{ background: transparent; box-sizing: border-box; border: 1.5px solid var(--text-muted); }
   .cloud-status.is-pending{ color: var(--warning); }
   .cloud-status.is-pending .cloud-dot{ background: var(--warning); }
+  .cloud-status.is-actionable{ cursor: pointer; }
+  .cloud-status.is-actionable:focus-visible{ outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
   @keyframes cloud-spin{ to{ transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce){
     .cloud-dot{ transition: none; }
@@ -6655,6 +6657,23 @@ let cloudRetryUserId = null;
 let cloudRetryTimer = null;
 let cloudRetryAttempt = 0;
 let cloudStarting = null;    // userId dont cloudStart() est en cours (anti-doublon)
+/* Compte dont l'élève n'a pas encore tranché la question de première
+   connexion (Échap / « Plus tard »). Tant qu'il est renseigné : la
+   synchronisation est EN ATTENTE, pas absente — l'indicateur le dit, et un
+   clic le rouvre. Sans cela, fermer la modale coupait la synchronisation de
+   la session sans que rien ne l'indique : les données du compte restaient en
+   base, jamais téléchargées. */
+let cloudAwaitingChoice = null;
+/* L'état de la synchronisation, lisible d'un coup d'œil (console : syncState). */
+const syncState = { authenticated: false, hydrating: false, hydrated: false, syncing: false, userId: null };
+/* Journal de synchronisation : jamais de mot de passe, de jeton ni de contenu
+   d'élève — des identifiants courts et des compteurs. */
+function syncLog(msg, data){
+  try{
+    const fn = /^FAILED/.test(msg) ? console.error : console.info;
+    if(data === undefined) fn("[REV-EM Sync] " + msg); else fn("[REV-EM Sync] " + msg, data);
+  }catch(e){ /* jamais bloquant */ }
+}
 
 /* Le stockage du compte X, écrit explicitement dans l'espace de X : un
    rappel asynchrone peut arriver APRÈS un changement de compte, et ne doit
@@ -6846,17 +6865,19 @@ const KEY_PWA_INSTALL_DISMISS = "pwa-install-dismiss";   // date du dernier "plu
    ce que le compte contient) ou "later" (ne rien synchroniser pour l'instant). */
 async function cloudDecideMigration(remoteSnapshot){
   const already = lsGet(KEY_CLOUD_CHOICE);
-  if(already === "merge" || already === "cloud") return already;
+  if(already === "merge" || already === "cloud") return { choice: already, explicitCloud: false };
 
   const localCount = cloudLocalVolume();
   const remoteCount = cloudRemoteVolume(remoteSnapshot);
 
   /* Rien à arbitrer : cet appareil n'a rien à envoyer. */
-  if(localCount === 0){ lsSet(KEY_CLOUD_CHOICE, "cloud"); return "cloud"; }
+  if(localCount === 0){ lsSet(KEY_CLOUD_CHOICE, "cloud"); return { choice: "cloud", explicitCloud: false }; }
 
   /* Le compte est vide : envoyer est non destructif, mais on le dit quand
      même — c'est la première fois que les données de l'élève quittent son
      navigateur, et il a le droit de le savoir. */
+  cloudState = { phase: "awaiting", at: null, errors: [] };   // l'indicateur ne doit PAS dire « Synchronisé » pendant qu'on attend une réponse
+  updateCloudIndicator();
   const answer = await dsConfirm({
     title: t("cloud.migrate_title"),
     body: remoteCount === 0
@@ -6867,9 +6888,12 @@ async function cloudDecideMigration(remoteSnapshot){
     cancelLabel: t("cloud.migrate_later"),
   });
 
+  /* Échap, clic à côté et « Plus tard » ont le même effet : la question reste
+     OUVERTE (jamais tranchée à la place de l'élève), et cela se voit — voir
+     cloudAwaitingChoice. */
   const choice = answer === true ? "merge" : (answer === "alt" ? "cloud" : "later");
   if(choice !== "later") lsSet(KEY_CLOUD_CHOICE, choice);
-  return choice;
+  return { choice, explicitCloud: choice === "cloud" };
 }
 
 /* ── CONNEXION ────────────────────────────────────────────────────────────
@@ -6945,6 +6969,13 @@ async function cloudStartRun(userId){
     userId: userId,
     snapshot: cloudSnapshot,
     initialPending: cloudPendingOf(userId),
+    /* Barrière d'hydratation : aucun envoi automatique tant que le compte n'a
+       pas été lu ET absorbé (engine.resume() plus bas). */
+    startPaused: true,
+    /* Les matières intégrées n'ont pas de ligne en base : leurs chapitres
+       d'élève passent par une ligne miroir (voir user-data.js). */
+    builtinSubjects: SUBJECTS.map(b => ({ id: b.id, name: b.name })),
+    log: syncLog,
     /* La file, écrite dans l'espace de CE compte — un rappel peut arriver
        après un changement de compte, il ne doit jamais toucher l'autre. */
     onPending: (list)=>{ lsSetForUser(userId, KEY_SYNC_PENDING, list); if(isCurrent()) updateCloudIndicator(); },
@@ -6955,15 +6986,20 @@ async function cloudStartRun(userId){
          par l'indicateur, ce n'est pas une panne. */
       const wasOk = cloudState.phase !== "error";
       cloudState = { phase: s.phase, at: s.at || cloudState.at, errors: s.errors || [] };
+      syncState.syncing = s.phase === "pushing";
       updateCloudIndicator();
       if(wasOk && s.phase === "error" && navigator.onLine !== false) showToast(t("cloud.error"), "error");
     },
   });
   cloud = engine;
   cloudState = { phase: "pulling", at: null, errors: [] };
+  cloudAwaitingChoice = null;
+  Object.assign(syncState, { authenticated: true, hydrating: true, hydrated: false, syncing: false, userId: userId });
+  syncLog("hydration started");
+  syncLog("user: " + String(userId).slice(0, 8) + "…");
   updateCloudIndicator();
 
-  const abandon = ()=>{ engine.dispose(); if(cloud === engine) cloud = null; };
+  const abandon = ()=>{ engine.dispose(); if(cloud === engine) cloud = null; syncState.hydrating = false; };
   /* Lecture ratée (réseau, base pas prête) : on n'applique RIEN qui écraserait
      du travail non envoyé, on note ce qui reste à envoyer, on réessaiera. */
   const failStart = (errs, applyPartial, pulledSnapshot)=>{
@@ -6971,6 +7007,8 @@ async function cloudStartRun(userId){
     if(applyPartial && pulledSnapshot) cloudApplySnapshot(pulledSnapshot);
     engine.dispose();
     if(cloud === engine) cloud = null;
+    syncState.hydrating = false;
+    syncLog("FAILED hydration", errs);
     cloudState = { phase: "error", at: Date.now(), errors: errs };
     cloudScheduleRetry(userId);
     updateCloudIndicator();
@@ -6990,17 +7028,20 @@ async function cloudStartRun(userId){
     return;
   }
 
-  const decidedBefore = lsGet(KEY_CLOUD_CHOICE);
-  const choice = await cloudDecideMigration(pulled.snapshot);
+  const decision = await cloudDecideMigration(pulled.snapshot);
+  const choice = decision.choice;
   if(stale()){ abandon(); return; }
 
   if(choice === "later"){
-    /* Rien ne part, rien n'arrive. L'utilisateur garde exactement ce qu'il
-       avait, et on ne pousse pas non plus « par accident » à la première
-       écriture : le moteur est désactivé jusqu'à la prochaine connexion. */
+    /* Rien ne part, rien n'arrive : la question de première connexion reste
+       OUVERTE, et cela se voit (indicateur « à terminer », cliquable, plus un
+       message). Jamais une synchronisation coupée en silence pour la session. */
     abandon();
+    cloudAwaitingChoice = userId;
     cloudState = { phase: "off", at: null, errors: [] };
+    syncLog("hydration waiting for the user's choice");
     updateCloudIndicator();
+    showToast(t("cloud.later_hint"));
     return;
   }
 
@@ -7016,9 +7057,11 @@ async function cloudStartRun(userId){
     /* La fusion est faite : cet appareil est désormais aligné sur le compte.
        Les connexions suivantes lisent le compte, elles ne re-fusionnent pas. */
     if(!isTotalFailure(pulled)) lsSet(KEY_CLOUD_CHOICE, "cloud");
-  } else if(decidedBefore !== "cloud" && engine.pendingDomains.length){
-    /* Choix « utiliser mon compte » pris à l'instant : les modifications
-       locales non envoyées sont écartées, volontairement, par l'utilisateur. */
+  } else if(decision.explicitCloud && engine.pendingDomains.length){
+    /* L'élève vient de répondre « utiliser mon compte » : ses modifications
+       locales non envoyées sont écartées, volontairement, par lui. (Un choix
+       « cloud » automatique — appareil sans donnée locale — ne passe jamais
+       ici : ce qui a été fait pendant le téléchargement est CONSERVÉ.) */
     engine.discardPending();
   } else if(engine.pendingDomains.length){
     /* Modifications faites hors ligne / non envoyées : d'abord elles partent,
@@ -7034,6 +7077,11 @@ async function cloudStartRun(userId){
 
   cloudApplySnapshot(pulled.snapshot);
   cloudRetryUserId = null; cloudRetryAttempt = 0; cloudClearRetry();
+  /* Le compte est lu et absorbé : seulement maintenant l'envoi automatique est
+     libéré (ce qui a été demandé entre-temps part en un seul lot). */
+  engine.resume();
+  Object.assign(syncState, { hydrating: false, hydrated: true });
+  syncLog("hydration completed");
   if(pulled.errors && pulled.errors.length){
     console.warn("[LyonUserData] domaines non chargés :", pulled.errors);
     cloudState = { phase: "partial", at: Date.now(), errors: pulled.errors };
@@ -7062,6 +7110,8 @@ async function cloudStop(previousUserId, frozen){
   cloud = null;
   cloudClearRetry();
   cloudRetryUserId = null; cloudRetryAttempt = 0;
+  cloudAwaitingChoice = null;
+  Object.assign(syncState, { authenticated: false, hydrating: false, hydrated: false, syncing: false, userId: null });
   cloudState = { phase: "off", at: null, errors: [] };
   updateCloudIndicator();
   if(!c || !previousUserId) return;
@@ -7128,10 +7178,13 @@ window.addEventListener("pagehide", ()=>{
    Invisible pour un invité : sans compte il n'y a rien à synchroniser, ce
    n'est pas un état dégradé. */
 function cloudIndicatorState(){
-  if(!currentAuthId()) return null;
+  const id = currentAuthId();
+  if(!id) return null;
+  if(cloudAwaitingChoice === id) return "pending";   // question de première connexion restée ouverte
   if(!cloud && !cloudRetryUserId && !cloudStarting) return null;
   if(navigator.onLine === false) return "offline";
   const phase = cloudState.phase;
+  if(phase === "awaiting") return "pending";          // la modale attend une réponse : pas « Synchronisé »
   if(phase === "pulling" || phase === "pushing") return "syncing";
   if(phase === "error" || phase === "partial" || cloudRetryUserId) return "pending";
   if(cloud && cloud.pendingDomains.length) return "syncing";
@@ -7142,8 +7195,9 @@ function updateCloudIndicator(){
   const el = document.getElementById("cloud-indicator");
   if(!el) return;
   const st = cloudIndicatorState();
+  const awaiting = !!cloudAwaitingChoice && cloudAwaitingChoice === currentAuthId();
   el.hidden = !st;
-  el.className = "cloud-status" + (st ? " is-" + st : "");
+  el.className = "cloud-status" + (st ? " is-" + st : "") + (awaiting ? " is-actionable" : "");
   const label = st === "synced" ? t("cloud.synced")
               : st === "syncing" ? t("cloud.syncing")
               : st === "offline" ? t("cloud.offline")
@@ -7151,9 +7205,37 @@ function updateCloudIndicator(){
               : "";
   const lab = el.querySelector(".cloud-label");
   if(lab) lab.textContent = label;
-  el.setAttribute("aria-label", label);
-  el.setAttribute("title", label);
+  const tip = awaiting ? t("cloud.awaiting_choice") : label;
+  el.setAttribute("aria-label", tip);
+  el.setAttribute("title", tip);
+  if(awaiting){ el.setAttribute("role", "button"); el.tabIndex = 0; }
+  else { el.setAttribute("role", "status"); el.removeAttribute("tabindex"); }
 }
+/* Rouvre la question de première connexion (Échap / « Plus tard » ne la
+   ferment jamais pour de bon). */
+(function(){
+  const el = document.getElementById("cloud-indicator");
+  if(!el) return;
+  const reopen = ()=>{
+    const id = currentAuthId();
+    if(cloudAwaitingChoice && cloudAwaitingChoice === id && !cloudStarting) cloudStart(id);
+  };
+  el.addEventListener("click", reopen);
+  el.addEventListener("keydown", (e)=>{ if(e.key === "Enter" || e.key === " "){ e.preventDefault(); reopen(); } });
+})();
+
+/* Diagnostic pour la console : ce qui est ICI, ce qui est dans le compte, par
+   catégorie — jamais de contenu, jamais de jeton. Sert à répondre, sur un vrai
+   projet Supabase, à « mes données sont-elles là, et où ? ». Utilisation :
+   `await revemSyncDiagnostic()`. */
+window.revemSyncDiagnostic = async function(){
+  const id = currentAuthId();
+  if(!id || !window.LyonUserData || !LyonAuth.client){ console.info("[REV-EM Sync] pas de compte connecté"); return []; }
+  const rows = await LyonUserData.diagnose(LyonAuth.client, id, cloudSnapshot(), { builtinSubjects: SUBJECTS.map(b => ({ id: b.id, name: b.name })) });
+  console.info("[REV-EM Sync] état :", JSON.stringify(syncState), "· file :", JSON.stringify(cloudPendingOf(id)));
+  console.table(rows);
+  return rows;
+};
 
 /* Ancienne API de stockage (window.storage) : on l'importe une seule fois,
    sans jamais l'effacer, pour ne perdre aucune donnée déjà enregistrée. */
@@ -7258,6 +7340,7 @@ async function loadAllData(){
    l'état au nouvel espace, lsSet() refuse toute écriture. */
 function resetUserStateInMemory(){
   stateNamespace = "\u0000";
+  cloudAwaitingChoice = null;
   state.progress = {}; state.flashProgress = {}; state.aiHistory = [];
   state.qstats = {}; state.badges = {}; state.aiCards = {};
   state.userSubjects = []; state.userChapters = [];

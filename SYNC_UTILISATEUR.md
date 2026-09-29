@@ -52,6 +52,7 @@ un état normal du produit, pas un cas dégradé.
 | `supabase/migrations/005_user_sync.sql` | 150 | les clés naturelles qui rendent l'écriture idempotente |
 | `supabase/tests/00_diagnostic.sql` | ~120 | en lecture seule : où en est une base, et quoi exécuter ensuite |
 | `tests/user-data.test.mjs` | ~560 | le moteur contre un **PostgreSQL réel**, RLS comprise |
+| `tests/real-sdk-sync.test.mjs` | le **SDK Supabase officiel** dans Chromium, contre un serveur HTTP simulé (GoTrue + PostgREST, règle « seules mes lignes ») : nouvel appareil, reconnexion, F5, bidirectionnel, A ≠ B, réseau, hydratation | le serveur (pas un vrai Supabase) |
 | `tests/account-sync.test.mjs` | ~640 | le branchement dans un **vrai navigateur**, deux appareils |
 | `supabase/tests/user_sync_tests.sql` | ~280 | les garanties de la base elle-même |
 
@@ -166,6 +167,17 @@ Trois issues :
 Le choix est mémorisé par compte et par appareil : il n'est pas redemandé à
 chaque connexion. Quand l'appareil n'a rien à envoyer, aucune question n'est
 posée — il n'y a rien à arbitrer.
+
+## La lecture du compte passe toujours avant l'envoi
+
+Un appareil neuf, ou une nouvelle session, **lit d'abord le compte** : le moteur
+d'envoi est créé en pause (`startPaused`) et n'est libéré (`resume()`) qu'une fois
+les données du compte absorbées dans l'état. Sans cette barrière, un envoi parti
+pendant la lecture pouvait supprimer des lignes du compte. Si l'appareil a déjà
+des données locales, la question « envoyer / utiliser mon compte / plus tard »
+reste **ouverte et visible** (indicateur cliquable) tant qu'elle n'a pas de
+réponse — Échap ne la ferme jamais pour de bon. Détails et preuves :
+`SYNC_AUDIT.md`, addendum « les données sont dans Supabase mais ne reviennent pas ».
 
 ## Le travail non envoyé survit à tout
 

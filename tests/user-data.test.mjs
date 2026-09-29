@@ -661,6 +661,55 @@ try {
     eq("témoin : sans forgetKnownKeys(), la suppression a bien lieu", after, ["Multi 1", "Multi 3"]);
   });
 
+
+  /* ======================================================================
+     16. CHAPITRES D'UNE MATIÈRE INTÉGRÉE — jamais ignorés en silence
+     ====================================================================== */
+  await scenario("16. un chapitre rangé dans une matière intégrée est synchronisé, sans doublon de matière", async () => {
+    const BUILTINS = [{ id: "analyse-marche", name: "Analyse de marché" }];
+    const chap = { id: "ch_int", subjectId: "analyse-marche", num: "06", title: "Cours importé", desc: "", content: "fiche",
+                   aiQuiz: [{ q: "?", opts: ["a", "b"], correct: 0 }], aiFlashcards: [], aiReviewQuestions: [], keyNotions: [] };
+    const snap = { subjects: [], chapters: [chap] };
+    const mk = (sub, snapshot) => UD.createCloud({ client: clientFor(sub), userId: sub, debounceMs: 0, retryBaseMs: 0,
+      snapshot: () => snapshot, builtinSubjects: BUILTINS });
+
+    /* Seul « chapters » est en attente : la ligne miroir doit être créée d'elle-même. */
+    const c1 = mk(USER_A, snap);
+    c1.push("chapters");
+    const r = await c1.flush();
+    check("l'envoi réussit", r.ok === true, r);
+    const rows = await asService("select title, subject_id from public.chapters where user_id=$1 and local_id='ch_int'", [USER_A]);
+    eq("le chapitre est bien en base", rows.length, 1);
+    const mir = await asService("select name, description from public.subjects where user_id=$1 and local_id='analyse-marche'", [USER_A]);
+    eq("rattaché à une ligne miroir de la matière intégrée", mir.map(x => x.description), ["__builtin__"]);
+
+    /* Appareil vierge : le chapitre revient, la matière miroir ne devient PAS une matière de l'élève. */
+    const c2 = mk(USER_A, { subjects: [], chapters: [] });
+    const pulled = await c2.pullAll({});
+    eq("les erreurs de lecture sont vides", pulled.errors, []);
+    eq("le chapitre est retrouvé, rattaché à l'identifiant INTÉGRÉ", pulled.snapshot.chapters.filter(c => c.title === "Cours importé").map(c => [c.title, c.subjectId]), [["Cours importé", "analyse-marche"]]);
+    eq("aucune matière fantôme « Analyse de marché » dans « Mes matières »", pulled.snapshot.subjects.filter(x => x.id === "analyse-marche" || x.name === "Analyse de marché"), []);
+
+    /* Sans chapitre, le miroir est retiré (rien de résiduel). */
+    const c3 = mk(USER_A, { subjects: [], chapters: [] });
+    await c3.pullAll({});
+    c3.push("subjects"); c3.push("chapters"); await c3.flush();
+    const after = await asService("select count(*)::int as n from public.subjects where user_id=$1 and local_id='analyse-marche'", [USER_A]);
+    eq("le miroir disparaît quand plus aucun chapitre ne l'utilise", after[0].n, 0);
+  });
+
+  await scenario("17. barrière d'hydratation : rien ne part tant que le compte n'est pas lu", async () => {
+    const snap = { subjects: [{ id: "s_hyd", name: "Créée pendant l'hydratation", semesterId: "s1", icon: "", color: "#000", description: "" }] };
+    const c = UD.createCloud({ client: clientFor(USER_B), userId: USER_B, debounceMs: 0, retryBaseMs: 0, snapshot: () => snap, startPaused: true });
+    c.push("subjects");
+    await new Promise(r => setTimeout(r, 120));
+    eq("en pause : aucune écriture", Number((await asService("select count(*) from public.subjects where user_id=$1 and name='Créée pendant l''hydratation'", [USER_B]))[0].count), 0);
+    eq("mais la demande est retenue", c.pendingDomains, ["subjects"]);
+    c.resume();
+    await new Promise(r => setTimeout(r, 300));
+    eq("la reprise envoie, en un seul lot", Number((await asService("select count(*) from public.subjects where user_id=$1 and name='Créée pendant l''hydratation'", [USER_B]))[0].count), 1);
+  });
+
 } catch (e) {
   fail++;
   console.log(`FAIL — exception hors scénario : ${(e && e.stack) || e}`);

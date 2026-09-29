@@ -281,3 +281,102 @@ comme **détectant** le défaut : avec `initialPending` neutralisé, il échoue
 - **NOT TESTED — real reload with a real SDK session** : le double du SDK
   simule la session mémorisée (`sb-…-auth-token`), pas le vrai
   rafraîchissement de jeton.
+
+---
+
+# Addendum — « les données sont dans Supabase mais ne reviennent pas »
+
+> Étape « correction ciblée : reconnexion / autre appareil ». Point de départ :
+> les lignes existent bien dans Supabase, au bon `user_id`, mais un nouvel
+> appareil ou une nouvelle session ne les retrouve pas toutes.
+
+## A. Méthode : le vrai SDK, pas un double
+
+Jusqu'ici, les tests de navigateur remplaçaient `window.supabase` par un faux
+SDK en mémoire. Un faux SDK ne peut pas révéler un défaut qui dépend du vrai :
+événements `INITIAL_SESSION`/`SIGNED_IN`, session persistée, sérialisation
+PostgREST. Cette étape ajoute `tests/real-sdk-sync.test.mjs` : le **SDK
+officiel** (`@supabase/supabase-js`, chargé comme le fait le site) dans un vrai
+Chromium, contre un **serveur HTTP simulé** (`tests/helpers/mock-supabase-http.mjs`,
+GoTrue + PostgREST, règle « seules mes lignes »).
+
+Hypothèse écartée par mesure : « `auth.js` fait un `await` d'appel Supabase
+dans `onAuthStateChange`, ce qui bloque » (deadlock connu des anciennes
+versions). Testé avec le SDK 2.117 : aucun blocage.
+
+## B. Ce qui fonctionnait déjà (vérifié avec le vrai SDK)
+
+Création → Supabase, appareil vierge → téléchargement → affichage,
+déconnexion/reconnexion, F5 (session mémorisée), déconnexion immédiate après
+création, aller-retour A → B → A sans fuite.
+
+## C. Défauts trouvés et corrigés
+
+| # | Défaut | Preuve | Correction |
+|---|---|---|---|
+| R1 | **La question de première connexion coupait la synchronisation en silence.** Sur un appareil avec des données locales, Échap / clic à côté / « Plus tard » désactivaient toute la synchronisation de la session : indicateur masqué, aucun message, données du compte jamais téléchargées. Pendant la question, l'indicateur affichait « Synchronisé ». | reproduit avec le vrai SDK (scénarios 7-8) | la question reste **ouverte et visible** : indicateur « à terminer », cliquable et au clavier, message explicatif, un clic la rouvre. Jamais « Synchronisé » pendant l'attente. |
+| R2 | **Les chapitres d'une matière intégrée n'étaient jamais envoyés** (« Analyse de marché » n'a pas de ligne en base ; `chapters.subject_id` l'exige). 0 chapitre en base, phase « idle », aucune erreur. Touche aussi un cours importé rangé dans cette matière. | reproduit (scénario 12 + PostgreSQL réel, tests 16) | ligne `subjects` **miroir** (`description = '__builtin__'`, `local_id` = identifiant intégré), créée seulement quand un chapitre l'utilise, retirée sinon, **jamais affichée** comme matière de l'élève à la lecture. Aucune migration : mêmes colonnes. |
+| R3 | **Aucune barrière d'hydratation.** Le moteur d'envoi était actif pendant la lecture initiale : une modification pouvait partir avant que le compte ait été lu, et — la lecture ayant rempli les clés connues — **supprimer** des lignes du compte. | mutation : sans la barrière, « Finance » disparaît de la base (scénario 11) | `startPaused` + `resume()` : aucun envoi automatique tant que le compte n'est pas lu **et** absorbé. |
+| R4 | Un choix « cloud » **automatique** (appareil sans donnée locale) écartait à tort les modifications faites pendant le téléchargement, comme s'il s'agissait d'un choix explicite « utiliser mon compte ». | relecture du code | `cloudDecideMigration` renvoie `{choice, explicitCloud}` : seule une réponse explicite écarte quoi que ce soit. |
+
+## D. Séquence après correction
+
+```
+Auth (INITIAL_SESSION / SIGNED_IN, un seul démarrage grâce à cloudStarting)
+  → espace local du compte, mémoire vidée (aucune fuite)
+  → moteur créé EN PAUSE (syncState.hydrating = true)
+  → lecture du compte : 17 catégories, erreurs collectées par catégorie
+  → question de première connexion si l'appareil a des données ET le compte aussi
+  → (le travail local non envoyé part AVANT la relecture, sans supprimer)
+  → absorption dans l'état + cache local, rendu
+  → moteur libéré (resume) : syncState.hydrated = true
+  → synchronisation continue, locale d'abord, regroupée, avec reprise
+```
+
+`syncState = { authenticated, hydrating, hydrated, syncing, userId }` est lisible
+en console. Journal `[REV-EM Sync]` : `hydration started` → `user: aaaa0000…` →
+`downloaded {…compteurs…}` → `hydration completed` → `upload OK …`, et
+`FAILED …` + la vraie erreur Supabase en cas d'échec. **Jamais** de mot de
+passe, de jeton ni de contenu d'élève (vérifié par test).
+
+`await revemSyncDiagnostic()` (console) affiche, par catégorie, le nombre
+d'éléments ICI et dans le COMPTE, avec la vraie erreur Supabase éventuelle :
+c'est l'outil pour trancher sur un vrai projet.
+
+## E. Donnée par donnée
+
+| Donnée | Local | Supabase | Envoi | Réception | Multi-appareil |
+|---|---|---|---|---|---|
+| Profil (nom, téléphone…) | cache non durable | `profiles` (auth.js) | oui | oui | **SYNCED** |
+| Avatar | — | bucket privé `avatars` | oui | oui (URL signée) | **SYNCED** |
+| Matières utilisateur | oui | `subjects` | oui | oui | **SYNCED** |
+| Chapitres / cours / fiches / résumés / quiz générés / flashcards générées / questions de révision / texte source | oui | `chapters` | oui | oui | **SYNCED** |
+| Chapitres d'une **matière intégrée** | oui | `chapters` + miroir `subjects` | oui (R2) | oui | **SYNCED** (corrigé) |
+| Progression quiz / flashcards | oui | `progress` | oui | oui | **SYNCED** (max) |
+| Statistiques, séries, temps | oui | `user_stats`, `daily_stats` | oui | oui | **SYNCED** (max / union) |
+| Historique par question, erreurs | oui | `question_stats` | oui | oui | **SYNCED** |
+| Examens blancs | oui | `exam_history` | oui | oui | **SYNCED** (union) |
+| Planning, activités, visites | oui | `planning_events`, `activities`, `chapter_visits` | oui | oui | **SYNCED** |
+| Plans de révision | oui | `study_plans` | oui | oui | **SYNCED** |
+| Historique IA | oui | `ai_history` | oui | oui | **SYNCED** |
+| Préférences (bulle IA, modèle) | oui | `preferences` | oui | oui | **SYNCED** |
+| Documents — métadonnées | oui | `documents` | oui | oui | **SYNCED** |
+| **Documents — contenu binaire, PDF d'origine** | oui | non | non | non | **LOCAL ONLY** (voulu, dit à l'écran) |
+| Langue de l'interface | oui | non | non | non | **LOCAL ONLY** (préférence d'appareil) |
+| Modèle IA téléchargé | cache navigateur | non | non | non | **LOCAL ONLY** |
+
+Identifiants stables : `subjects`/`chapters`/`documents`/`planning_events` portent
+un `local_id` généré une fois côté client et jamais recalculé ; l'upsert est
+idempotent (`on_conflict user_id, local_id`) — pas de « local X / Supabase Y /
+iPhone Z ». Les questions de quiz générées portent leur `uid` DANS le chapitre.
+
+## F. Ce qui reste hors de portée de ces tests
+
+- **Un vrai projet Supabase** (contraintes SQL, policies réelles, latence,
+  jetons signés, e-mails) : ce banc est un simulateur HTTP, pas Supabase.
+  Le moteur contre un vrai PostgreSQL est exercé par `tests/user-data.test.mjs`.
+- **Deux appareils physiques** (Mac + iPhone) : les « appareils » sont des
+  contextes de navigateur isolés.
+- **Si ta base réelle diffère des migrations** (migration non appliquée,
+  colonne manquante) : c'est exactement ce que `revemSyncDiagnostic()` montre
+  (colonne `error`).

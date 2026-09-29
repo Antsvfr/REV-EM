@@ -166,13 +166,22 @@
      pour que l'appareil B les voie comme n'importe quelle autre matière. */
   const isManual = (o) => !o || !o.source || o.source === "manual" || o.source === "pdf";
 
+  /* Marqueur des lignes `subjects` MIROIR d'une matière intégrée : la matière
+     intégrée n'a pas de ligne en base (elle est dans le code du site), mais un
+     chapitre créé par l'élève DANS cette matière (« + Ajouter un chapitre »,
+     ou un cours importé qu'on y range) exige une ligne `subjects` — la clé
+     étrangère `chapters.subject_id` est obligatoire. Sans miroir, ces chapitres
+     n'étaient jamais envoyés, en silence. Le miroir n'est JAMAIS présenté comme
+     une matière de l'élève à la lecture (voir apply). */
+  const BUILTIN_MIRROR = "__builtin__";
+
   const SUBJECTS = {
     name: "subjects",
     table: "subjects",
     keyCol: "local_id",
     conflict: "user_id,local_id",
-    rows(snap, userId){
-      return (snap.subjects || [])
+    rows(snap, userId, ctx){
+      const own = (snap.subjects || [])
         .filter(s => s && s.id && isManual(s) && !s.builtin)
         .map(s => ({
           user_id: userId,
@@ -184,9 +193,23 @@
           description: s.description || null,
           source: "manual",
         }));
+      const builtins = (ctx && ctx.builtinSubjects) || [];
+      if (!builtins.length) return own;
+      const used = new Set((snap.chapters || []).filter(c => c && c.id && isManual(c)).map(c => String(c.subjectId)));
+      const mirrors = builtins.filter(b => used.has(String(b.id))).map(b => ({
+        user_id: userId,
+        local_id: String(b.id),
+        name: String(b.name || b.id),
+        icon: null, color: null, semester_id: null,
+        description: BUILTIN_MIRROR,
+        source: "manual",
+      }));
+      return own.concat(mirrors);
     },
     apply(rows, patch){
-      patch.subjects = (rows || []).map(r => ({
+      patch.subjects = (rows || [])
+        .filter(r => r.description !== BUILTIN_MIRROR)   // le miroir n'est pas une matière de l'élève
+        .map(r => ({
         /* L'identifiant local reste celui du client quand il existe : les
            chapitres, la progression et les statistiques y font référence par
            cet id. Pour une matière importée, il n'y en a pas — l'uuid de la
@@ -907,7 +930,9 @@
 
     /* Correspondances matière : id local ↔ uuid. Remplies au pull et après
        chaque écriture de matières ; les chapitres et documents en dépendent. */
-    const ctx = { subjectIdByLocal: {}, subjectLocalByUuid: {} };
+    const ctx = { subjectIdByLocal: {}, subjectLocalByUuid: {},
+                 builtinSubjects: Array.isArray(o.builtinSubjects) ? o.builtinSubjects.filter(b => b && b.id) : [] };
+    const logf = typeof o.log === "function" ? ((msg, data) => { try { o.log(msg, data); } catch (e) { /* jamais bloquant */ } }) : function(){};
 
     /* Ce qui attend d'être poussé doit SURVIVRE à la fermeture de l'onglet.
        Sans cela, une modification faite hors ligne (ou dans les 900 ms avant
@@ -929,6 +954,12 @@
     let retryAttempt = 0;
     let timer = null;
     let disposed = false;
+    /* Barrière d'hydratation : tant que l'appelant n'a pas fini de lire le compte,
+       AUCUN envoi automatique ne part (ni minuterie, ni reprise) — un appareil
+       neuf, dont l'état local est vide, ne doit jamais pouvoir écrire par-dessus
+       le compte avant de l'avoir lu. Les envois explicites (flush, pushAll)
+       restent possibles : ils font partie de la séquence de démarrage. */
+    let paused = !!o.startPaused;
 
     /* Ensemble à persister = en attente + en cours d'envoi : un domaine en vol
        n'est pas encore confirmé, il doit donc rester « à terminer » si
@@ -1004,6 +1035,13 @@
       }
 
       onStatus({ phase: failed.length ? "partial" : "idle", errors: failed });
+      const counts = {};
+      Object.keys(patch).forEach(k => {
+        const v = patch[k];
+        counts[k] = Array.isArray(v) ? v.length : (v && typeof v === "object" ? Object.keys(v).length : (v ? 1 : 0));
+      });
+      logf("downloaded", counts);
+      failed.forEach(f => logf("FAILED download " + f.domain, f.error));
       return { snapshot: patch, errors: failed };
     }
 
@@ -1073,9 +1111,19 @@
       const todo = [...pending];
       pending = new Set();
       if (!todo.length) { notifyPending(); return { ok: true, written: 0, errors: [] }; }
-      inFlightDomains = new Set(todo);
 
       const snap = currentSnapshot();
+      /* Un chapitre rangé dans une matière INTÉGRÉE a besoin de sa ligne miroir
+         (clé étrangère) : si elle n'existe pas encore, on écrit aussi les
+         matières, sinon le chapitre serait ignoré en silence. */
+      if (todo.indexOf("chapters") !== -1 && todo.indexOf("subjects") === -1 && ctx.builtinSubjects.length) {
+        const missing = (snap.chapters || []).some(c => c && c.id && isManual(c)
+          && ctx.builtinSubjects.some(b => String(b.id) === String(c.subjectId))
+          && !ctx.subjectIdByLocal[String(c.subjectId)]);
+        if (missing) todo.push("subjects");
+      }
+      inFlightDomains = new Set(todo);
+
       onStatus({ phase: "pushing", domains: todo });
 
       /* Les matières d'abord si elles font partie du lot : les chapitres et
@@ -1097,6 +1145,8 @@
       }
 
       failed.forEach(f => errors.push(f));
+      if (failed.length) failed.forEach(f => logf("FAILED upload " + f.domain, f.error));
+      else logf("upload OK", ordered.map(d => d.name).join(","));
       inFlightDomains = new Set();
       notifyPending();
       if (failed.length) scheduleRetry(); else { retryAttempt = 0; }
@@ -1114,14 +1164,14 @@
       retryAttempt++;
       retryTimer = setT(() => {
         retryTimer = null;
-        if (!pending.size) return;
+        if (!pending.size || paused) return;
         inFlight = (inFlight || Promise.resolve()).then(runCycle);
       }, delay);
       if (retryTimer && typeof retryTimer.unref === "function") retryTimer.unref();
     }
 
     function schedule(){
-      if (disposed || timer) return;
+      if (disposed || paused || timer) return;
       timer = setTimeout(() => {
         timer = null;
         inFlight = (inFlight || Promise.resolve()).then(runCycle);
@@ -1169,6 +1219,12 @@
 
       setSnapshotSource(fn){ snapshotFn = typeof fn === "function" ? fn : null; },
 
+      /* Barrière d'hydratation (voir `paused`). `resume()` relance ce qui a
+         été demandé entre-temps, en un seul lot. */
+      pause(){ paused = true; if (timer) { clearTimeout(timer); timer = null; } },
+      resume(){ paused = false; if (pending.size) schedule(); },
+      get paused(){ return paused; },
+
       /* Oublie les clés vues : plus aucune suppression ne sera déduite de
          « présent chez le compte, absent ici ». À utiliser quand l'état local
          n'a PAS encore absorbé ce que le compte contient (première connexion,
@@ -1204,7 +1260,36 @@
     };
   }
 
+  /* Comparaison, par catégorie, de ce qui est sur CET appareil (ce qui partirait
+     vers le compte) et de ce que le compte contient réellement. Ne lit que des
+     comptes (`count: exact, head: true`) : aucun contenu, aucun jeton. Une
+     colonne `error` non vide dit la VRAIE erreur Supabase de cette catégorie
+     (table absente, policy, réseau…) — c'est le point de départ d'un
+     diagnostic sur un vrai projet. */
+  async function diagnose(client, userId, snapshot, opts){
+    const snap = snapshot || {};
+    const dctx = { subjectIdByLocal: {}, subjectLocalByUuid: {},
+                   builtinSubjects: (opts && Array.isArray(opts.builtinSubjects)) ? opts.builtinSubjects : [] };
+    (snap.subjects || []).forEach(x => { if (x && x.id) dctx.subjectIdByLocal[String(x.id)] = "x"; });
+    dctx.builtinSubjects.forEach(b => { dctx.subjectIdByLocal[String(b.id)] = "x"; });
+    const out = [];
+    for (const d of DOMAINS) {
+      const row = { domain: d.name, table: d.table, local: null, cloud: null, error: "" };
+      try { row.local = (d.rows(snap, userId, dctx) || []).length; } catch (e) { row.local = "?"; }
+      try {
+        let q = client.from(d.table).select("*", { count: "exact", head: true }).eq("user_id", userId);
+        if (d.selectFilter) Object.keys(d.selectFilter).forEach(k => { q = q.eq(k, d.selectFilter[k]); });
+        const r = await q;
+        if (r.error) throw r.error;
+        row.cloud = r.count;
+      } catch (e) { row.error = (e && e.message) || String(e); }
+      out.push(row);
+    }
+    return out;
+  }
+
   global.LyonUserData = {
+    diagnose,
     /* Version du contrat entre ce module et index.html. index.html refuse de
        synchroniser avec un module plus ancien (voir userDataModuleIsCurrent) :
        un service worker peut servir un ancien user-data.js à côté d'un
