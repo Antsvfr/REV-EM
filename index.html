@@ -6798,8 +6798,13 @@ async function cloudStart(userId){
     userId: userId,
     snapshot: cloudSnapshot,
     onStatus: (s)=>{
+      /* Un toast seulement au moment où ça CASSE (jamais à chaque nouvelle
+         tentative qui échoue encore) : sinon une coupure réseau de dix
+         minutes en spammerait un par cycle de nouvelle tentative. */
+      const wasOk = cloudState.phase !== "error";
       cloudState = { phase: s.phase, at: s.at || cloudState.at, errors: s.errors || [] };
       updateCloudIndicator();
+      if(wasOk && s.phase === "error") showToast(t("cloud.error"), "error");
     },
   });
   cloudState = { phase: "pulling", at: null, errors: [] };
@@ -6809,9 +6814,15 @@ async function cloudStart(userId){
   try{
     pulled = await cloud.pullAll(cloudSnapshot());
   }catch(e){
+    /* Jusqu'ici, cet échec ne changeait que la couleur d'un petit point dans
+       l'en-tête — personne ne le remarque. Sans ce toast, un élève dont la
+       lecture initiale échoue (compte Supabase pas encore configuré côté
+       base, ex. migrations non appliquées) ne voit JAMAIS ses matières
+       apparaître, et rien ne le lui dit : il croit les avoir perdues. */
     console.error("[LyonUserData] lecture initiale", e);
     cloudState = { phase: "error", at: Date.now(), errors: [{domain: "*", error: String(e)}] };
     updateCloudIndicator();
+    showToast(t("cloud.pull_error"), "error");
     return;   // le cache local reste en place : on ne perd rien, on réessaiera
   }
 

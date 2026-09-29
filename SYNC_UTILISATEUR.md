@@ -195,6 +195,29 @@ une vraie boîte mail : qu'un e-mail de confirmation part et arrive, et qu'un
 vrai téléphone retrouve les données via le vrai réseau. Voir le rapport de
 l'étape.
 
+## Un échec de synchronisation n'est plus silencieux
+
+Jusqu'ici, si la toute première lecture depuis le compte échouait (exemple
+réel : les migrations `supabase/migrations/` pas encore appliquées sur le
+projet, donc `relation "subjects" does not exist`), `cloudStart()`
+l'attrapait proprement — mais ne changeait que la couleur d'un petit point
+discret dans l'en-tête (`#cloud-indicator`). Un élève dans ce cas ne voit
+jamais ses matières apparaître, et rien ne le lui dit : il croit les avoir
+perdues, alors qu'elles existent toujours sur son premier appareil.
+
+`cloudStart()` déclenche maintenant un toast (`cloud.pull_error`) à cet
+instant précis, et un second (`cloud.error`) si l'écriture échoue plus tard
+pendant l'usage — dans les deux cas une seule fois par passage à l'état
+d'erreur, pas à chaque nouvelle tentative. Vérifié en simulant un
+`pullAll()` qui échoue, dans les cinq langues.
+
+**Ce que ça ne remplace pas** : un projet Supabase mal configuré (migrations
+non appliquées, URL/clé absentes) reste un problème à résoudre côté
+Supabase, pas quelque chose que le frontend peut corriger tout seul — voir
+`SETUP_SUPABASE.md` et `supabase/tests/00_diagnostic.sql`. Ce correctif fait
+seulement en sorte que l'élève le SACHE, au lieu de croire que ses données
+ont disparu.
+
 ## Ce qui reste local, et pourquoi
 
 | Donnée | Où | Raison |
