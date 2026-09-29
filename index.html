@@ -6059,12 +6059,13 @@ let state = {
     step: "pick",          // pick | detect | generating | result
     busy: false,           // verrou partagé avec aiEngineBusy() : une seule génération IA à la fois
     files: [],             // [{id, name, size, status, error, extractedText, charCount, warning,
-                            //   detected:{title, subjectId, newSubjectName, chapterTitle, notions:[]},
+                            //   detected:{title, subjectId, newSubjectName, chapterId, chapterTitle, notions:[]},
                             //   genStepIndex, resultChapterId, resultSubjectId}]
     activeIndex: 0,
     pasteText: "",
     dragOver: false,
     genSignal: null,       // jeton d'annulation partagé de la génération en cours ({cancelled:false})
+    lockedSubjectId: null, // matière imposée par le contexte (import lancé depuis "Mes matières" > une matière précise) — jamais changée par la détection
   },
 
   // --- aperçu du planning sur le dashboard : "today" | "tomorrow" ---
@@ -9299,6 +9300,7 @@ function renderSubjectDetail(){
 
   html += `<div class="actions" style="margin:16px 0 24px;justify-content:flex-start;">
     <button class="btn red small" id="lib-add-chapter-btn">+ Ajouter un chapitre</button>
+    <button class="btn outline small" id="lib-import-into-subject-btn">Importer un cours</button>
     ${!s.builtin ? `<button class="btn outline small" id="lib-edit-subject-btn">Modifier la matière</button>
     <button class="btn-text" id="lib-delete-subject-btn">Supprimer la matière</button>` : ""}
   </div>`;
@@ -9617,6 +9619,8 @@ function attachLibraryEvents(){
     });
     const addCh = document.getElementById("lib-add-chapter-btn");
     if(addCh) addCh.addEventListener("click", ()=> libGoto("chapterForm", {editingChapterId:null}));
+    const importIntoSubject = document.getElementById("lib-import-into-subject-btn");
+    if(importIntoSubject) importIntoSubject.addEventListener("click", ()=> goToCourseImport(lib.subjectId));
     const editS = document.getElementById("lib-edit-subject-btn");
     if(editS) editS.addEventListener("click", ()=> libGoto("subjectForm", {editingSubjectId: lib.subjectId}));
     const delS = document.getElementById("lib-delete-subject-btn");
@@ -9697,7 +9701,7 @@ function attachLibraryEvents(){
         openPdfBtn.disabled = true;
         try{
           const blob = await getCourseFileBlob(ch.id);
-          if(!blob){ alert("Le PDF original n'est plus disponible dans ce navigateur."); return; }
+          if(!blob){ alert("Le fichier original n'est disponible que sur l'appareil où il a été importé. Le reste de ce cours (fiche, quiz, flashcards) reste disponible ici."); return; }
           const url = URL.createObjectURL(blob);
           window.open(url, "_blank", "noopener");
           setTimeout(()=> URL.revokeObjectURL(url), 60000);
@@ -9711,7 +9715,7 @@ function attachLibraryEvents(){
       if(downloadPdfBtn) downloadPdfBtn.addEventListener("click", async ()=>{
         try{
           const blob = await getCourseFileBlob(ch.id);
-          if(!blob){ alert("Le PDF original n'est plus disponible dans ce navigateur."); return; }
+          if(!blob){ alert("Le fichier original n'est disponible que sur l'appareil où il a été importé. Le reste de ce cours (fiche, quiz, flashcards) reste disponible ici."); return; }
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url; a.download = ch.originalFileName || (ch.title + ".pdf");
@@ -10433,13 +10437,22 @@ async function buildWorkingCourseText(rawText, onProgress, signal){
 }
 
 /* ---- détection matière / titre / notions ---- */
+/* Exact d'abord (accents/casse ignorés), puis préfixe/mot via le même moteur
+   que la recherche de « Mes matières » — jamais un containment bidirectionnel
+   brut : avec "Management" et "Management commercial" toutes deux présentes,
+   un containment brut peut présélectionner silencieusement la mauvaise dans
+   le menu déroulant de l'écran de révision (voir COURSE_PIPELINE_AUDIT.md,
+   défaut D8). Une simple présence ("contains", niveau le plus faible) ne
+   suffit plus à elle seule : les 4 lettres de "SES" ne doivent pas rattacher
+   un cours à une matière qui contiendrait "SES" au milieu d'un autre mot. */
 function matchSubjectByName(name){
-  if(!name) return null;
-  const n = name.toLowerCase().trim();
-  return allSubjects().find(s=>{
-    const sn = s.name.toLowerCase();
-    return sn === n || sn.includes(n) || n.includes(sn);
-  }) || null;
+  if(!name || !window.LyonSubjectSearch) return null;
+  const best = LyonSubjectSearch.bestMatch(name, allSubjects(), s => s.name);
+  if(!best) return null;
+  const strong = best.tier === LyonSubjectSearch.TIER_EXACT
+    || best.tier === LyonSubjectSearch.TIER_STARTS
+    || best.tier === LyonSubjectSearch.TIER_WORD;
+  return strong ? best.item : null;
 }
 
 /* Tente de récupérer un objet JSON même si la réponse du modèle contient du texte
@@ -10455,17 +10468,30 @@ function extractJsonObject(text){
   }
 }
 
-async function detectCourseMeta(workingText, fileName, signal){
-  const existingSubjects = allSubjects().map(s=>s.name).join(", ");
+/* `lockedSubjectName` : la matière est déjà connue (import lancé depuis
+   cette matière précise, voir goToCourseImport) — on ne la redemande même
+   pas au modèle. Plus court à générer (§27 : contexte minimal), et surtout
+   aucune chance que le modèle propose autre chose : la priorité au contexte
+   ne dépend pas de sa bonne volonté. */
+async function detectCourseMeta(workingText, fileName, signal, lockedSubjectName){
+  const locked = !!lockedSubjectName;
+  const existingSubjects = locked ? "" : allSubjects().map(s=>s.name).join(", ");
+  const subjectBlock = locked ? "" : "\n\nMatières déjà existantes sur ce site : " + (existingSubjects || "(aucune)");
+  const task = locked
+    ? "à partir de cet extrait, déduis un titre court, un titre de chapitre, un niveau probable (L1, L2 ou L3 — ou une chaîne vide si tu ne peux pas le déterminer), et une liste de 4 à 10 notions importantes réellement présentes dans le texte. Ce cours appartient déjà à la matière « " + lockedSubjectName + " », ne propose pas d'autre matière."
+    : "à partir de cet extrait, déduis un titre court, la matière scolaire la plus probable (réutilise une matière existante ci-dessus si elle correspond, sinon choisis parmi : Mathématiques, SES, Physique-Chimie, Histoire-Géographie, Philosophie, Anglais, Français, Enseignement scientifique, Management, Économie, Autre), un titre de chapitre, un niveau probable (L1, L2 ou L3 — ou une chaîne vide si tu ne peux pas le déterminer), et une liste de 4 à 10 notions importantes réellement présentes dans le texte.";
+  const jsonFormat = locked
+    ? "{\"title\":\"...\",\"chapter\":\"...\",\"level\":\"...\",\"notions\":[\"...\"]}"
+    : "{\"title\":\"...\",\"subject\":\"...\",\"chapter\":\"...\",\"level\":\"...\",\"notions\":[\"...\"]}";
   const prompt = aiSystemPrompt() + "\n\nDébut du cours (extrait) :\n" + clip(workingText, 3000) +
-    "\n\nMatières déjà existantes sur ce site : " + (existingSubjects || "(aucune)") +
-    "\n\nTÂCHE : à partir de cet extrait, déduis un titre court, la matière scolaire la plus probable (réutilise une matière existante ci-dessus si elle correspond, sinon choisis parmi : Mathématiques, SES, Physique-Chimie, Histoire-Géographie, Philosophie, Anglais, Français, Enseignement scientifique, Management, Économie, Autre), un titre de chapitre, un niveau probable (L1, L2 ou L3 — ou une chaîne vide si tu ne peux pas le déterminer), et une liste de 4 à 10 notions importantes réellement présentes dans le texte. Réponds UNIQUEMENT par un objet JSON (pas de tableau), sans texte autour, au format : {\"title\":\"...\",\"subject\":\"...\",\"chapter\":\"...\",\"level\":\"...\",\"notions\":[\"...\"]}";
+    subjectBlock +
+    "\n\nTÂCHE : " + task + " Réponds UNIQUEMENT par un objet JSON (pas de tableau), sans texte autour, au format : " + jsonFormat;
   const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal }), 45000, "détection du cours");
   const parsed = extractJsonObject(res && res.text);
   const fallbackTitle = (fileName || "").replace(/\.[a-z0-9]+$/i, "").replace(/[_-]+/g, " ").trim();
   return {
     title: (parsed && parsed.title) ? String(parsed.title).slice(0,120) : (fallbackTitle || "Cours importé"),
-    subjectName: (parsed && parsed.subject) ? String(parsed.subject).slice(0,60) : "",
+    subjectName: locked ? lockedSubjectName : ((parsed && parsed.subject) ? String(parsed.subject).slice(0,60) : ""),
     chapterTitle: (parsed && parsed.chapter) ? String(parsed.chapter).slice(0,120) : (fallbackTitle || "Chapitre importé"),
     level: (parsed && LEVELS.includes(parsed.level)) ? parsed.level : "",
     notions: (parsed && Array.isArray(parsed.notions)) ? parsed.notions.slice(0,10).map(String) : [],
@@ -10834,6 +10860,10 @@ async function courseImportProcessFile(index){
   // sur une détection simple basée sur le nom du fichier et la structure du
   // texte, et l'utilisateur complète/valide les champs à la main.
   const aiReady = await tryEnsureImportAIReady();
+  // Contexte prioritaire : import lancé depuis une matière déjà ouverte (voir
+  // goToCourseImport/renderSubjectDetail). Ni l'IA ni la détection heuristique
+  // ne doivent pouvoir en proposer une autre.
+  const lockedSubject = ci.lockedSubjectId ? findSubject(ci.lockedSubjectId) : null;
   try{
     let meta;
     if(aiReady){
@@ -10848,7 +10878,7 @@ async function courseImportProcessFile(index){
         item.workingText = built.text;
         item.warning = built.wasCondensed ? "Cours long : condensé automatiquement en " + built.chunkCount + " section(s) avant génération." : item.warning;
         aiLog("Nombre de parties", built.chunkCount);
-        meta = await detectCourseMeta(built.text, item.name, signal);
+        meta = await detectCourseMeta(built.text, item.name, signal, lockedSubject ? lockedSubject.name : null);
         if(signal.cancelled) return courseImportHandleCancelled(item);
       }catch(e){
         // La détection IA a échoué en cours de route : on ne perd pas le cours,
@@ -10863,11 +10893,34 @@ async function courseImportProcessFile(index){
       meta = heuristicDetectMeta(item.extractedText, item.name);
       item.aiUnavailable = true;
     }
-    const matched = matchSubjectByName(meta.subjectName);
+    // La matière : imposée par le contexte si l'import vient d'une matière
+    // ouverte (jamais recalculée) ; sinon, correspondance par nom (voir
+    // matchSubjectByName — resserrée, voir COURSE_PIPELINE_AUDIT.md §7).
+    let subjectId, newSubjectName;
+    if(lockedSubject){
+      subjectId = lockedSubject.id;
+      newSubjectName = "";
+    } else {
+      const matched = matchSubjectByName(meta.subjectName);
+      subjectId = matched ? matched.id : null;
+      newSubjectName = matched ? "" : (meta.subjectName || "Autre");
+    }
+    // Le chapitre : proposé s'il en existe déjà un au titre très proche dans
+    // cette matière (réutilise le moteur de subject-search.js — voir
+    // SUBJECT_SEARCH.md, « un deuxième usage »), sinon "+ Nouveau chapitre".
+    // Seuls les niveaux de confiance forts (nom identique ou qui commence
+    // par) proposent une correspondance automatique — un simple mot en
+    // commun ne suffit pas à fusionner deux cours différents en silence.
+    const chapterId = (subjectId && window.LyonSubjectSearch)
+      ? (()=>{
+          const best = LyonSubjectSearch.bestMatch(meta.chapterTitle, chaptersOfSubject(subjectId), c => c.title);
+          return (best && (best.tier === LyonSubjectSearch.TIER_EXACT || best.tier === LyonSubjectSearch.TIER_STARTS)) ? best.item.id : null;
+        })()
+      : null;
     item.detected = {
       title: meta.title,
-      subjectId: matched ? matched.id : null,
-      newSubjectName: matched ? "" : (meta.subjectName || "Autre"),
+      subjectId, newSubjectName,
+      chapterId,
       chapterTitle: meta.chapterTitle,
       level: meta.level,
       semesterId: SEMESTERS[0].id,
@@ -10903,8 +10956,197 @@ function courseImportAdvanceIfNeeded(index){
   render();
 }
 
-/* Génère les 5 supports pour le fichier en confirmation, étape par étape — une étape en échec
-   n'empêche pas les suivantes, et reste individuellement relançable (courseImportRetryStep). */
+/* Les cinq étapes qu'il reste réellement à produire pour ce chapitre.
+   Un chapitre en mode simplifié (§heuristicMode) doit TOUT régénérer en
+   passant à l'IA — ses supports actuels sont volontairement sommaires,
+   "Générer avec l'IA" est une mise à niveau complète, pas un complément.
+   Un chapitre déjà passé par l'IA (heuristicMode=false) ne manque, lui, que
+   ce qui a vraiment échoué ou été interrompu — jamais régénéré en entier
+   pour ne pas perdre de temps ni remplacer un contenu déjà bon (§16/§28 du
+   cahier des charges « automatisation »). Calculé depuis les champs déjà
+   là : aucun champ supplémentaire à synchroniser. */
+function coursePendingStepKeys(ch){
+  if(ch.heuristicMode) return ["fiche","summary","quiz","flashcards","reviewQuestions"];
+  const missing = [];
+  if(!ch.content || !ch.content.trim()) missing.push("fiche");
+  if(!ch.summary || !ch.summary.trim()) missing.push("summary");
+  if(!ch.aiQuiz || !ch.aiQuiz.length) missing.push("quiz");
+  if(!ch.aiFlashcards || !ch.aiFlashcards.length) missing.push("flashcards");
+  if(!ch.aiReviewQuestions || !ch.aiReviewQuestions.length) missing.push("reviewQuestions");
+  return missing;
+}
+
+/* Écrit ce qui a été généré dans le chapitre RÉEL, déjà enregistré — jamais
+   seulement dans l'état de l'assistant d'import. `onlyKeys` restreint
+   l'écriture à certaines étapes (utilisé pendant la boucle de génération,
+   voir courseImportRunAllSteps : chaque étape réussie est persistée tout de
+   suite, pas seulement à la toute fin). Sans `onlyKeys`, applique tout ce
+   qui est présent — comportement historique, utilisé pour une reprise. */
+function courseImportApplyGeneratedToChapter(ch, item, onlyKeys){
+  const applies = (k) => !onlyKeys || onlyKeys.indexOf(k) !== -1;
+  if(applies("fiche") && item.generated.fiche) ch.content = item.generated.fiche;
+  if(applies("summary") && item.generated.summary) ch.summary = item.generated.summary;
+  if(applies("quiz") && item.generated.quiz) ch.aiQuiz = item.generated.quiz;
+  if(applies("flashcards") && item.generated.flashcards) ch.aiFlashcards = item.generated.flashcards;
+  if(applies("reviewQuestions") && item.generated.reviewQuestions) ch.aiReviewQuestions = item.generated.reviewQuestions;
+  ch.generationPending = coursePendingStepKeys(ch).length > 0;
+  ch.updatedAt = Date.now();
+  saveUserChapters();
+}
+
+/* Génère les supports demandés (par défaut les 5), étape par étape — une
+   étape en échec n'empêche pas les suivantes. Si le chapitre cible est déjà
+   enregistré (`item.resultChapterId`, toujours vrai depuis
+   courseImportResolveTarget), CHAQUE étape réussie est écrite immédiatement
+   dans ce chapitre : fermer l'onglet en cours de route ne perd que les
+   étapes qui restaient, jamais celles déjà obtenues (voir
+   COURSE_PIPELINE_AUDIT.md, défaut D1). */
+async function courseImportRunAllSteps(item, signal, onlyKeys){
+  const meta = { title: item.detected.title, chapterTitle: item.detected.chapterTitle, notions: item.detected.notions, sourceCharCount: item.charCount };
+  const allSteps = [
+    {key:"fiche", fn: generateCourseFiche},
+    {key:"summary", fn: generateCourseSummary},
+    {key:"quiz", fn: generateCourseQuizFromText},
+    {key:"flashcards", fn: generateCourseFlashcardsFromText},
+    {key:"reviewQuestions", fn: generateCourseReviewQuestions},
+  ];
+  const steps = onlyKeys ? allSteps.filter(s => onlyKeys.indexOf(s.key) !== -1) : allSteps;
+  const ch = item.resultChapterId ? findAnyChapter(item.resultChapterId) : null;
+  for(let i=0;i<steps.length;i++){
+    if(signal && signal.cancelled) return;
+    item.genStepIndex = i;
+    item.currentStepStartedAt = Date.now();
+    render();
+    try{
+      item.generated[steps[i].key] = await steps[i].fn(item.workingText, meta, signal);
+      if(signal && signal.cancelled) return;
+      item.failedSteps = item.failedSteps.filter(k => k !== steps[i].key);
+      item.lastStepError = null;
+      if(ch) courseImportApplyGeneratedToChapter(ch, item, [steps[i].key]);
+    }catch(e){
+      if(signal && signal.cancelled) return;
+      if(!item.failedSteps.includes(steps[i].key)) item.failedSteps.push(steps[i].key);
+      const classified = classifyGenerationError(e);
+      item.lastStepError = classified;
+      console.error("[REV-EM · IA] Erreur de génération :", steps[i].key, e);
+    }
+  }
+  item.genStepIndex = -1;
+}
+
+/* Un chapitre "a du contenu" s'il contient déjà quelque chose qu'écraser
+   ferait perdre un vrai travail — un chapitre vide (simple emplacement créé
+   à la main, ou tout juste amorcé) ne déclenche jamais de confirmation : le
+   remplir est le but recherché, pas un risque (voir §7 du cahier des
+   charges : "si aucun chapitre correspondant n'existe, proposer d'en créer
+   un" — un chapitre vide équivaut à "n'existe pas encore" pour cette
+   décision). */
+function courseChapterHasContent(ch){
+  return !!(ch && (
+    (ch.content && ch.content.trim()) ||
+    (ch.aiQuiz && ch.aiQuiz.length) ||
+    (ch.aiFlashcards && ch.aiFlashcards.length) ||
+    (ch.originalText && ch.originalText.trim())
+  ));
+}
+
+/* Un même cours déjà importé dans cette matière : même nom de fichier, ou
+   texte source identique (déjà tronqué/normalisé comme il l'est à
+   l'enregistrement) — les deux champs sont déjà synchronisés, aucun champ ni
+   migration supplémentaire n'est nécessaire pour détecter ça (voir
+   COURSE_PIPELINE_AUDIT.md §7). Ignore le chapitre déjà choisi à la main par
+   l'utilisateur : un choix explicite n'a pas besoin d'être "détecté". */
+function findDuplicateChapterInSubject(subjectId, item, excludeChapterId){
+  const name = String(item.name || "").trim().toLowerCase();
+  const text = clip(item.extractedText || "", 20000).trim();
+  if(!name && !text) return null;
+  return chaptersOfSubject(subjectId).find(c=>{
+    if(c.id === excludeChapterId) return false;
+    if(name && c.sourceFileName && c.sourceFileName.trim().toLowerCase() === name) return true;
+    if(text && c.originalText && c.originalText.trim() === text) return true;
+    return false;
+  }) || null;
+}
+
+/* ── RÉSOLUTION DE LA CIBLE + PERSISTANCE IMMÉDIATE ──────────────────────────
+   Appelée une seule fois, AVANT toute génération IA (que ce soit "Générer
+   avec l'IA" ou "Enregistrer sans IA") : résout/crée la matière, résout la
+   matière (chapitre choisi à la main, sinon correspondance par contenu,
+   sinon nouveau chapitre), demande confirmation si ça écraserait un cours
+   déjà présent, puis ENREGISTRE tout de suite un chapitre avec ses
+   métadonnées et son texte source. Les fiches/quiz/flashcards arrivent
+   ensuite, étape par étape (voir courseImportRunAllSteps) — mais le cours
+   lui-même ne dépend plus d'aucune étape IA pour exister : fermer l'onglet
+   à N'IMPORTE QUEL moment après cette fonction ne perd plus rien (défaut D1
+   de l'audit). Retourne l'id du chapitre, ou `null` si l'utilisateur annule
+   face à un doublon (rien n'est alors créé ni modifié). */
+async function courseImportResolveTarget(item){
+  const d = item.detected;
+
+  let subjectId = d.subjectId;
+  if(!subjectId){
+    subjectId = genLibId("subj");
+    state.userSubjects.push({
+      id: subjectId, name: d.newSubjectName || "Autre", semesterId: d.semesterId || SEMESTERS[0].id,
+      icon: "", color: SUBJECT_COLORS[state.userSubjects.length % SUBJECT_COLORS.length],
+      description: "Matière créée automatiquement lors de l'import d'un cours.", builtin: false,
+    });
+    saveUserSubjects();
+  }
+
+  let existing = d.chapterId ? findAnyChapter(d.chapterId) : null;
+  if(!existing) existing = findDuplicateChapterInSubject(subjectId, item);
+
+  if(existing && courseChapterHasContent(existing)){
+    const answer = await dsConfirm({
+      title: "Ce cours semble déjà exister",
+      body: "« " + existing.title + " » contient déjà un cours" + (existing.sourceFileName ? " (importé depuis « " + existing.sourceFileName + " »)" : "") + ". Rien n'est modifié tant que tu n'as pas choisi.",
+      confirmLabel: "Remplacer son contenu",
+      altLabel: "Créer une nouvelle entrée",
+      cancelLabel: "Annuler l'import",
+    });
+    if(!answer) return null;                  // annuler : rien n'est touché
+    if(answer === "alt") existing = null;      // nouvelle entrée : on repart sur une création
+  }
+
+  const chapterId = existing ? existing.id : genLibId("chap");
+  let hasOriginalFile = existing ? !!existing.hasOriginalFile : false;
+  if(item.file && courseFileKind(item.file) === "pdf"){
+    try{ await saveCourseFileBlob(chapterId, item.file); hasOriginalFile = true; }
+    catch(e){ console.error("Impossible d'enregistrer le PDF original :", e); }
+  }
+
+  const fields = {
+    subjectId,
+    num: existing ? existing.num : pad2(chaptersOfSubject(subjectId).length + 1),
+    title: d.title, desc: (d.chapterTitle && d.chapterTitle !== d.title) ? d.chapterTitle : "",
+    level: d.level || "",
+    originalText: clip(item.extractedText, 20000),
+    keyNotions: d.notions || [],
+    sourceFileName: item.name || "",
+    pageCount: item.numPages || null,
+    hasOriginalFile,
+    originalFileName: item.file ? item.file.name : (existing ? existing.originalFileName : ""),
+    updatedAt: Date.now(),
+    generationPending: true,   // rien n'est encore généré à cet instant précis
+  };
+
+  if(existing){
+    Object.assign(existing, fields);
+  } else {
+    state.userChapters.push(Object.assign({
+      id: chapterId, content: "", summary: "", aiQuiz: [], aiFlashcards: [], aiReviewQuestions: [],
+      createdAt: Date.now(), markedReviewed: false, heuristicMode: false,
+    }, fields));
+  }
+  saveUserChapters();
+  logRecentAdd((existing ? "Cours ajouté — " : "Cours importé — ") + d.title);
+
+  item.resultChapterId = chapterId;
+  item.resultSubjectId = subjectId;
+  return chapterId;
+}
+
 async function courseImportGenerate(index){
   const ci = state.courseImport;
   const item = ci.files[index];
@@ -10920,12 +11162,21 @@ async function courseImportGenerate(index){
     render();
     return;
   }
-  item.status = "generating";
+  ci.busy = true;
+  item.status = "generating"; // avant la résolution de cible : la confirmation de doublon est asynchrone
+  render();
+  const chapterId = await courseImportResolveTarget(item);
+  if(!chapterId){
+    // Doublon détecté, import annulé par l'utilisateur : rien n'a été créé.
+    ci.busy = false;
+    item.status = "review";
+    render();
+    return;
+  }
   item.failedSteps = [];
   item.heuristicMode = false;
   item.lastStepError = null;
   item.cancelled = false;
-  ci.busy = true;
   ci.step = "generating";
   const signal = ci.genSignal = { cancelled: false };
   courseImportStartTimer(item);
@@ -10937,8 +11188,10 @@ async function courseImportGenerate(index){
     courseImportHandleCancelled(item);
     return;
   }
-  aiLog("Étape 3/3 : finalisation");
-  await courseImportFinalize(index);
+  // Le chapitre a déjà été enregistré, et chaque étape réussie déjà écrite
+  // au fur et à mesure (voir courseImportRunAllSteps) : il ne reste qu'à
+  // faire avancer la file d'import.
+  courseImportFinishAfterGeneration(index);
   courseImportStopTimer();
   aiLog("Génération terminée");
 }
@@ -10954,100 +11207,39 @@ async function courseImportSaveWithoutAI(index){
   courseImportStopTimer();
   ci.busy = true;
   item.status = "generating";
+  render();
+  const chapterId = await courseImportResolveTarget(item);
+  if(!chapterId){
+    ci.busy = false;
+    item.status = "review";
+    render();
+    return;
+  }
   item.heuristicMode = true;
   item.genStepIndex = -1;
   ci.step = "generating";
-  render();
   const h = buildHeuristicCourseMaterials(item.extractedText);
   item.generated.fiche = h.fiche;
   item.failedSteps = ["summary", "reviewQuestions"];
   if(h.flashcards.length) item.generated.flashcards = h.flashcards; else item.failedSteps.push("flashcards");
   if(h.quiz.length) item.generated.quiz = h.quiz; else item.failedSteps.push("quiz");
+  const ch = findAnyChapter(chapterId);
+  if(ch){ ch.heuristicMode = true; courseImportApplyGeneratedToChapter(ch, item); }
   ci.busy = false;
-  await courseImportFinalize(index, { aiSkipped: true });
+  courseImportFinishAfterGeneration(index);
 }
 
-async function courseImportRunAllSteps(item, signal){
-  const meta = { title: item.detected.title, chapterTitle: item.detected.chapterTitle, notions: item.detected.notions, sourceCharCount: item.charCount };
-  const steps = [
-    {key:"fiche", fn: generateCourseFiche},
-    {key:"summary", fn: generateCourseSummary},
-    {key:"quiz", fn: generateCourseQuizFromText},
-    {key:"flashcards", fn: generateCourseFlashcardsFromText},
-    {key:"reviewQuestions", fn: generateCourseReviewQuestions},
-  ];
-  for(let i=0;i<steps.length;i++){
-    if(signal && signal.cancelled) return;
-    item.genStepIndex = i;
-    item.currentStepStartedAt = Date.now();
-    render();
-    try{
-      item.generated[steps[i].key] = await steps[i].fn(item.workingText, meta, signal);
-      if(signal && signal.cancelled) return;
-      item.failedSteps = item.failedSteps.filter(k => k !== steps[i].key);
-      item.lastStepError = null;
-    }catch(e){
-      if(signal && signal.cancelled) return;
-      if(!item.failedSteps.includes(steps[i].key)) item.failedSteps.push(steps[i].key);
-      const classified = classifyGenerationError(e);
-      item.lastStepError = classified;
-      console.error("[REV-EM · IA] Erreur de génération :", steps[i].key, e);
-    }
-  }
-  item.genStepIndex = -1;
-}
-
-/* Relance uniquement l'étape indiquée (ex. après un échec), sans tout refaire. */
-async function courseImportRetryStep(index, key){
-  const ci = state.courseImport;
-  const item = ci.files[index];
-  if(!item || aiEngineBusy()) return;
-  const fns = { fiche: generateCourseFiche, summary: generateCourseSummary, quiz: generateCourseQuizFromText, flashcards: generateCourseFlashcardsFromText, reviewQuestions: generateCourseReviewQuestions };
-  if(!fns[key]) return;
-  ci.busy = true;
-  item.status = "generating";
-  item.genStepIndex = COURSE_IMPORT_STEP_LABELS.length; // affiche juste "génération en cours" générique
-  render();
-  const meta = { title: item.detected.title, chapterTitle: item.detected.chapterTitle, notions: item.detected.notions, sourceCharCount: item.charCount };
-  try{
-    item.generated[key] = await fns[key](item.workingText, meta);
-    item.failedSteps = item.failedSteps.filter(k => k !== key);
-    item.lastStepError = null;
-  }catch(e){
-    if(!item.failedSteps.includes(key)) item.failedSteps.push(key);
-    item.lastStepError = classifyGenerationError(e);
-    console.error("[REV-EM · IA] Erreur de génération :", key, e);
-  }
-  item.genStepIndex = -1;
-  ci.busy = false;
-  if(item.resultChapterId){
-    // le cours existe déjà (relance après finalisation) : on met simplement à jour le chapitre sauvegardé
-    const ch = findAnyChapter(item.resultChapterId);
-    if(ch) courseImportApplyGeneratedToChapter(ch, item);
-    item.status = "done";
-  } else {
-    item.status = "review";
-  }
-  render();
-}
-
-function courseImportApplyGeneratedToChapter(ch, item){
-  if(item.generated.fiche) ch.content = item.generated.fiche;
-  if(item.generated.summary) ch.summary = item.generated.summary;
-  if(item.generated.quiz) ch.aiQuiz = item.generated.quiz;
-  if(item.generated.flashcards) ch.aiFlashcards = item.generated.flashcards;
-  if(item.generated.reviewQuestions) ch.aiReviewQuestions = item.generated.reviewQuestions;
-  ch.updatedAt = Date.now();
-  saveUserChapters();
-}
-
-/* Génère (ou complète) les supports IA d'un cours déjà enregistré (utilisé
-   depuis le bandeau "Génération IA en attente" de la fiche du chapitre, ou
-   depuis l'écran de résultat d'un import en mode simplifié). Ne réécrase pas
-   le texte original ni les métadonnées déjà en place. */
+/* Génère (ou complète) les supports IA d'un cours déjà enregistré — depuis le
+   bandeau "Génération IA en attente" de la fiche du chapitre (mode simplifié
+   à mettre à niveau, ou génération normale interrompue/partiellement en
+   échec). Ne régénère que ce qui manque réellement (coursePendingStepKeys),
+   sauf en mode simplifié où tout est refait par l'IA (voir plus haut). Ne
+   réécrase jamais le texte original ni les métadonnées déjà en place. */
 async function libGenerateChapterAI(chapterId){
   const ch = findAnyChapter(chapterId);
   if(!ch || !isUserChapter(ch.id) || aiEngineBusy()) return;
+  const pendingKeys = coursePendingStepKeys(ch);
+  if(!pendingKeys.length) return;   // déjà complet : rien à générer
   state.libGenerateError = "";
   try{
     await ensureImportAIReady();
@@ -11063,96 +11255,53 @@ async function libGenerateChapterAI(chapterId){
     charCount: sourceText.length,
     detected: { title: ch.title, chapterTitle: ch.desc || ch.title, notions: ch.keyNotions || [] },
     generated: {}, failedSteps: [], genStepIndex: -1,
+    resultChapterId: ch.id,
   };
-  await courseImportRunAllSteps(item);
-  courseImportApplyGeneratedToChapter(ch, item);
-  ch.generationPending = false;
-  ch.aiSkipped = false;
-  ch.generationFailedSteps = item.failedSteps;
-  saveUserChapters();
+  ch.heuristicMode = false; // on quitte le mode simplifié dès la tentative, qu'elle réussisse ou non
+  await courseImportRunAllSteps(item, null, pendingKeys);
   state.libGenerateBusy = null;
   render();
 }
 
-async function courseImportFinalize(index, opts){
-  opts = opts || {};
+/* Fait avancer la file d'import une fois un fichier traité (généré ou non) :
+   le chapitre lui-même est déjà enregistré depuis courseImportResolveTarget,
+   il ne reste qu'à passer au fichier suivant ou à afficher le résultat. */
+function courseImportFinishAfterGeneration(index){
   const ci = state.courseImport;
   const item = ci.files[index];
   if(!item) return;
-  const d = item.detected;
-
-  let subjectId = d.subjectId;
-  if(!subjectId){
-    subjectId = genLibId("subj");
-    state.userSubjects.push({
-      id: subjectId, name: d.newSubjectName || "Autre", semesterId: d.semesterId || SEMESTERS[0].id,
-      icon: "", color: SUBJECT_COLORS[state.userSubjects.length % SUBJECT_COLORS.length],
-      description: "Matière créée automatiquement lors de l'import d'un cours.", builtin: false,
-    });
-    saveUserSubjects();
-  }
-
-  const chapterId = genLibId("chap");
-
-  let hasOriginalFile = false;
-  if(item.file && courseFileKind(item.file) === "pdf"){
-    try{ await saveCourseFileBlob(chapterId, item.file); hasOriginalFile = true; }
-    catch(e){ console.error("Impossible d'enregistrer le PDF original :", e); }
-  }
-
-  state.userChapters.push({
-    id: chapterId, subjectId,
-    num: pad2(chaptersOfSubject(subjectId).length + 1),
-    title: d.title, desc: (d.chapterTitle && d.chapterTitle !== d.title) ? d.chapterTitle : "",
-    level: d.level || "",
-    content: item.generated.fiche || item.extractedText.slice(0, 4000),
-    originalText: clip(item.extractedText, 20000),
-    summary: item.generated.summary || "",
-    aiQuiz: (item.generated.quiz || []).map(q => Object.assign({}, q, {chapterId})),
-    aiFlashcards: (item.generated.flashcards || []).map(c => Object.assign({}, c, {chapterId})),
-    aiReviewQuestions: item.generated.reviewQuestions || [],
-    keyNotions: d.notions || [],
-    sourceFileName: item.name || "",
-    pageCount: item.numPages || null,
-    hasOriginalFile,
-    originalFileName: item.file ? item.file.name : "",
-    originalFileMime: item.file ? item.file.type : "",
-    createdAt: Date.now(), updatedAt: Date.now(),
-    markedReviewed: false,
-    aiSkipped: !!opts.aiSkipped,
-    heuristicMode: !!item.heuristicMode,
-    generationPending: !!opts.aiSkipped,
-  });
-  saveUserChapters();
-  logRecentAdd("Cours importé — " + d.title);
-
-  item.resultChapterId = chapterId;
-  item.resultSubjectId = subjectId;
-  // Le cours est déjà enregistré à ce stade (texte extrait + fiche minimale) :
-  // l'import n'est donc jamais considéré comme un échec ici, même si aucune
-  // génération IA n'a pu être obtenue.
   item.status = "done";
-
   const next = ci.files.findIndex((f,i) => i > index && f.status === "pending");
   if(next !== -1){ ci.step = "detect"; courseImportProcessFile(next); return; }
   ci.step = "result";
   render();
 }
 
+function freshCourseImportState(lockedSubjectId){
+  return { step:"pick", busy:false, files:[], activeIndex:0, pasteText:"", dragOver:false, genSignal:null, lockedSubjectId: lockedSubjectId || null };
+}
+
 function courseImportReset(){
   courseImportStopTimer();
-  state.courseImport = { step:"pick", busy:false, files:[], activeIndex:0, pasteText:"", dragOver:false, genSignal:null };
+  state.courseImport = freshCourseImportState();
   render();
 }
 
-/* Point d'entrée commun (dashboard / Mes matières / Ressources) : repart d'un import
-   vierge, sauf si une importation est déjà en cours (pour ne pas la perdre). */
-function goToCourseImport(){
+/* Point d'entrée commun (dashboard / Mes matières / Ressources / une matière
+   précise) : repart d'un import vierge, sauf si une importation est déjà en
+   cours (pour ne pas la perdre) — dans ce cas le contexte de la nouvelle
+   demande est ignoré, celui de l'import en cours prévaut.
+
+   `subjectId` : quand l'import est lancé DEPUIS une matière déjà ouverte
+   (voir renderSubjectDetail), cette matière est IMPOSÉE — jamais proposée à
+   la détection, jamais remplaçable par l'IA. C'est le contexte le plus fort
+   qui existe : l'utilisateur a déjà choisi où il se trouve. */
+function goToCourseImport(subjectId){
   const ci = state.courseImport;
   const hasActiveWork = ci.files.some(f => ["pending","extracting","detecting","review","generating"].includes(f.status));
   if(!hasActiveWork){
     courseImportStopTimer();
-    state.courseImport = { step:"pick", busy:false, files:[], activeIndex:0, pasteText:"", dragOver:false, genSignal:null };
+    state.courseImport = freshCourseImportState(subjectId);
   }
   libGoto("import");
 }
@@ -11311,9 +11460,14 @@ function renderImportDetectOrReview(){
   // proposer/vérifier des métadonnées, il ne bloque jamais la sauvegarde.
   const d = item.detected;
   const matched = d.subjectId ? findSubject(d.subjectId) : null;
+  const locked = !!ci.lockedSubjectId;
+  const existingChapter = d.chapterId ? findAnyChapter(d.chapterId) : null;
   let html = `<h1 class="page-title">Voici ce que nous avons détecté</h1>
   <p class="ai-intro">Vérifie et corrige si besoin, puis choisis comment continuer.</p>`;
 
+  if(locked && matched){
+    html += `<p class="ai-hint" style="margin-bottom:16px;">Importé dans la matière que tu as ouverte — « ${escapeHtml(matched.name)} ». Tu peux quand même changer de matière ci-dessous si tu t'es trompé de page.</p>`;
+  }
   if(item.aiUnavailable && !item.aiError){
     html += `<div class="ai-notice" style="margin-bottom:16px;"><b>Détection automatique indisponible</b> (IA locale hors ligne) : les champs ci-dessous ont été pré-remplis à partir du nom du fichier — vérifie-les avant d'enregistrer. Ton cours est déjà extrait et prêt à être sauvegardé, avec ou sans IA.</div>`;
   }
@@ -11335,8 +11489,18 @@ function renderImportDetectOrReview(){
         <label for="import-newsubject-input">Nom de la nouvelle matière</label>
         <input class="ai-select" id="import-newsubject-input" value="${escapeHtml(d.newSubjectName || "")}"></div>
     </div>
-    <div class="ai-field"><label for="import-chapter-input">Titre du chapitre</label>
-      <input class="ai-select" id="import-chapter-input" value="${escapeHtml(d.chapterTitle)}"></div>
+    <div class="form-row2">
+      <div class="ai-field"><label for="import-chapter-select">Chapitre</label>
+        <select class="ai-select" id="import-chapter-select" ${d.subjectId ? "" : "disabled"}>
+          <option value="">+ Nouveau chapitre</option>
+          ${(d.subjectId ? chaptersOfSubject(d.subjectId) : []).map(c=>`<option value="${c.id}" ${d.chapterId===c.id?"selected":""}>${escapeHtml(c.title)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="ai-field" id="import-newchapter-wrap" style="${d.chapterId ? "display:none;" : ""}">
+        <label for="import-chapter-input">Titre du nouveau chapitre</label>
+        <input class="ai-select" id="import-chapter-input" value="${escapeHtml(d.chapterTitle)}"></div>
+    </div>
+    ${existingChapter ? `<p class="ai-hint" style="margin:-8px 0 16px;">Ce cours sera ajouté à « ${escapeHtml(existingChapter.title)} », qui existe déjà${(existingChapter.content || (existingChapter.aiQuiz||[]).length) ? " et contient déjà un cours" : ""}.</p>` : ""}
     <div class="form-row2">
       <div class="ai-field"><label for="import-level-select">Niveau (facultatif)</label>
         <select class="ai-select" id="import-level-select">
@@ -11546,8 +11710,21 @@ function attachCourseImportEvents(){
       const item = ci.files[ci.activeIndex];
       if(!item) return;
       item.detected.subjectId = subjSelect.value || null;
-      if(newSubjWrap) newSubjWrap.style.display = subjSelect.value ? "none" : "";
-      if(semesterWrap) semesterWrap.style.display = subjSelect.value ? "none" : "";
+      // La matière change : la liste des chapitres proposés ne vaut plus
+      // rien (ceux d'une autre matière), et une correspondance automatique
+      // n'a plus de sens — on repart sur "+ Nouveau chapitre", jamais un
+      // chapitre d'une matière différente laissé sélectionné par erreur.
+      item.detected.chapterId = null;
+      render();
+    });
+  }
+  const chapterSelect = document.getElementById("import-chapter-select");
+  if(chapterSelect){
+    chapterSelect.addEventListener("change", ()=>{
+      const item = ci.files[ci.activeIndex];
+      if(!item) return;
+      item.detected.chapterId = chapterSelect.value || null;
+      render();
     });
   }
   const titleInput = document.getElementById("import-title-input");

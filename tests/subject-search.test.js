@@ -166,6 +166,37 @@ scenario("11. un accesseur de texte différent (chapitres, cours…)", () => {
 /* ══════════════════════════════════════════════════════════════════════════
    12. RIEN N'EST MODIFIÉ — la fonction ne touche jamais la liste d'origine
    ══════════════════════════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════════
+   13. bestMatch — une décision automatique, pas un affichage
+   ══════════════════════════════════════════════════════════════════════════ */
+scenario("13. bestMatch trouve le meilleur candidat unique", () => {
+  const subs = named(["Marketing", "Management", "Gestion du marketing"]);
+  eq("nom exact", S.bestMatch("Marketing", subs).item.name, "Marketing");
+  eq("niveau exact rapporté", S.bestMatch("Marketing", subs).tier, S.TIER_EXACT);
+  eq("préfixe", S.bestMatch("Market", subs).item.name, "Marketing");
+  eq("mot", S.bestMatch("marketing", named(["Gestion du marketing"])).item.name, "Gestion du marketing");
+});
+
+scenario("13 bis. bestMatch renvoie null sans correspondance, jamais une erreur", () => {
+  eq("rien ne correspond", S.bestMatch("xyz", SUBJECTS), null);
+  eq("nom vide", S.bestMatch("", SUBJECTS), null);
+  eq("liste vide", S.bestMatch("marketing", []), null);
+});
+
+scenario("13 ter. bestMatch ne se laisse pas piéger par un containment ambigu", () => {
+  const subs = named(["Management", "Management commercial"]);
+  /* "Management" est un nom EXACT pour le premier : le containment du second
+     ("Management commercial".includes("management")) ne doit jamais gagner
+     contre une correspondance exacte. */
+  eq("le nom exact l'emporte sur un simple containment", S.bestMatch("Management", subs).item.name, "Management");
+});
+
+scenario("13 quater. bestMatch : premier de la liste gagne à niveau égal (ordre stable)", () => {
+  const subs = [{ id: "1", name: "Droit A" }, { id: "2", name: "Droit B" }];
+  eq("égalité de niveau : premier de la liste, jamais un tri alphabétique imposé",
+    S.bestMatch("droit", subs).item.id, "1");
+});
+
 scenario("12. la liste d'origine n'est ni mutée ni réordonnée sur place", () => {
   const original = named(["Zoologie", "Astronomie"]);
   const originalOrder = names(original);

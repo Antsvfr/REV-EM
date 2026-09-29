@@ -56,6 +56,17 @@ frappe, sans index (mesuré dans `tests/subject-search.test.js`, scénario
 il n'aurait à résoudre aucun problème réel, et il ajouterait un état à
 invalider à chaque création/renommage de matière.
 
+## Un deuxième usage : `bestMatch(name, items, getText)`
+
+Le même moteur de niveaux sert aussi à une décision automatique (pas un
+affichage à un humain) : « à quelle matière/quel chapitre existant ce nom
+détecté correspond-il ? ». `bestMatch` retourne `{item, tier}` du meilleur
+candidat, ou `null` — jamais une liste. Utilisé par le pipeline d'import de
+cours (voir `COURSE_PIPELINE_AUDIT.md`) pour proposer une matière ou un
+chapitre existant plutôt que d'en créer un nouveau à chaque fois, exactement
+l'usage que ce module annonçait depuis sa première version sans encore
+l'avoir.
+
 ## Future-proof, sans construire la recherche globale
 
 `filterAndSortSubjects(query, items, getText)` ne connaît pas les matières :

@@ -93,6 +93,31 @@
     return 0;
   }
 
+  /* Le MEILLEUR élément pour un nom donné (pas une recherche : `query` est le
+     nom complet détecté, pas une saisie partielle), avec son niveau de
+     confiance — pour un appelant qui doit décider tout seul (ex. rattacher
+     un cours importé à une matière ou un chapitre existant) plutôt
+     qu'afficher une liste triée à un humain. `null` si rien ne correspond
+     à aucun niveau. En cas d'égalité de niveau, le premier de `items` gagne
+     (ordre stable), jamais un tri alphabétique qui déciderait à la place de
+     l'appelant. */
+  function bestMatch(query, items, getText){
+    var list = items || [];
+    var text = typeof getText === "function" ? getText : defaultGetText;
+    var q = normalize(query);
+    if(!q) return null;
+    var words = q.split(" ").filter(Boolean);
+    var best = null;
+    for(var i = 0; i < list.length; i++){
+      var label = text(list[i]) || "";
+      var n = normalize(label);
+      if(!n) continue;
+      var tier = tierOf(n, q, words);
+      if(tier && (!best || tier < best.tier)) best = { item: list[i], tier: tier };
+    }
+    return best;
+  }
+
   /* `items` n'est jamais modifié : la liste réelle (state.userSubjects, etc.)
      reste la source unique — voir SUBJECT_SEARCH.md pour la règle « pas de
      deuxième liste ». Retourne une NOUVELLE liste. */
@@ -126,5 +151,7 @@
     filterAndSortSubjects: filterAndSortSubjects,
     /* Nom courant demandé par l'architecture : même fonction, sens explicite. */
     searchSubjects: filterAndSortSubjects,
+    bestMatch: bestMatch,
+    TIER_EXACT: EXACT, TIER_STARTS: STARTS, TIER_WORD: WORD, TIER_CONTAINS: CONTAINS,
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);
