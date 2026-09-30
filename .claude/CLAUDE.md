@@ -27,13 +27,15 @@ JS autonomes chargés en `<script>` classique, dans cet ordre :
 → `smart-revision.js` → `statistics.js` → `planning.js` →
 `content-sources.js` → `sync-engine.js` → `source-adapters.js` →
 `user-data.js` → `command-center.js` → `quick-actions.js` →
-`subject-search.js` → le script principal d'`index.html`. `ai-worker.js`
-est chargé séparément, à l'exécution, comme Web Worker. Aucun de ces
-modules ne modifie ce découpage sans raison réelle.
+`subject-search.js` → `ai-engine.js` → le script principal d'`index.html`.
+`ai-worker.js` (qui importe `ai-host.js`, lui-même `ai-engine.js`) est chargé
+séparément, à l'exécution, comme Web Worker ; `ai-host.js` peut aussi être
+importé sur le fil principal en mode compatibilité (voir `AI_AUDIT.md`).
+Aucun de ces modules ne modifie ce découpage sans raison réelle.
 
 **Le même patron revient partout : un moteur pur, un branchement.**
 `smart-revision.js`, `statistics.js`, `command-center.js`,
-`quick-actions.js` et `subject-search.js` ne connaissent ni le DOM, ni
+`quick-actions.js`, `subject-search.js` et `ai-engine.js` ne connaissent ni le DOM, ni
 `state`, ni la navigation — ils reçoivent des données et rendent un résultat. Ce qui
 sait lire `state` et où mènent les choses vit dans `index.html`. C'est ce
 qui permet de tester ces moteurs sous Node, sans navigateur, en quelques
@@ -147,7 +149,7 @@ modifier du code dans son domaine, pas après :
 | `learning-modes` | on touche à un mode de révision (quiz/flashcards/oral/examen) |
 | `course-library-import` | on touche à la bibliothèque, aux cours, à l'import |
 | `smart-revision` | on touche à `smart-revision.js` ou aux recommandations |
-| `ai-system` | on touche à l'assistant IA, à WebLLM, ou à `ai-worker.js` |
+| `ai-system` | on touche à l'assistant IA, à WebLLM, à `ai-engine.js`, `ai-host.js` ou `ai-worker.js` (lire aussi `AI_AUDIT.md`) |
 | `supabase-auth-data` | on touche à `auth.js`, Supabase, ou au stockage local |
 | `i18n-accessibility-responsive` | on ajoute un texte, une vue, ou touche au responsive |
 | `performance-security` | avant d'ajouter une dépendance, un appel réseau, une entrée utilisateur |

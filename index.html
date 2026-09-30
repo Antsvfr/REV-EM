@@ -3981,6 +3981,38 @@
   .ai-loadbar{ width:100%; height:8px; border-radius:999px; background: var(--border); overflow:hidden; margin:8px 0 2px; }
   .ai-loadbar-fill{ height:100%; background: var(--accent); border-radius:999px; transition: width var(--motion-enter) var(--ease-enter); }
 
+  /* Sélecteur de palier (Rapide / Avancé / Expert) : trois cartes sobres, un
+     seul repère rouge (le palier actif), le reste en filets neutres. */
+  .ai-tiers{ display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:12px; margin-top:16px; }
+  @media (max-width:820px){ .ai-tiers{ grid-template-columns: 1fr; } }
+  .ai-tier{
+    display:flex; flex-direction:column; align-items:flex-start; gap:4px; text-align:left; cursor:pointer;
+    background: var(--surface); border:1px solid var(--border-strong); border-radius: var(--radius-md);
+    padding:14px 16px; font-family:"Inter",sans-serif; color:var(--ink); min-width:0;
+    transition: border-color .15s var(--ease), background-color .15s var(--ease), transform .15s var(--ease);
+  }
+  .ai-tier:hover:not(:disabled){ border-color: var(--red); }
+  .ai-tier:focus-visible{ outline:2px solid var(--red); outline-offset:2px; }
+  .ai-tier:disabled{ cursor:default; opacity:.7; }
+  .ai-tier.is-active{ border-color: var(--red); background: var(--red-tint); }
+  .ai-tier-head{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .ai-tier-name{ font-size: var(--text-body); font-weight: var(--weight-semibold); }
+  .ai-tier-badge{ font-size: var(--text-label); font-weight: var(--weight-semibold); letter-spacing:.06em; color: var(--red-dark); border:1px solid var(--red); border-radius:999px; padding:1px 8px; }
+  .ai-tier-model{ font-size: var(--text-metadata); font-weight: var(--weight-medium); color: var(--ink); }
+  .ai-tier-sub{ font-size: var(--text-label); color: var(--ink-soft); line-height:1.45; }
+  .ai-tier-meta{ display:flex; justify-content:space-between; gap:8px; align-items:center; width:100%; margin-top:6px; font-size: var(--text-label); color: var(--ink-soft); flex-wrap:wrap; }
+  .ai-tier-state{ display:inline-flex; align-items:center; gap:6px; font-weight: var(--weight-medium); }
+  .ai-tier-dot{ width:7px; height:7px; border-radius:50%; background: var(--border-strong); display:inline-block; }
+  .ai-tier.st-ready .ai-tier-dot, .ai-tier.st-fallback .ai-tier-dot{ background: var(--green); }
+  .ai-tier.st-downloading .ai-tier-dot, .ai-tier.st-initializing .ai-tier-dot{ background: var(--accent); animation: aiTierPulse 1.2s ease-in-out infinite; }
+  .ai-tier.st-failed .ai-tier-dot, .ai-tier.st-unrecommended .ai-tier-dot{ background: var(--amber); }
+  .ai-tier-why{ font-size: var(--text-label); color: var(--amber); line-height:1.4; }
+  @keyframes aiTierPulse{ 0%,100%{ opacity:1; } 50%{ opacity:.35; } }
+  @media (prefers-reduced-motion: reduce){ .ai-tier{ transition:none; } .ai-tier-dot{ animation:none !important; } }
+  .ai-notice-line{ margin-top:8px; padding:8px 12px; border-left:2px solid var(--red); background: var(--surface-2); border-radius:0 var(--radius-md) var(--radius-md) 0; font-size: var(--text-metadata); color: var(--ink-soft); line-height:1.55; }
+  .ai-errbox{ margin-top:8px; font-size: var(--text-metadata); line-height:1.6; }
+  .ai-errbox-msg{ color: var(--ink); }
+
   .ai-modelpicker{ display:flex; gap:12px; flex-wrap:wrap; margin-top:12px; }
   .ai-modelchoice{
     display:flex; flex-direction:column; gap:2px; text-align:left; cursor:pointer; flex:1; min-width:180px;
@@ -5088,6 +5120,10 @@
      aujourd'hui). Générique par construction — voir SUBJECT_SEARCH.md — pour
      pouvoir servir plus tard à d'autres listes nommées sans être réécrit. -->
 <script src="subject-search.js"></script>
+<!-- Logique PURE de l'assistant IA local (paliers, erreurs, machine d'états, mémoire,
+     prompts, diagnostic). Comme les autres moteurs : ni DOM, ni state, ni WebGPU.
+     Partagée avec ai-host.js (Worker). Voir AI_AUDIT.md. -->
+<script src="ai-engine.js"></script>
 
 <script>
 /* ============================================================
@@ -10480,6 +10516,13 @@ function courseImportStopTimer(){
 function classifyGenerationError(e){
   const msg = (e && e.message) ? e.message : String(e || "");
   const low = msg.toLowerCase();
+  /* Le code posé par l'hôte IA (ai-host.js) fait foi avant tout motif de texte. */
+  if(e && e.code === "OUT_OF_MEMORY_OR_RESOURCE_LIMIT"){
+    return { kind:"memory", message:"L'IA manque probablement de mémoire pour traiter ce cours en une seule fois. Essaie avec un cours plus court, découpe ton document, ou choisis un mode plus léger (Rapide)." };
+  }
+  if(e && (e.code === "DEVICE_LOST" || e.code === "WORKER_FAILED")){
+    return { kind:"webgpu", message:"L'accélération graphique a été interrompue. Le moteur IA sera relancé : clique sur Réessayer, ou recharge la page." };
+  }
   if(/out of memory|oom|allocation failed|memory/i.test(low)){
     return { kind:"memory", message:"L'IA manque probablement de mémoire pour traiter ce cours en une seule fois. Essaie avec un cours plus court, ou découpe ton document en plusieurs parties." };
   }
@@ -10498,7 +10541,7 @@ function classifyGenerationError(e){
 async function condenseCourseChunk(chunkText, index, total, signal){
   const prompt = aiSystemPrompt() + "\n\nEXTRAIT " + (index+1) + "/" + total + " D'UN COURS :\n" + chunkText +
     "\n\nTÂCHE : condense cet extrait en une liste dense de points (définitions, faits, formules, exemples, dates, auteurs), sans rien inventer ni interpréter. Conserve le vocabulaire exact du cours. Réponds uniquement par la liste condensée, sans commentaire autour, sans introduction ni conclusion.";
-  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal }), 60000, "condensation");
+  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal, task: "condense" }), 60000, "condensation");
   return (res && res.text) ? res.text.trim() : "";
 }
 
@@ -10569,7 +10612,7 @@ async function detectCourseMeta(workingText, fileName, signal, lockedSubjectName
   const prompt = aiSystemPrompt() + "\n\nDébut du cours (extrait) :\n" + clip(workingText, 3000) +
     subjectBlock +
     "\n\nTÂCHE : " + task + " Réponds UNIQUEMENT par un objet JSON (pas de tableau), sans texte autour, au format : " + jsonFormat;
-  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal }), 45000, "détection du cours");
+  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal, task: "detect" }), 45000, "détection du cours");
   const parsed = extractJsonObject(res && res.text);
   const fallbackTitle = (fileName || "").replace(/\.[a-z0-9]+$/i, "").replace(/[_-]+/g, " ").trim();
   return {
@@ -10613,7 +10656,7 @@ function withGenTimeout(promise, ms, label){
   let timer = null;
   const timeout = new Promise((_, reject)=>{
     timer = setTimeout(async ()=>{
-      try{ if(webllmEngine && webllmEngine.interruptGenerate) await webllmEngine.interruptGenerate(); }catch(e){}
+      try{ aiAbortGeneration(); }catch(e){}
       reject(new Error("timeout:" + (label || "génération") + " a dépassé " + Math.round(ms/1000) + " s sans réponse."));
     }, ms);
   });
@@ -10664,7 +10707,7 @@ async function generateCourseFiche(workingText, meta, signal){
     "\n\nTÂCHE : à partir UNIQUEMENT de ce contenu, sans rien inventer, produis une fiche de révision structurée au format JSON strict, sans aucun texte ni Markdown autour :\n" +
     "{\"introduction\":\"2-3 phrases max pour situer le sujet\",\"sections\":[{\"type\":\"notions\",\"title\":\"...\",\"items\":[{\"title\":\"terme\",\"content\":\"définition courte et claire\",\"example\":\"exemple concret, optionnel\"}]},{\"type\":\"steps\",\"title\":\"...\",\"items\":[{\"content\":\"étape\"}]},{\"type\":\"data\",\"title\":\"...\",\"items\":[{\"label\":\"...\",\"value\":\"...\"}]},{\"type\":\"examples\",\"title\":\"...\",\"items\":[{\"content\":\"...\"}]}],\"keyPoints\":[\"point essentiel court\"]}\n" +
     "RÈGLES STRICTES : n'inclus une section \"steps\", \"data\" ou \"examples\" QUE si le cours contient réellement des étapes/mécanismes, des chiffres/formules/dates, ou des exemples — sinon ne l'écris pas du tout. N'écris jamais \"information manquante\", \"non précisé\", \"si applicable\" ou une phrase équivalente : si une information n'existe pas, ne l'écris pas. 4 à 8 sections maximum, 5 à 8 \"keyPoints\" maximum (une phrase courte chacun). Contenu concis et reformulé, sans répéter le cours mot pour mot.";
-  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal }), 90000, "fiche");
+  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal, task: "fiche" }), 90000, "fiche");
   const raw = (res && res.text) ? res.text.trim() : "";
   const clean = sanitizeFicheData(extractJsonObject(raw));
   if(!clean) throw new Error("la fiche générée est vide ou dans un format inattendu");
@@ -10674,7 +10717,7 @@ async function generateCourseFiche(workingText, meta, signal){
 async function generateCourseSummary(workingText, meta, signal){
   const prompt = aiSystemPrompt() + "\n\n" + courseGenContext(workingText, meta) +
     "\n\nTÂCHE : rédige, sans rien inventer, un résumé très court (3 à 5 phrases maximum) puis une liste des idées essentielles (une ligne chacune, 5 à 8 lignes). Commence directement par « Résumé court » puis « Idées essentielles », sans aucune autre introduction.";
-  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal }), 60000, "résumé");
+  const res = await withGenTimeout(webllmChat([{role:"user", content: prompt}], { signal, task: "summary" }), 60000, "résumé");
   const text = (res && res.text) ? res.text.trim() : "";
   if(!text) throw new Error("le résumé généré est vide");
   return text;
@@ -10729,7 +10772,7 @@ async function ensureImportAIReady(){
     throw new Error((diag ? diag.message : "L'IA locale n'est pas disponible sur cet appareil.") + " Tu peux enregistrer ton cours sans IA, ou utiliser le mode simplifié — rien n'est perdu.");
   }
   if(state.aiStatus === "loading") throw new Error("Le modèle est en cours de chargement, réessaie dans quelques secondes.");
-  await aiLoadModel(state.aiModelId || pickModelForDevice());
+  await aiLoadModel();
   if(state.aiStatus !== "ready"){
     if(state.aiStatus === "error" && state.aiDiagnostic) throw new Error(state.aiDiagnostic.typeLabel + " : " + state.aiDiagnostic.message);
     throw new Error("Le chargement du modèle IA a échoué. Réessaie, ou charge-le depuis l'onglet Assistant IA.");
@@ -14207,42 +14250,63 @@ function attachFlashSummaryEvents(){
 
 /* ============================================================
    11bis. ASSISTANT IA — MOTEUR LOCAL (WebLLM, dans le navigateur)
+   ------------------------------------------------------------
+   Architecture (voir AI_AUDIT.md) :
+     ai-engine.js  moteur PUR : paliers, codes d'erreur, machine d'états,
+                   mémoire locale, prompts, diagnostic (testé sous Node).
+     ai-host.js    hôte du moteur WebLLM : UN moteur, UN protocole.
+     ai-worker.js  branchement de l'hôte dans un Web Worker.
+     ce fichier    « ModelManager » côté page : choisit le palier, pilote le
+                   repli automatique, parle à l'hôte, affiche l'état.
+   Chaîne vérifiée avant de dire « prêt » : navigator.gpu → adaptateur →
+   périphérique → worker opérationnel → WebLLM chargé → modèle du model_list →
+   poids téléchargés → moteur initialisé → premier jeton généré.
    ============================================================ */
-const KEY_AIMODEL = "ai-model-choice";
+const KEY_AIMODEL = "ai-model-choice";   // ANCIEN réglage (small|large), synchronisé : lu une fois pour migrer, plus écrit
+const AIE = window.RevemAI;              // ai-engine.js
+/* Mémoire du moteur IA : propre à l'APPAREIL, pas au compte. Volontairement
+   hors de lsGet/lsSet (comme le marqueur « storage-claimed-by ») : ce n'est
+   pas une donnée utilisateur, elle ne doit ni être synchronisée, ni exportée
+   dans une sauvegarde, ni disparaître à la déconnexion. Elle ne contient que
+   des noms de palier, des codes d'erreur et des dates — jamais de contenu. */
+const AI_DEVICE_KEY = LS_PREFIX + "ai-engine-memory";
+let aiMemFallback = null;
 
-const AI_MODELS = {
-  small: {
-    id: "Llama-3.2-1B-Instruct-q4f16_1-MLC",
-    label: "Modèle léger",
-    size: "≈0,9 Go",
-    note: "Plus rapide, réponses plus simples — recommandé sur mobile ou ordinateur modeste.",
-  },
-  large: {
-    id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
-    label: "Modèle recommandé",
-    size: "≈1,9 Go",
-    note: "Meilleure qualité de réponse — recommandé sur ordinateur récent.",
-  },
-};
-function aiModelMeta(id){
-  return Object.values(AI_MODELS).find(m => m.id === id) || AI_MODELS.large;
+function aiMem(){
+  try{
+    const raw = localStorage.getItem(AI_DEVICE_KEY);
+    if(raw !== null) return AIE.normalizeMemory(JSON.parse(raw));
+  }catch(e){ if(aiMemFallback) return AIE.normalizeMemory(aiMemFallback); }
+  const fresh = AIE.emptyMemory();
+  fresh.selected = AIE.migrateLegacyChoice(lsGet(KEY_AIMODEL));   // ancien réglage « small » → Rapide
+  return fresh;
+}
+function aiMemSave(m){
+  aiMemFallback = m;
+  try{ localStorage.setItem(AI_DEVICE_KEY, JSON.stringify(m)); }catch(e){ /* stockage indisponible : la mémoire de session suffit */ }
+}
+
+/* Faits réels de l'environnement — jamais une estimation de VRAM. */
+function aiEnv(){
+  const d = state.aiGpuDiag || {};
+  return {
+    browser: AIE.detectBrowser(navigator.userAgent, { webkitBridge: !!(window.webkit && window.webkit.messageHandlers) }),
+    adapter: !!d.adapterAvailable,
+    shaderF16: !!d.shaderF16,
+    limits: d.limits || null,
+    deviceMemoryGb: typeof navigator.deviceMemory === "number" ? navigator.deviceMemory : null,
+  };
 }
 
 /* Diagnostic WebGPU précis : distingue API absente / adaptateur introuvable /
    adaptateur trouvé mais périphérique impossible à initialiser, plutôt qu'un
    simple booléen — pour afficher un message exact à l'utilisateur. */
-/* Diagnostic WebGPU complet. Retourne un résultat structuré (avec les champs
-   historiques ok/code/message/detail conservés pour ne rien casser côté
-   appelants) : supported/gpuApiAvailable/adapterAvailable/deviceAvailable,
-   adapterInfo (seulement si réellement exposé par le navigateur),
-   reason/errorCode/recommendedAction. Essaie plusieurs préférences
-   d'adaptateur avant de conclure qu'aucun GPU n'est utilisable : certains
-   appareils (ex. portables avec GPU intégré + GPU dédié) n'exposent un
-   adaptateur que sous l'une des deux préférences. */
 async function checkWebGPUCompatibility(){
   const result = {
     supported: false, gpuApiAvailable: false, adapterAvailable: false, deviceAvailable: false,
     adapterInfo: null, adapterInfoSupported: null, reason: "", errorCode: "no_api", recommendedAction: "",
+    // Faits réels de l'adaptateur (jamais estimés) : sélection de la variante f16/f32 et du palier.
+    shaderF16: false, subgroups: false, limits: null,
     // Résultat DÉTAILLÉ de CHAQUE tentative d'adaptateur, séparément — pour ne
     // jamais résumer "high-performance" et "low-power" en un seul verdict.
     adapterAttempts: [],
@@ -14302,6 +14366,17 @@ async function checkWebGPUCompatibility(){
   }
   result.adapterAvailable = true;
 
+  try{
+    result.shaderF16 = !!(adapter.features && adapter.features.has && adapter.features.has("shader-f16"));
+    result.subgroups = !!(adapter.features && adapter.features.has && adapter.features.has("subgroups"));
+    if(adapter.limits){
+      const L = {};
+      ["maxBufferSize", "maxStorageBufferBindingSize", "maxComputeInvocationsPerWorkgroup", "maxComputeWorkgroupStorageSize", "maxStorageBuffersPerShaderStage"]
+        .forEach(k => { if(typeof adapter.limits[k] === "number") L[k] = adapter.limits[k]; });
+      result.limits = L;
+    }
+  }catch(e){ /* fonctionnalités/limites facultatives pour ce diagnostic */ }
+
   // Informations de l'adaptateur, seulement si réellement exposées par le navigateur
   // (propriétés standard de l'API GPUAdapterInfo — jamais inventées si absentes).
   try{
@@ -14319,7 +14394,12 @@ async function checkWebGPUCompatibility(){
   }catch(e){ result.adapterInfoSupported = false; }
 
   try{
-    if(adapter.requestDevice) await adapter.requestDevice();
+    if(adapter.requestDevice){
+      const probeDevice = await adapter.requestDevice();
+      /* Ce périphérique ne sert qu'à PROUVER que la création marche : on le
+         détruit, sinon il restait ouvert à côté de celui de WebLLM. */
+      try{ if(probeDevice && probeDevice.destroy) probeDevice.destroy(); }catch(e){}
+    }
   }catch(e){
     result.errorCode = "device_error"; result.code = "device_error";
     result.message = "Le navigateur détecte une carte graphique, mais ne permet pas de créer un périphérique compatible.";
@@ -14334,30 +14414,381 @@ async function checkWebGPUCompatibility(){
   result.message = "WebGPU est disponible."; result.detail = ""; result.reason = "";
   return result;
 }
+
 /* Alias conservé pour la lisibilité des appels existants. */
 function diagnoseWebGPU(){ return checkWebGPUCompatibility(); }
-function pickModelForDevice(){
-  const saved = lsGet(KEY_AIMODEL);
-  if(saved === "small" || saved === "large") return AI_MODELS[saved].id;
-  const mem = navigator.deviceMemory;
-  const smallScreen = Math.min(window.innerWidth, window.innerHeight) < 500;
-  if((typeof mem === "number" && mem > 0 && mem < 4) || smallScreen) return AI_MODELS.small.id;
-  return AI_MODELS.large.id;
+
+/* ── Transport vers l'hôte (Worker, ou fil principal en dernier recours) ── */
+let aiTransport = null;              // { mode:"worker"|"main-thread", send, terminate }
+let aiTransportPromise = null;
+let aiForceMain = false;             // vrai seulement après PREUVE que le worker n'a pas WebGPU
+let aiReqSeq = 0;
+let aiInit = null;                   // { id, resolve } — le chargement en cours
+let aiGen = null;                    // { id, text, resolve, reject, onText, poll } — la génération en cours
+const aiPending = new Map();         // id → { resolve, timer } pour GET_STATUS / RESET_AI_CACHE
+let aiAutoRestoreDone = false;
+let aiProgressRaf = 0;
+
+function aiLog(step, detail){
+  console.log("[REV-EM · IA]", step, detail !== undefined ? detail : "");
 }
 
-let webllmModulePromise = null;
-let webllmWorker = null;
-let webllmEngine = null;
-let webllmLoadedModelId = null;
-let webllmGenerationToken = 0;
-let webllmLoadToken = 0;
-let webllmWatchdog = null;
+function aiStartWorkerTransport(){
+  return new Promise((resolve, reject) => {
+    let w;
+    try{ w = new Worker("ai-worker.js", { type: "module" }); }
+    catch(e){ reject(e); return; }
+    let ready = false;
+    const timer = setTimeout(() => {
+      try{ w.terminate(); }catch(e){}
+      reject(new Error("Le worker n'a pas répondu en 10 s (WORKER_READY jamais reçu)."));
+    }, 10000);
+    w.onmessage = (ev) => {
+      const m = ev.data;
+      if(!ready && m && m.type === "WORKER_READY"){
+        ready = true; clearTimeout(timer);
+        aiLog("Worker prêt", "WebLLM " + m.webllmVersion);
+        resolve({ mode: "worker", send: (msg) => w.postMessage(msg), terminate: () => { try{ w.terminate(); }catch(e){} } });
+        return;
+      }
+      aiOnHostMessage(m);
+    };
+    w.onerror = (err) => {
+      if(!ready){ clearTimeout(timer); reject(err); return; }
+      aiOnWorkerCrash(err);
+    };
+    w.onmessageerror = () => { aiOnWorkerCrash({ message: "Message illisible reçu depuis ai-worker.js (onmessageerror)." }); };
+  });
+}
 
-function loadWebLLMModule(){
-  if(!webllmModulePromise){
-    webllmModulePromise = import("https://esm.run/@mlc-ai/web-llm");
+/* Mode « fil principal » : MÊME hôte, MÊME protocole. Utilisé seulement si le
+   worker ne démarre pas, ou si la sonde de l'hôte prouve que le contexte du
+   worker n'a pas WebGPU alors que la page, elle, l'a. */
+async function aiStartMainThreadTransport(){
+  const mod = await import("./ai-host.js");
+  const host = mod.createAiHost((msg) => aiOnHostMessage(msg), { context: "main" });
+  aiLog("Moteur IA lancé sur le fil principal (mode compatibilité)");
+  return { mode: "main-thread", send: (msg) => host.handle(msg), terminate: () => {} };
+}
+
+function aiEnsureTransport(){
+  if(aiTransport) return Promise.resolve(aiTransport);
+  if(!aiTransportPromise){
+    aiTransportPromise = (async () => {
+      if(!aiForceMain){
+        try{ aiTransport = await aiStartWorkerTransport(); state.aiEngineMode = "worker"; return aiTransport; }
+        catch(e){
+          aiLog("Worker indisponible → mode compatibilité", (e && e.message) || e);
+          state.aiWorkerError = AIE.normalizeError(e).message || "worker non démarré";
+        }
+      }
+      aiTransport = await aiStartMainThreadTransport();
+      state.aiEngineMode = "main-thread";
+      return aiTransport;
+    })().finally(() => { aiTransportPromise = null; });
   }
-  return webllmModulePromise;
+  return aiTransportPromise;
+}
+
+function aiDropTransport(){
+  if(aiTransport){ try{ aiTransport.terminate(); }catch(e){} }
+  aiTransport = null;
+  state.aiHostState = "IDLE";
+}
+
+/* Le worker est mort en cours de route : on le dit à tout ce qui attendait. */
+function aiOnWorkerCrash(err){
+  const msg = AIE.normalizeError(err).message || "le worker s'est arrêté";
+  aiLog("Worker en erreur", msg);
+  state.aiWorkerError = msg;
+  aiDropTransport();
+  if(aiInit){ const r = aiInit.resolve; aiInit = null; r({ type: "MODEL_ERROR", code: "WORKER_FAILED", message: msg, stage: "worker" }); }
+  if(aiGen){ const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll); const e = new Error(msg); e.code = "WORKER_FAILED"; g.reject(e); }
+}
+
+function aiOnHostMessage(m){
+  if(!m || typeof m.type !== "string") return;
+  if(m.state) state.aiHostState = m.state;
+  if(m.probe && m.probe.context === "worker") state.aiWorkerGpu = !!m.probe.api;
+  switch(m.type){
+    case "MODEL_DOWNLOAD_PROGRESS": {
+      state.aiLoadProgress = Math.round((m.progress || 0) * 100);
+      state.aiLoadText = m.text || "";
+      const phase = m.phase || "download";
+      const phaseChanged = phase !== state.aiLoadPhase;
+      state.aiLoadPhase = phase;
+      if(m.fetchedMB != null) state.aiFetchedMB = m.fetchedMB;
+      if(m.cacheFallback) state.aiNotice = { kind: "cache_backend" };
+      aiScheduleProgressRender(phaseChanged || !!m.cacheFallback);
+      break;
+    }
+    case "MODEL_INITIALIZING":
+      state.aiLoadPhase = "init"; aiScheduleProgressRender(true);
+      break;
+    case "MODEL_READY": case "MODEL_ERROR":
+      if(aiInit && (aiInit.id === m.id || m.id == null)){ const r = aiInit.resolve; aiInit = null; r(m); }
+      break;
+    case "GENERATION_TOKEN":
+      if(aiGen && aiGen.id === m.id){
+        aiGen.text += m.delta;
+        if(aiGen.onText) aiGen.onText({ text: AIE.stripReasoning(aiGen.text) });
+      }
+      break;
+    case "GENERATION_COMPLETE":
+      if(aiGen && aiGen.id === m.id){
+        const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll);
+        state.aiPerf = { ttftMs: m.ttftMs, totalMs: m.totalMs, chars: m.chars, tier: m.tier, at: Date.now() };
+        aiLog("Génération terminée", "premier jeton " + Math.round(m.ttftMs || 0) + " ms · total " + m.totalMs + " ms");
+        g.resolve({ text: AIE.stripReasoning(g.text), raw: g.text, aborted: !!m.aborted, ttftMs: m.ttftMs, totalMs: m.totalMs });
+      }
+      break;
+    case "GENERATION_ERROR":
+      if(aiGen && aiGen.id === m.id){
+        const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll);
+        const e = new Error(m.message || "génération impossible"); e.code = m.code; e.contextExceeded = !!m.contextExceeded;
+        g.reject(e);
+      }
+      break;
+    case "DEVICE_LOST": aiOnDeviceLost(m); break;
+    case "WORKER_ERROR":
+      state.aiWorkerError = m.message || "erreur dans le worker";
+      aiLog("Erreur non gérée dans le worker", m.message);
+      break;
+    case "STATUS": case "CACHE_RESET_DONE": {
+      const p = aiPending.get(m.id);
+      if(p){ aiPending.delete(m.id); clearTimeout(p.timer); p.resolve(m); }
+      break;
+    }
+  }
+}
+
+/* Requête/réponse pour GET_STATUS et RESET_AI_CACHE. */
+function aiRequest(msg, timeoutMs){
+  return new Promise((resolve, reject) => {
+    if(!aiTransport){ reject(new Error("aucun moteur actif")); return; }
+    const id = "req-" + (++aiReqSeq);
+    const timer = setTimeout(() => { aiPending.delete(id); reject(new Error("pas de réponse du moteur IA")); }, timeoutMs || 8000);
+    aiPending.set(id, { resolve, timer });
+    aiTransport.send(Object.assign({ id }, msg));
+  });
+}
+
+/* Rendu de la progression : la barre est mise à jour directement (pas de
+   render() complet à chaque message de progression) ; un rendu complet n'a
+   lieu que quand la PHASE change (téléchargement → initialisation). */
+function aiScheduleProgressRender(full){
+  if(aiProgressRaf) return;
+  aiProgressRaf = requestAnimationFrame(() => {
+    aiProgressRaf = 0;
+    const fill = document.getElementById("ai-loadbar-fill");
+    const pct = document.getElementById("ai-load-pct");
+    const txt = document.getElementById("ai-load-text");
+    if(!full && fill){
+      fill.style.width = state.aiLoadProgress + "%";
+      if(pct) pct.textContent = state.aiLoadProgress + "%";
+      if(txt) txt.textContent = aiLoadLabel();
+      const bar = fill.parentElement; if(bar) bar.setAttribute("aria-valuenow", String(state.aiLoadProgress));
+      return;
+    }
+    /* Un rendu complet ne se déclenche que sur l'onglet de l'assistant : ailleurs,
+       il volerait le focus d'un champ en cours de saisie pour rien (le rendu final
+       a lieu de toute façon quand le chargement se termine). */
+    if(state.tab === "ai") render();
+  });
+}
+function aiLoadLabel(){
+  if(state.aiLoadPhase === "download") return t("ai.load.download", { pct: state.aiLoadProgress });
+  if(state.aiLoadPhase === "prepare") return t("ai.load.prepare");
+  return t("ai.load.init");
+}
+
+function aiInitTier(tier){
+  return new Promise(async (resolve) => {
+    const id = "init-" + (++aiReqSeq);
+    aiInit = { id, resolve };
+    try{
+      const tr = await aiEnsureTransport();
+      if(state.aiCancelRequested){ aiInit = null; resolve({ type: "MODEL_ERROR", cancelled: true, code: "CANCELLED", tier }); return; }
+      tr.send({ type: "INIT_MODEL", id, tier });
+    }catch(e){
+      aiInit = null;
+      const c = AIE.classifyError(e, { stage: "worker" });
+      resolve({ type: "MODEL_ERROR", code: c.code === "UNKNOWN" ? "WORKER_FAILED" : c.code, message: c.message, stage: "worker", tier });
+    }
+  });
+}
+
+/* ── ModelManager : palier → UN moteur → UNE charge GPU ─────────────────── */
+function aiTierOfTarget(target){
+  if(AIE.isTier(target)) return target;
+  if(typeof target === "string" && AIE.tierOfModelId(target)) return AIE.tierOfModelId(target);
+  return AIE.chooseStartTier(aiEnv(), aiMem()).tier;
+}
+let aiLoadPromise = null;
+/* Charge un palier (« rapide » | « avance » | « expert »), ou — sans argument —
+   celui que aiMem()/l'environnement recommandent. Jamais deux chargements en
+   même temps : un appel pendant un chargement rend la MÊME promesse. */
+function aiLoadModel(target, opts){
+  if(aiLoadPromise) return aiLoadPromise;
+  aiLoadPromise = aiLoadModelInner(target, opts || {}).finally(() => { aiLoadPromise = null; });
+  return aiLoadPromise;
+}
+
+async function aiLoadModelInner(target, opts){
+  if(!AIE){ state.aiStatus = "error"; state.aiDiagnostic = aiBuildDiagnostic({ code: "WEBLLM_IMPORT_FAILED", message: "ai-engine.js n'a pas pu être chargé.", stage: "import" }); render(); return; }
+  let tier = aiTierOfTarget(target);
+  state.aiRequestedTier = tier;                     // ce que « Réessayer » relancera (pas le palier de repli)
+  if(state.aiStatus === "ready" && state.aiTier === tier) return;
+  if(state.aiStatus === "nogpu" || state.aiStatus === "checking") return;
+  if(state.aiBusy){ aiCancelGeneration(); }                                  // bascule pendant une génération de chat : on l'annule proprement
+  else if(aiEngineBusy() && state.aiStatus === "ready"){ state.aiNotice = { kind: "busy" }; render(); return; }  // import/génération de cours : on ne coupe pas
+
+  state.aiStatus = "loading"; state.aiLoadingTier = tier; state.aiLoadProgress = 0; state.aiLoadPhase = "prepare";
+  state.aiLoadText = ""; state.aiFetchedMB = null; state.aiError = null; state.aiDiagnostic = null; state.aiNotice = null;
+  state.aiFailedTiers = {}; state.aiFallbackFrom = null; state.aiCancelRequested = false; state.aiLoadStartedAt = Date.now();
+  render();
+  aiLog("Palier demandé", tier);
+
+  const failedNow = [];
+  let workerRetried = false;
+  for(;;){
+    state.aiLoadingTier = tier;
+    const res = await aiInitTier(tier);
+
+    if(res.type === "MODEL_READY"){
+      const env = aiEnv();
+      let mem = AIE.recordSuccess(aiMem(), { tier: res.tier, modelId: res.modelId, envKey: AIE.envKey(env), browser: env.browser, mode: state.aiEngineMode });
+      if(opts.explicit) mem = AIE.withSelection(mem, res.tier);
+      aiMemSave(mem);
+      state.aiTier = res.tier; state.aiModelId = res.modelId; state.aiVramMB = res.vramMB; state.aiInitMs = res.initMs;
+      state.aiFallbackFrom = failedNow.length ? failedNow[0] : null;
+      if(failedNow.length) state.aiNotice = { kind: "fallback", from: failedNow[0], to: res.tier };
+      state.aiLoadingTier = null; state.aiStatus = "ready";
+      aiLog("Modèle prêt (premier jeton vérifié)", res.modelId + " · " + (res.initMs || "?") + " ms");
+      render();
+      return;
+    }
+    if(res.cancelled || state.aiCancelRequested){
+      state.aiStatus = "idle"; state.aiLoadingTier = null; state.aiLoadProgress = 0; state.aiNotice = null; render(); return;
+    }
+    if(res.busy) return;
+
+    console.error("[REV-EM · IA] échec de chargement", { tier, code: res.code, message: res.message, stage: res.stage });
+
+    /* Le worker n'a pas WebGPU alors que la page, elle, l'a : ce n'est pas un
+       échec du modèle. On le relance UNE fois sur le fil principal. */
+    if(!workerRetried && aiTransport && aiTransport.mode === "worker"
+       && (res.code === "WEBGPU_UNAVAILABLE" || res.code === "ADAPTER_FAILED" || res.code === "DEVICE_FAILED")
+       && state.aiGpuDiag && state.aiGpuDiag.ok){
+      workerRetried = true; state.aiWorkerGpu = false; aiForceMain = true; aiDropTransport();
+      state.aiNotice = { kind: "compat" }; render();
+      continue;
+    }
+
+    const env = aiEnv();
+    aiMemSave(AIE.recordFailure(aiMem(), { tier, modelId: res.modelId, code: res.code, envKey: AIE.envKey(env), browser: env.browser }));
+    state.aiFailedTiers[tier] = res.code;
+    const next = (opts.fallback !== false && AIE.isFallbackWorthy(res.code)) ? AIE.nextFallback(tier, failedNow.concat([tier])) : null;
+    if(next){
+      failedNow.push(tier);
+      aiMemSave(AIE.recordFallback(aiMem(), { from: tier, to: next, code: res.code }));
+      state.aiNotice = { kind: "fallback_pending", from: failedNow[0], to: next };
+      state.aiLoadProgress = 0; state.aiLoadPhase = "prepare"; state.aiFetchedMB = null;
+      aiLog("Repli automatique", tier + " → " + next + " (" + res.code + ")");
+      tier = next; render();
+      continue;
+    }
+    state.aiStatus = "error"; state.aiLoadingTier = null;
+    state.aiDiagnostic = aiBuildDiagnostic(res);
+    render();
+    return;
+  }
+}
+
+function aiEngineReady(){ return state.aiStatus === "ready" && !!aiTransport; }
+
+/* Palier choisi à la main dans l'interface. « Expert » demande confirmation
+   (sauf s'il a déjà réellement fonctionné sur cet appareil). */
+async function aiChangeModel(tier){
+  if(!AIE || !AIE.isTier(tier) || state.aiStatus === "loading") return;
+  if(state.aiStatus === "ready" && state.aiTier === tier) return;
+  const mem = aiMem(), env = aiEnv();
+  const provenHere = mem.lastStable && mem.lastStable.tier === tier && mem.lastStable.env === AIE.envKey(env);
+  if(tier === "expert" && !provenHere){
+    const ok = await dsConfirm({ title: t("ai.expert.confirm_title"), body: t("ai.expert.confirm_body"), confirmLabel: t("ai.expert.confirm_yes"), cancelLabel: t("ai.expert.confirm_no") });
+    if(!ok) return;
+  }
+  aiMemSave(AIE.withSelection(aiMem(), tier));
+  aiLoadModel(tier, { explicit: true });
+}
+
+function aiCancelLoad(){
+  state.aiCancelRequested = true;
+  if(aiTransport) aiTransport.send({ type: "ABORT" });
+  // Si le transport n'est pas encore démarré, aiInitTier() voit le drapeau et abandonne.
+}
+
+/* Une perte de périphérique hors chargement : le moteur est INVALIDÉ (l'hôte
+   l'a déchargé), l'interface le dit, et un nouveau chargement repart propre. */
+function aiOnDeviceLost(m){
+  aiLog("Périphérique GPU perdu", m.reason + (m.message ? " — " + m.message : ""));
+  state.aiLastDeviceLost = { reason: m.reason, message: m.message, at: Date.now() };
+  if(state.aiStatus === "loading" || state.aiStatus === "error") return;   // le chargement gère son propre échec
+  const tier = m.tier || state.aiTier;
+  const env = aiEnv();
+  if(tier) aiMemSave(AIE.recordFailure(aiMem(), { tier, modelId: state.aiModelId, code: "DEVICE_LOST", envKey: AIE.envKey(env), browser: env.browser }));
+  if(tier) state.aiFailedTiers = Object.assign({}, state.aiFailedTiers, { [tier]: "DEVICE_LOST" });
+  state.aiStatus = "error";
+  state.aiDiagnostic = aiBuildDiagnostic({ code: "DEVICE_LOST", message: m.message || m.reason, stage: "generate", tier, modelId: state.aiModelId });
+  render();
+}
+
+/* Réinitialise UNIQUEMENT l'IA : moteur, poids et bibliothèques WebLLM en
+   cache, état d'échecs mémorisé. Ne touche ni à la session Supabase, ni aux
+   matières, cours, progression, planning, historique de conversations,
+   préférences — voir AI_AUDIT.md §Cache. Fonctionne même si le worker ne
+   démarre pas (le balayage se fait aussi côté page). */
+async function aiResetCache(){
+  if(state.aiResetBusy) return;
+  state.aiResetBusy = true; state.aiCacheResetMsg = ""; render();
+  try{
+    if(state.aiStatus === "loading"){
+      aiCancelLoad();
+      if(aiLoadPromise){ await Promise.race([aiLoadPromise.catch(() => {}), new Promise(r => setTimeout(r, 8000))]); }
+    }
+    if(aiGen) aiAbortGeneration();
+    let workerReport = null;
+    if(aiTransport){
+      try{ const r = await aiRequest({ type: "RESET_AI_CACHE" }, 10000); workerReport = r && r.report; }
+      catch(e){ aiLog("RESET_AI_CACHE sans réponse", e && e.message); }
+    }
+    aiDropTransport();                                    // le prochain chargement repart d'un moteur neuf
+    /* Deux passes : l'hôte (moteur déchargé PUIS effacement) et la page (au cas où
+       l'hôte n'a jamais démarré). On additionne ce que chacune a réellement supprimé. */
+    const pageReport = await AIE.resetAiStorage({ caches: window.caches, indexedDB: window.indexedDB });
+    const uniq = (a, b) => Array.from(new Set((a || []).concat(b || [])));
+    const report = {
+      cacheNames: uniq(workerReport && workerReport.cacheNames, pageReport.cacheNames),
+      idbNames: uniq(workerReport && workerReport.idbNames, pageReport.idbNames),
+      errors: pageReport.errors.concat(workerReport ? (workerReport.errors || []) : []),
+    };
+    report.ok = report.errors.length === 0;
+    const m = aiMem(); m.lastStable = null; m.failures = {}; m.lastFailure = null; m.lastFallback = null;   // « selected » (le choix de l'utilisateur) est conservé
+    aiMemSave(m);
+    const n = report.cacheNames.length + report.idbNames.length;
+    state.aiCacheResetMsg = report.ok
+      ? (n > 0 ? t("ai.reset.done", { n }) : t("ai.reset.nothing"))
+      : t("ai.reset.partial", { err: report.errors.slice(0, 2).join(" · ") });
+  }catch(e){
+    state.aiCacheResetMsg = t("ai.reset.partial", { err: AIE.normalizeError(e).message });
+  }finally{
+    state.aiResetBusy = false;
+    state.aiStatus = (state.aiGpuDiag && state.aiGpuDiag.ok) ? "idle" : (state.aiStatus === "nogpu" ? "nogpu" : "checking");
+    state.aiTier = null; state.aiModelId = null; state.aiLoadingTier = null; state.aiLoadProgress = 0; state.aiLoadText = "";
+    state.aiError = null; state.aiDiagnostic = null; state.aiFailedTiers = {}; state.aiFallbackFrom = null; state.aiNotice = null;
+    aiAutoRestoreDone = true;                             // pas de rechargement automatique juste après un reset
+    render();
+  }
 }
 
 async function checkAIStatus(){
@@ -14370,65 +14801,67 @@ async function checkAIStatus(){
     render();
     return;
   }
-  state.aiModelId = pickModelForDevice();
   state.aiStatus = "idle";
+  const start = AIE.chooseStartTier(aiEnv(), aiMem());
+  state.aiModelId = null;
   render();
+  /* Un palier qui a DÉJÀ réellement fonctionné sur cet appareil est rechargé
+     tout seul (il est en cache : quelques secondes). Jamais un palier jamais
+     essayé, jamais Expert d'office : un premier téléchargement de plusieurs Go
+     reste un clic de l'utilisateur. */
+  if(start.why === "last_stable" && !aiAutoRestoreDone){
+    aiAutoRestoreDone = true;
+    aiLoadModel(start.tier);
+  }
 }
 
 /* Ré-exécute uniquement le diagnostic WebGPU (rapide, sans charger de modèle) —
    utilisé par le bouton "Tester mon assistant IA". */
 async function aiRunQuickTest(){
-  state.aiTestResult = "Test en cours…";
+  state.aiTestResult = t("ai.diag.testing");
   state.aiDiagPanelOpen = true;
   render();
   const diag = await diagnoseWebGPU();
   state.aiGpuDiag = diag;
   if(diag.ok && state.aiStatus === "nogpu") state.aiStatus = "idle";
-  state.aiTestResult = diag.ok
-    ? "WebGPU répond correctement sur cet appareil — tu peux charger l'assistant IA."
-    : "" + diag.message;
+  state.aiTestResult = diag.ok ? t("ai.diag.webgpu_ok") : "" + diag.message;
   render();
 }
 
-/* Libellé du mode actuel, dans le vocabulaire exact demandé — dérivé de
-   l'état réel (state.aiStatus / state.aiDiagnostic), jamais d'un état à part. */
+/* Libellé du mode actuel — dérivé de l'état réel, jamais d'un état à part. */
 function aiCurrentModeLabel(){
-  if(state.aiStatus === "ready") return "IA locale WebGPU prête";
-  if(state.aiStatus === "loading") return (state.aiLoadProgress > 0) ? "Modèle en cours de téléchargement" : "Modèle en cours de chargement";
-  if(state.aiStatus === "nogpu") return "WebGPU indisponible";
+  if(state.aiStatus === "ready") return t("ai.mode.ready");
+  if(state.aiStatus === "loading") return (state.aiLoadPhase === "download" && state.aiLoadProgress > 0) ? t("ai.mode.downloading") : t("ai.mode.loading");
+  if(state.aiStatus === "nogpu") return t("ai.mode.nogpu");
   if(state.aiStatus === "error"){
-    if(state.aiDiagnostic && state.aiDiagnostic.stage === "worker_start") return "Worker indisponible";
-    return "Erreur de génération";
+    if(state.aiDiagnostic && state.aiDiagnostic.code === "WORKER_FAILED") return t("ai.mode.worker");
+    return t("ai.mode.error");
   }
-  return "Mode simplifié sans IA";
+  return t("ai.mode.simplified");
 }
 
 /* Test complet, de bout en bout et RÉEL (jamais simulé) : refait le
    diagnostic WebGPU, puis — seulement s'il est positif — charge réellement
-   le worker + WebLLM + le modèle configuré (aiLoadModel, la même fonction
-   que le reste du site, pas une copie), puis envoie une vraie requête et
-   affiche le texte exact reçu. Chaque étape ci-dessous est cochée
-   individuellement à partir de faits réels (adapterAvailable/deviceAvailable
-   du diagnostic, stage de l'échec de chargement, réponse effective du
-   modèle) — jamais "ça marche" sans avoir réellement obtenu chaque étape. */
+   le palier configuré (aiLoadModel, la même fonction que le reste du site),
+   puis envoie une vraie requête et affiche le texte exact reçu. Chaque étape
+   est cochée à partir d'un fait réel (diagnostic, code d'erreur de l'hôte,
+   réponse effective du modèle) — jamais « ça marche » sans l'avoir obtenu. */
 async function aiRunFullEngineTest(){
   if(aiEngineBusy() || state.aiFullTestBusy) return;
   state.aiFullTestBusy = true;
   state.aiDiagPanelOpen = true;
   state.aiFullTestResult = "";
-  // 11 étapes distinctes, chacune cochée séparément à partir d'un fait réel —
-  // les deux préférences d'adaptateur sont testées et affichées séparément
-  // (jamais fusionnées en un seul verdict "adaptateur").
+  const tierWanted = (state.aiStatus === "ready" && state.aiTier) ? state.aiTier : AIE.chooseStartTier(aiEnv(), aiMem()).tier;
   const steps = state.aiFullTestSteps = [
     {key:"ctx", label:"Contexte sécurisé (https / localhost)", status:"pending"},
     {key:"gpu", label:"navigator.gpu présent", status:"pending"},
     {key:"adapter_hp", label:"requestAdapter({powerPreference:\"high-performance\"})", status:"pending"},
     {key:"adapter_lp", label:"requestAdapter({powerPreference:\"low-power\"})", status:"pending"},
     {key:"device", label:"adapter.requestDevice() — périphérique créé", status:"pending"},
-    {key:"worker", label:"Worker créé (ai-worker.js)", status:"pending"},
-    {key:"webllm", label:"Module WebLLM chargé", status:"pending"},
-    {key:"model", label:"Modèle demandé : " + (state.aiModelId || pickModelForDevice()), status:"pending"},
-    {key:"download", label:"Téléchargement + initialisation terminés (modèle prêt)", status:"pending"},
+    {key:"worker", label:"Worker créé et opérationnel (ai-worker.js)", status:"pending"},
+    {key:"webllm", label:"Module WebLLM " + AIE.WEBLLM_VERSION + " chargé", status:"pending"},
+    {key:"model", label:"Modèle du palier « " + tierWanted + " » présent dans le model_list", status:"pending"},
+    {key:"download", label:"Téléchargement + initialisation + premier jeton (modèle prêt)", status:"pending"},
     {key:"request", label:"Requête envoyée au modèle", status:"pending"},
     {key:"response", label:"Réponse réelle reçue", status:"pending"},
   ];
@@ -14449,25 +14882,25 @@ async function aiRunFullEngineTest(){
     for(let i=5;i<steps.length;i++) steps[i].status = "skip";
     state.aiStatus = "nogpu";
     const attemptDetail = diag.adapterAttempts.map(a => a.powerPreference + " → " + (a.found ? "trouvé" : (a.error ? "erreur : " + a.error : "aucun adaptateur"))).join(" · ");
-    state.aiFullTestResult = "" + diag.message + " Détail par tentative : " + attemptDetail + ". Impossible d'aller plus loin : sans adaptateur/périphérique GPU réel, le worker WebLLM ne peut pas être testé pour de vrai sur cet appareil.";
+    state.aiFullTestResult = "" + diag.message + " Détail par tentative : " + attemptDetail + ". Impossible d'aller plus loin : sans adaptateur/périphérique GPU réel, le moteur ne peut pas être testé pour de vrai sur cet appareil.";
     state.aiFullTestBusy = false;
     render();
     return;
   }
 
   steps[5].status = "running"; render();
-  const modelId = state.aiModelId || pickModelForDevice();
-  if(state.aiStatus !== "ready" || webllmLoadedModelId !== modelId){
-    await aiLoadModel(modelId);
+  if(state.aiStatus !== "ready" || state.aiTier !== tierWanted){
+    if(state.aiStatus === "checking" || state.aiStatus === "nogpu") state.aiStatus = "idle";
+    await aiLoadModel(tierWanted);
   }
   if(state.aiStatus !== "ready"){
-    const stage = state.aiDiagnostic ? state.aiDiagnostic.stage : null;
-    steps[5].status = stage === "worker_start" ? "fail" : "ok";
-    steps[6].status = steps[5].status !== "ok" ? "skip" : (stage === "module_import" ? "fail" : "ok");
-    steps[7].status = steps[6].status !== "ok" ? "skip" : "ok";
+    const code = state.aiDiagnostic ? state.aiDiagnostic.code : "UNKNOWN";
+    steps[5].status = code === "WORKER_FAILED" ? "fail" : "ok";
+    steps[6].status = steps[5].status !== "ok" ? "skip" : (code === "WEBLLM_IMPORT_FAILED" ? "fail" : "ok");
+    steps[7].status = steps[6].status !== "ok" ? "skip" : (code === "MODEL_NOT_SUPPORTED" ? "fail" : "ok");
     steps[8].status = steps[7].status !== "ok" ? "skip" : "fail";
     steps[9].status = "skip"; steps[10].status = "skip";
-    state.aiFullTestResult = "Le moteur ne s'est pas chargé réellement (étape : " + (state.aiDiagnostic ? state.aiDiagnostic.typeLabel : "inconnue") + "). " + (state.aiDiagnostic ? state.aiDiagnostic.message : "") + " Adaptateur ET périphérique GPU étaient pourtant réels et fonctionnels — cherche la cause côté worker/réseau/mémoire/cache plutôt que côté GPU.";
+    state.aiFullTestResult = "Le moteur ne s'est pas chargé réellement (code : " + code + "). " + (state.aiDiagnostic ? state.aiDiagnostic.detail || "" : "") + " Adaptateur ET périphérique GPU étaient pourtant réels : la cause est côté worker/réseau/mémoire/cache, pas côté détection GPU.";
     state.aiFullTestBusy = false;
     render();
     return;
@@ -14477,12 +14910,12 @@ async function aiRunFullEngineTest(){
 
   steps[9].status = "running"; render();
   try{
-    const res = await webllmChat([{role:"user", content:"Réponds uniquement : IA LOCALE FONCTIONNELLE."}], {});
+    const res = await webllmChat([{role:"user", content:"Réponds uniquement : IA LOCALE FONCTIONNELLE."}], { task: "detect" });
     steps[9].status = "ok";
     const text = (res && res.text || "").trim();
     if(text){
       steps[10].status = "ok";
-      state.aiFullTestResult = "Test réel réussi — le modèle « " + aiModelMeta(modelId).label + " » a répondu : « " + clip(text, 200) + " »";
+      state.aiFullTestResult = "Test réel réussi — le palier « " + t("ai.tier." + state.aiTier + ".name") + " » (" + state.aiModelId + ") a répondu : « " + clip(text, 200) + " »" + (state.aiPerf ? " — premier jeton en " + Math.round(state.aiPerf.ttftMs || 0) + " ms." : "");
     } else {
       steps[10].status = "fail";
       state.aiFullTestResult = "Requête envoyée, mais réponse vide reçue : le moteur tourne, mais la génération elle-même échoue.";
@@ -14509,15 +14942,7 @@ async function aiRetryDetection(){
   render();
 }
 
-function aiEnvSummary(){
-  const ua = navigator.userAgent || "";
-  if(/Edg\//.test(ua)) return "Microsoft Edge";
-  if(/OPR\//.test(ua)) return "Opera";
-  if(/Chrome\//.test(ua) && !/Edg\//.test(ua)) return "Google Chrome";
-  if(/Firefox\//.test(ua)) return "Mozilla Firefox";
-  if(/Safari\//.test(ua) && !/Chrome\//.test(ua)) return "Safari";
-  return "Navigateur non identifié";
-}
+function aiEnvSummary(){ return AIE.browserLabel(aiEnv().browser); }
 
 /* Liste à cocher du test complet — chaque ligne reflète un fait réel
    (jamais un état inventé) : pending = pas encore atteinte, running = en
@@ -14530,37 +14955,75 @@ function aiFullTestStepsHtml(){
   </div>`;
 }
 
-/* Petit panneau de diagnostic ("État de mon assistant IA"), replié par défaut,
-   affiché quel que soit l'état de l'IA. */
+
+/* ── Diagnostic « État de mon assistant IA » ───────────────────────────── */
+function aiDiagSnapshot(){
+  const d = state.aiGpuDiag || {};
+  const mem = aiMem();
+  return {
+    userAgent: navigator.userAgent, browserLabel: aiEnvSummary(),
+    webgpu: { api: d.gpuApiAvailable, adapter: d.adapterAvailable, device: d.deviceAvailable, shaderF16: d.shaderF16, subgroups: d.subgroups, limits: d.limits, info: d.adapterInfo },
+    workerWebgpu: state.aiWorkerGpu, mode: aiTransport ? aiTransport.mode : (state.aiEngineMode || "—"),
+    webllmVersion: AIE.WEBLLM_VERSION, webllmLoaded: aiTransport ? true : undefined,
+    tier: state.aiTier || state.aiLoadingTier, modelId: state.aiModelId,
+    machineState: state.aiHostState, uiStatus: state.aiStatus,
+    error: state.aiDiagnostic ? { code: state.aiDiagnostic.code, message: state.aiDiagnostic.detail || state.aiDiagnostic.message } : null,
+    deviceLost: state.aiLastDeviceLost, lastFallback: mem.lastFallback, lastStable: mem.lastStable, perf: state.aiPerf,
+    at: new Date().toISOString(),
+  };
+}
+async function aiCopyDiagnostic(){
+  const text = AIE.buildDiagnosticReport(aiDiagSnapshot());
+  let ok = false;
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); ok = true; } }catch(e){}
+  if(!ok){
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy"); ta.remove();
+    }catch(e){}
+  }
+  state.aiDiagCopied = ok ? t("ai.diag.copied") : t("ai.diag.copy_failed");
+  render();
+}
+
 function aiDiagnosticPanelHtml(){
   const diag = state.aiGpuDiag;
-  const gpuLine = diag ? (diag.ok ? "disponible" : "indisponible") : "non vérifié pour l'instant";
-  const adapterLine = !diag ? "non testé" : (diag.adapterAvailable ? "détectée" : (diag.gpuApiAvailable ? "non détectée" : "non testable (WebGPU absent)"));
-  const workerLine = (state.aiStatus === "error" && state.aiDiagnostic && state.aiDiagnostic.stage === "worker_start")
-    ? "erreur au démarrage"
-    : (state.aiStatus === "ready" || state.aiStatus === "loading" ? "fonctionnel" : "non testé");
-  const modelLine = state.aiStatus === "ready" ? "prêt (" + aiModelMeta(state.aiModelId).label + ")"
-    : (state.aiStatus === "loading" ? "en cours de chargement" : "non chargé");
+  const yn = (v) => v === true ? t("ai.diag.yes") : (v === false ? t("ai.diag.no") : t("ai.diag.untested"));
+  const workerLine = (state.aiWorkerError && (!aiTransport || aiTransport.mode !== "worker")) ? t("ai.diag.worker_failed")
+    : (state.aiWorkerGpu === true ? t("ai.diag.worker_ok")
+    : (state.aiWorkerGpu === false ? t("ai.diag.worker_nogpu") : (aiTransport ? t("ai.diag.worker_ok") : t("ai.diag.untested"))));
+  const modelLine = state.aiStatus === "ready" ? t("ai.diag.model_ready", { name: t("ai.tier." + state.aiTier + ".name"), id: state.aiModelId })
+    : (state.aiStatus === "loading" ? t("ai.diag.model_loading") : t("ai.diag.model_none"));
+  const mem = aiMem();
+  const fb = mem.lastFallback ? (mem.lastFallback.from + " → " + mem.lastFallback.to) : t("ai.diag.none");
+  const modeLine = aiTransport ? (aiTransport.mode === "worker" ? t("ai.diag.mode_worker") : t("ai.diag.mode_main")) : t("ai.diag.untested");
   return `<details class="ai-extra" id="ai-diag-panel" style="margin-top:12px;" ${state.aiDiagPanelOpen ? "open" : ""}>
-    <summary>État de mon assistant IA</summary>
+    <summary>${escapeHtml(t("ai.diag.title"))}</summary>
     <div style="font-size:var(--text-metadata); line-height:1.9; margin-top:8px; color:var(--ink-soft);">
-      <div><b>Navigateur détecté :</b> ${escapeHtml(aiEnvSummary())}</div>
-      <div><b>WebGPU :</b> ${escapeHtml(gpuLine)}</div>
-      <div><b>Carte graphique :</b> ${escapeHtml(adapterLine)}</div>
-      <div><b>Moteur local (worker) :</b> ${escapeHtml(workerLine)}</div>
-      <div><b>Modèle :</b> ${escapeHtml(modelLine)}</div>
-      <div><b>Mode actuel :</b> ${escapeHtml(aiCurrentModeLabel())}</div>
+      <div><b>${escapeHtml(t("ai.diag.browser"))} :</b> ${escapeHtml(aiEnvSummary())}</div>
+      <div><b>WebGPU :</b> ${escapeHtml(diag ? yn(!!diag.gpuApiAvailable) : t("ai.diag.untested"))}</div>
+      <div><b>${escapeHtml(t("ai.diag.adapter"))} :</b> ${escapeHtml(diag ? yn(!!diag.adapterAvailable) : t("ai.diag.untested"))}</div>
+      <div><b>${escapeHtml(t("ai.diag.device"))} :</b> ${escapeHtml(diag ? yn(!!diag.deviceAvailable) : t("ai.diag.untested"))}</div>
+      <div><b>${escapeHtml(t("ai.diag.worker"))} :</b> ${escapeHtml(workerLine)}</div>
+      <div><b>${escapeHtml(t("ai.diag.webllm"))} :</b> ${escapeHtml(AIE.WEBLLM_VERSION)}</div>
+      <div><b>${escapeHtml(t("ai.diag.model"))} :</b> ${escapeHtml(modelLine)}</div>
+      <div><b>${escapeHtml(t("ai.diag.mode"))} :</b> ${escapeHtml(aiCurrentModeLabel())}</div>
+      <div><b>${escapeHtml(t("ai.diag.engine_mode"))} :</b> ${escapeHtml(modeLine)}</div>
+      <div><b>${escapeHtml(t("ai.diag.last_fallback"))} :</b> ${escapeHtml(fb)}</div>
     </div>
     <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
-      <button class="btn-text" id="ai-test-btn">Tester WebGPU (rapide)</button>
-      <button class="btn-text" id="ai-retry-check-btn">Réessayer le chargement</button>
-      <button class="btn-text" id="ai-full-test-btn" ${(aiEngineBusy() || state.aiFullTestBusy) ? "disabled" : ""}>${state.aiFullTestBusy ? "Test en cours…" : "Test complet (réel, charge le modèle)"}</button>
+      <button class="btn-text" id="ai-test-btn">${escapeHtml(t("ai.diag.btn_quick"))}</button>
+      <button class="btn-text" id="ai-retry-check-btn">${escapeHtml(t("ai.diag.btn_retry"))}</button>
+      <button class="btn-text" id="ai-full-test-btn" ${(aiEngineBusy() || state.aiFullTestBusy) ? "disabled" : ""}>${escapeHtml(state.aiFullTestBusy ? t("ai.diag.btn_full_busy") : t("ai.diag.btn_full"))}</button>
+      <button class="btn-text" id="ai-copy-diag-btn">${escapeHtml(t("ai.diag.btn_copy"))}</button>
     </div>
+    ${state.aiDiagCopied ? `<div class="s" role="status" style="margin-top:8px;">${escapeHtml(state.aiDiagCopied)}</div>` : ""}
     ${state.aiTestResult ? `<div class="s" style="margin-top:8px;">${escapeHtml(state.aiTestResult)}</div>` : ""}
     ${(state.aiFullTestSteps && state.aiFullTestSteps.length) ? aiFullTestStepsHtml() : ""}
     ${state.aiFullTestResult ? `<div class="s" style="margin-top:8px;">${escapeHtml(state.aiFullTestResult)}</div>` : ""}
     ${diag ? `<details class="ai-extra" style="margin-top:12px;">
-      <summary>Détails techniques</summary>
+      <summary>${escapeHtml(t("ai.diag.tech"))}</summary>
       <div style="font-size:var(--text-label); line-height:1.8; margin-top:8px; color:var(--muted); font-family:monospace;">
         <div>code : ${escapeHtml(diag.errorCode || diag.code || "")}</div>
         <div>protocol : ${escapeHtml(diag.protocol || "")} · isSecureContext : ${diag.isSecureContext ? "true" : "false"}</div>
@@ -14568,8 +15031,12 @@ function aiDiagnosticPanelHtml(){
         ${(diag.adapterAttempts||[]).map(a=>`<div>requestAdapter(${escapeHtml(a.powerPreference)}) : ${a.found ? "adaptateur trouvé" : (a.error ? "erreur — " + escapeHtml(a.error) : "aucun adaptateur (null)")}</div>`).join("")}
         <div>adapterAvailable : ${diag.adapterAvailable ? "true" : "false"} (préférence retenue : ${escapeHtml(diag.chosenPreference || "—")})</div>
         <div>deviceAvailable : ${diag.deviceAvailable ? "true" : "false"}</div>
+        <div>shader-f16 : ${diag.shaderF16 ? "true" : "false"} · subgroups : ${diag.subgroups ? "true" : "false"}</div>
+        ${diag.limits ? `<div>limits : ${escapeHtml(JSON.stringify(diag.limits))}</div>` : ""}
         <div>adapter.requestAdapterInfo/.info exposé par ce navigateur : ${diag.adapterInfoSupported === null ? "non testé" : (diag.adapterInfoSupported ? "oui" : "non")}</div>
         ${diag.adapterInfo && Object.keys(diag.adapterInfo).length ? `<div>adapterInfo : ${escapeHtml(JSON.stringify(diag.adapterInfo))}</div>` : ""}
+        ${state.aiPerf ? `<div>dernière génération : premier jeton ${Math.round(state.aiPerf.ttftMs || 0)} ms · total ${Math.round(state.aiPerf.totalMs || 0)} ms</div>` : ""}
+        ${state.aiWorkerError ? `<div>worker : ${escapeHtml(AIE.redact(state.aiWorkerError))}</div>` : ""}
         ${diag.reason ? `<div style="margin-top:4px;">raison : ${escapeHtml(diag.reason)}</div>` : ""}
         ${diag.recommendedAction ? `<div style="margin-top:4px;">action recommandée : ${escapeHtml(diag.recommendedAction)}</div>` : ""}
       </div>
@@ -14600,262 +15067,55 @@ function aiChromeGpuContradictionHtml(diag){
   </details>`;
 }
 
-function buildAiDiagnostic(stage, raw){
-  const base = { stage, raw: raw || null };
-  if(stage === "worker_start"){
-    return Object.assign(base, {
-      stageLabel: "Avant le téléchargement du modèle",
-      typeLabel: "Le fichier ai-worker.js n'a pas pu être chargé",
-      message: (raw && (raw.message || raw.filename)) ?
-        `Détail du navigateur : ${raw.message || ""} ${raw.filename ? "(" + raw.filename + ")" : ""}`.trim() :
-        "Le navigateur n'a pas réussi à démarrer le fichier ai-worker.js (aucun détail supplémentaire fourni).",
-      cause: "Le fichier « ai-worker.js » est introuvable à l'adresse attendue (erreur 404) ou son nom/chemin ne correspond pas exactement à celui utilisé dans le code.",
-      solution: "Vérifie que le fichier ai-worker.js est bien présent dans ton dépôt GitHub, au même niveau que index.html, avec exactement ce nom (les majuscules/minuscules comptent sur GitHub Pages).",
-    });
-  }
-  if(stage === "module_import"){
-    return Object.assign(base, {
-      stageLabel: "Avant le téléchargement du modèle",
-      typeLabel: "Le moteur WebLLM n'a pas pu être téléchargé",
-      message: raw && raw.message ? raw.message : "Échec du chargement du script depuis le réseau.",
-      cause: "Le fichier JavaScript du moteur (hébergé sur un CDN externe) n'a pas pu être récupéré : connexion internet coupée/instable, ou bloqué par un bloqueur de publicité/pare-feu.",
-      solution: "Vérifie ta connexion internet, désactive temporairement un éventuel bloqueur de publicité pour ce site, puis clique sur Réessayer.",
-    });
-  }
-  if(stage === "stalled"){
-    return Object.assign(base, {
-      stageLabel: "Pendant le téléchargement du modèle",
-      typeLabel: "Le téléchargement semble bloqué",
-      message: "Aucune progression détectée depuis plusieurs secondes.",
-      cause: "Connexion très lente ou instable, ou requête interrompue silencieusement par une extension du navigateur.",
-      solution: "Réessaie avec une connexion plus stable (Wi-Fi plutôt que 4G si possible), ou essaie le modèle léger (téléchargement plus rapide).",
-    });
-  }
-  if(stage === "engine_init"){
-    return Object.assign(base, {
-      stageLabel: "Pendant l'initialisation du moteur (adaptateur et périphérique GPU étaient pourtant réels)",
-      typeLabel: "Le modèle n'a pas pu être initialisé",
-      message: raw && raw.message ? raw.message : "Erreur inconnue pendant l'initialisation.",
-      cause: "Le téléchargement a pu aboutir, mais l'initialisation a échoué après coup. Causes possibles à vérifier une par une : mémoire GPU insuffisante pour ce modèle précis (essaie le modèle léger) ; version de @mlc-ai/web-llm incompatible avec l'identifiant de modèle demandé (le CDN sert la dernière version, qui peut avoir retiré/renommé ce modèle) ; cache navigateur corrompu par un téléchargement précédent interrompu (utilise « Réinitialiser le cache IA » ci-dessous) ; message postMessage malformé entre la page et ai-worker.js (visible dans la console via les logs « [REV-EM · IA] »).",
-      solution: "1) Réinitialise le cache IA, 2) réessaie avec le modèle léger, 3) si ça persiste, regarde la console (F12) pour le message exact juste avant cette erreur.",
-    });
-  }
-  return Object.assign(base, {
-    stageLabel: "Étape indéterminée",
-    typeLabel: "Erreur inattendue",
-    message: raw && raw.message ? raw.message : String(raw || "Erreur inconnue."),
-    cause: "Cause non identifiée précisément.",
-    solution: "Réessaie ; si le problème persiste, réinitialise le cache IA ci-dessous.",
-  });
-}
 
-function clearAiWatchdog(){
-  if(webllmWatchdog){ clearTimeout(webllmWatchdog); webllmWatchdog = null; }
-}
-
-function aiTeardownEngine(){
-  clearAiWatchdog();
-  if(webllmWorker){ try{ webllmWorker.terminate(); }catch(e){} }
-  webllmWorker = null;
-  webllmEngine = null;
-  webllmLoadedModelId = null;
-}
-
-/* Logs de diagnostic courts et lisibles pour suivre précisément où en est
-   le chargement du moteur IA (utile en console pendant un débogage — ne
-   change rien à l'interface). */
-function aiLog(step, detail){
-  console.log("[REV-EM · IA]", step, detail !== undefined ? detail : "");
-}
-
-async function aiLoadModel(modelId){
-  if(state.aiStatus === "loading") return;
-  if(state.aiStatus === "ready" && webllmLoadedModelId === modelId) return;
-
-  const myLoadToken = ++webllmLoadToken;
-  state.aiStatus = "loading";
-  state.aiLoadProgress = 0;
-  state.aiLoadText = "Préparation du moteur…";
-  state.aiError = null;
-  state.aiDiagnostic = null;
-  state.aiLoadStartedAt = Date.now();
-  render();
-  aiLog("Modèle demandé", modelId);
-
-  const failLoad = (stage, raw) => {
-    if(myLoadToken !== webllmLoadToken) return;
-    console.error(`Échec du chargement IA (étape: ${stage}) :`, raw);
-    aiLog("Erreur détectée", stage);
-    clearAiWatchdog();
-    state.aiStatus = "error";
-    state.aiDiagnostic = buildAiDiagnostic(stage, raw);
-    render();
+/* Diagnostic d'un échec de chargement : le CODE interne (jamais montré tel
+   quel), l'explication simple (traduite), et le détail technique réel — celui
+   que l'ancien code perdait (« Erreur inconnue pendant l'initialisation »). */
+function aiBuildDiagnostic(res){
+  const code = (res && res.code) || "UNKNOWN";
+  const detail = AIE.redact((res && res.message) || "");
+  return {
+    code, stage: (res && res.stage) || "init", tier: res && res.tier, modelId: res && res.modelId,
+    typeLabel: t("ai.err_title"),
+    message: t("ai.err." + code),
+    detail: detail || t("ai.diag.no_detail"),
+    probe: res && res.probe || null,
   };
-
-  try{
-    let webllm;
-    try{
-      webllm = await loadWebLLMModule();
-      aiLog("Module WebLLM chargé");
-    }catch(e){
-      failLoad("module_import", e);
-      return;
-    }
-    if(myLoadToken !== webllmLoadToken) return;
-
-    aiTeardownEngine();
-    try{
-      webllmWorker = new Worker("ai-worker.js", { type: "module" });
-      aiLog("Worker créé");
-    }catch(e){
-      failLoad("worker_start", e);
-      return;
-    }
-    let workerErrored = false;
-    webllmWorker.onerror = (err) => {
-      workerErrored = true;
-      failLoad("worker_start", err);
-    };
-    webllmWorker.onmessageerror = (err) => {
-      workerErrored = true;
-      failLoad("worker_start", { message: "Message illisible reçu depuis ai-worker.js (onmessageerror)." });
-    };
-
-    const armWatchdog = () => {
-      clearAiWatchdog();
-      webllmWatchdog = setTimeout(() => {
-        if(myLoadToken !== webllmLoadToken) return;
-        failLoad("stalled", null);
-      }, 25000);
-    };
-    armWatchdog();
-
-    aiLog("Initialisation demandée — début du téléchargement");
-    webllmEngine = await webllm.CreateWebWorkerMLCEngine(webllmWorker, modelId, {
-      initProgressCallback: (report) => {
-        if(myLoadToken !== webllmLoadToken) return;
-        armWatchdog();
-        state.aiLoadProgress = Math.round((report.progress || 0) * 100);
-        state.aiLoadText = report.text || "";
-        if(state.tab === "ai") render();
-      },
-    });
-
-    clearAiWatchdog();
-    if(myLoadToken !== webllmLoadToken || workerErrored) return;
-
-    aiLog("Téléchargement terminé — modèle prêt");
-    webllmLoadedModelId = modelId;
-    state.aiModelId = modelId;
-    state.aiStatus = "ready";
-    const key = modelId === AI_MODELS.small.id ? "small" : "large";
-    lsSet(KEY_AIMODEL, key);
-    state.aiModelChoice = key;
-    render();
-  }catch(e){
-    if(!workerErroredSafe()) failLoad("engine_init", e);
-  }
-
-  function workerErroredSafe(){
-    return state.aiStatus === "error" && state.aiDiagnostic && state.aiDiagnostic.stage === "worker_start";
-  }
 }
 
-function aiCancelLoad(){
-  webllmLoadToken++;
-  aiTeardownEngine();
-  state.aiStatus = "idle";
-  state.aiLoadProgress = 0;
-  state.aiLoadText = "";
-  state.aiError = null;
-  state.aiDiagnostic = null;
-  render();
-}
-
-async function aiResetCache(){
-  if(state.aiStatus === "loading") aiCancelLoad();
-  aiTeardownEngine();
-  webllmLoadToken++;
-  let cleared = 0;
-  try{
-    if(window.caches && caches.keys){
-      const names = await caches.keys();
-      const targets = names.filter(n => /webllm|mlc/i.test(n));
-      await Promise.all(targets.map(n => caches.delete(n)));
-      cleared += targets.length;
-    }
-  }catch(e){ console.error("Erreur en vidant le Cache Storage IA :", e); }
-  try{
-    if(window.indexedDB && indexedDB.databases){
-      const dbs = await indexedDB.databases();
-      const targets = dbs.filter(d => d && d.name && /webllm|mlc/i.test(d.name));
-      await Promise.all(targets.map(d => new Promise((res)=>{
-        const req = indexedDB.deleteDatabase(d.name);
-        req.onsuccess = req.onerror = req.onblocked = () => res();
-      })));
-      cleared += targets.length;
-    }
-  }catch(e){ console.error("Erreur en vidant l'IndexedDB IA :", e); }
-  state.aiStatus = "idle";
-  state.aiLoadProgress = 0;
-  state.aiLoadText = "";
-  state.aiError = null;
-  state.aiDiagnostic = null;
-  state.aiCacheResetMsg = cleared > 0
-    ? "Cache IA réinitialisé (" + cleared + " élément(s) supprimé(s)). Le prochain chargement retéléchargera le modèle."
-    : "Aucun cache IA trouvé à supprimer (rien n'avait encore été téléchargé, ou déjà vide).";
-  render();
-}
-
-function aiChangeModel(key){
-  if(!AI_MODELS[key]) return;
-  const modelId = AI_MODELS[key].id;
-  if(state.aiStatus === "loading") return;
-  if(state.aiStatus === "ready" && webllmLoadedModelId === modelId) return;
-  state.aiModelId = modelId;
-  aiLoadModel(modelId);
-}
-
-async function webllmChat(turns, { onText, signal } = {}){
-  if(!webllmEngine) throw new Error("Le modèle n'est pas chargé.");
-  aiLog("Génération commencée");
-  const myToken = ++webllmGenerationToken;
-  const messages = turns.map(t => ({ role: t.role, content: t.content }));
-  let full = "";
-  const stream = await webllmEngine.chat.completions.create({
-    messages,
-    stream: true,
-    temperature: 0.6,
+/* Génération : envoie l'historique COMPACT à l'hôte et relaie le flux. Un seul
+   appel à la fois (l'hôte refuse le second de toute façon). */
+function aiHostGenerate(turns, { task, temperature, onText, signal } = {}){
+  return new Promise((resolve, reject) => {
+    if(!aiEngineReady()){ reject(new Error("Le modèle n'est pas chargé.")); return; }
+    if(aiGen){ reject(new Error("Une génération est déjà en cours.")); return; }
+    const maxTokens = AIE.maxTokensFor(task || "chat");
+    const compact = AIE.compactHistory(turns.map(t0 => ({ role: t0.role, content: t0.content })), { maxNewTokens: maxTokens });
+    if(compact.dropped) aiLog("Historique compacté", compact.dropped + " échange(s) omis");
+    const id = "gen-" + (++aiReqSeq);
+    const g = aiGen = { id, text: "", resolve, reject, onText };
+    if(signal) g.poll = setInterval(() => { if(signal.cancelled) aiAbortGeneration(); }, 150);
+    aiLog("Génération commencée", "≈" + compact.tokens + " jetons de prompt");
+    aiTransport.send({ type: "GENERATE", id, messages: compact.turns, temperature: typeof temperature === "number" ? temperature : 0.6, maxTokens });
   });
-  for await (const chunk of stream){
-    if(signal && signal.cancelled) {
-      try{ await webllmEngine.interruptGenerate(); }catch(e){}
-      break;
-    }
-    if(myToken !== webllmGenerationToken) break;
-    const delta = chunk.choices && chunk.choices[0] ? (chunk.choices[0].delta.content || "") : "";
-    if(delta){
-      full += delta;
-      if(onText) onText({ text: full });
-    }
-  }
-  aiLog("Réponse reçue", full.length + " caractères");
-  return { text: full };
+}
+function aiAbortGeneration(){
+  if(aiTransport && aiGen) aiTransport.send({ type: "ABORT", id: aiGen.id });
+}
+
+async function webllmChat(turns, { onText, signal, task, temperature } = {}){
+  if(!aiEngineReady()) throw new Error("Le modèle n'est pas chargé.");
+  const res = await aiHostGenerate(turns, { task: task || "chat", temperature: temperature, onText, signal });
+  aiLog("Réponse reçue", res.text.length + " caractères");
+  return { text: res.text };
 }
 
 async function webllmJsonChat(turns, { signal } = {}){
-  if(!webllmEngine) throw new Error("Le modèle n'est pas chargé.");
-  const myToken = ++webllmGenerationToken;
-  const messages = turns.map(t => ({ role: t.role, content: t.content }));
-  const res = await webllmEngine.chat.completions.create({
-    messages,
-    stream: false,
-    temperature: 0.4,
-  });
+  if(!aiEngineReady()) throw new Error("Le modèle n'est pas chargé.");
+  const res = await aiHostGenerate(turns, { task: "json", temperature: 0.4, signal });
   if(signal && signal.cancelled) return null;
-  if(myToken !== webllmGenerationToken) return null;
-  const text = (res.choices && res.choices[0] && res.choices[0].message) ? res.choices[0].message.content : "";
-  const match = text.match(/\[[\s\S]*\]/);
+  if(res.aborted) return null;
+  const match = res.text.match(/\[[\s\S]*\]/);
   if(!match) throw new Error("format inattendu");
   return JSON.parse(match[0]);
 }
@@ -14876,7 +15136,24 @@ Object.assign(state, {
   aiBusy: false,
   aiStatus: "checking",
   aiModelId: null,
-  aiModelChoice: "auto",
+  aiModelChoice: "auto",        // ANCIEN réglage synchronisé (auto|small|large) — plus utilisé pour choisir le modèle
+  aiTier: null,                 // palier RÉELLEMENT chargé (rapide|avance|expert)
+  aiLoadingTier: null,
+  aiRequestedTier: null,
+  aiLoadPhase: "prepare",       // prepare | download | cache | compile | init
+  aiFetchedMB: null,
+  aiFailedTiers: {},            // palier → code d'erreur, pour l'état « Échec »
+  aiFallbackFrom: null,
+  aiNotice: null,
+  aiCancelRequested: false,
+  aiResetBusy: false,
+  aiEngineMode: null,           // worker | main-thread
+  aiHostState: "IDLE",          // état de la machine de l'hôte (IDLE/LOADING/READY/…)
+  aiWorkerGpu: undefined,       // WebGPU vu DEPUIS le worker (true/false), undefined = pas encore sondé
+  aiWorkerError: "",
+  aiLastDeviceLost: null,
+  aiPerf: null,                 // dernière génération : premier jeton / total (diagnostic seulement)
+  aiDiagCopied: "",
   aiLoadProgress: 0,
   aiLoadText: "",
   aiDiagnostic: null,
@@ -15322,7 +15599,12 @@ let aiCurrentSignal = null;
 async function aiSend(){
   if(state.aiBusy) return;
   if(aiEngineBusy()) return; // une génération est déjà en cours ailleurs (ex. fiche de cours) : un seul modèle à la fois
-  if(state.aiStatus !== "ready" || !webllmEngine){
+  /* Périphérique GPU perdu pendant la session : le moteur a été invalidé. Une
+     seule tentative de relance propre avant d'annoncer que le modèle n'est pas prêt. */
+  if(state.aiStatus === "error" && state.aiDiagnostic && state.aiDiagnostic.code === "DEVICE_LOST" && !aiLoadPromise){
+    await aiLoadModel();
+  }
+  if(state.aiStatus !== "ready" || !aiEngineReady()){
     state.aiError = aiErrorMessage({message:"not_ready"});
     render();
     return;
@@ -15402,9 +15684,7 @@ async function aiSend(){
 
 function aiCancelGeneration(){
   if(aiCurrentSignal) aiCurrentSignal.cancelled = true;
-  if(webllmEngine){
-    try{ webllmEngine.interruptGenerate(); }catch(e){}
-  }
+  try{ aiAbortGeneration(); }catch(e){}
 }
 
 function aiClearThread(){
@@ -15632,12 +15912,19 @@ function aiProgressDetails(){
 
 function aiDiagnosticHtml(d){
   if(!d) return "";
-  return `<div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--amber-strong); font-size:var(--text-metadata); line-height:1.6;">
-    <div><b>Étape :</b> ${escapeHtml(d.stageLabel)}</div>
-    <div><b>Type d'erreur :</b> ${escapeHtml(d.typeLabel)}</div>
-    <div><b>Détail :</b> ${escapeHtml(d.message)}</div>
-    <div style="margin-top:8px;"><b>Cause probable :</b> ${escapeHtml(d.cause)}</div>
-    <div><b>Solution :</b> ${escapeHtml(d.solution)}</div>
+  const steps = d.code === "MODEL_CACHE_CORRUPTED" ? `<div class="s" style="margin-top:8px;">${escapeHtml(t("ai.err_cache_hint"))}</div>` : "";
+  return `<div class="ai-errbox" role="alert">
+    <div class="ai-errbox-msg">${escapeHtml(d.message)}</div>
+    ${steps}
+    <details class="ai-extra" style="margin-top:8px;">
+      <summary>${escapeHtml(t("ai.diag.tech"))}</summary>
+      <div style="font-size:var(--text-label); line-height:1.7; margin-top:8px; color:var(--muted); font-family:monospace; word-break:break-word;">
+        <div>code : ${escapeHtml(d.code)}</div>
+        <div>${escapeHtml(t("ai.diag.model"))} : ${escapeHtml(d.modelId || d.tier || "—")}</div>
+        <div>${escapeHtml(t("ai.diag.engine_mode"))} : ${escapeHtml(state.aiEngineMode || "—")}</div>
+        <div>${escapeHtml(t("ai.diag.detail"))} : ${escapeHtml(d.detail)}</div>
+      </div>
+    </details>
   </div>`;
 }
 
@@ -15677,16 +15964,15 @@ function aiStatusHtml(){
   }
 
   if(state.aiStatus === "idle"){
-    const meta = aiModelMeta(state.aiModelId);
-    return `<div class="ai-status ok"><span class="dot"></span><div><b>Assistant IA disponible sur cet appareil</b>
-      <div class="s">Il tourne <b>entièrement dans ton navigateur</b>, sans serveur ni clé API : rien de ce que tu écris ne quitte ton ordinateur.<br>
-      Premier lancement : téléchargement unique du modèle (${meta.size}), puis mis en cache par ton navigateur — les fois suivantes seront quasi instantanées.</div>
+    return `<div class="ai-status ok"><span class="dot"></span><div style="flex:1; min-width:0;"><b>${escapeHtml(t("ai.idle.title"))}</b>
+      <div class="s">${escapeHtml(t("ai.idle.desc"))}</div>
+      ${aiNoticeHtml()}
       ${aiModelPickerHtml()}
       <div style="margin-top:12px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
-        <button class="btn red small" id="ai-load-btn">Charger l'assistant IA</button>
-        <button class="btn-text" id="ai-reset-cache">Réinitialiser le cache IA</button>
+        <button class="btn red small" id="ai-load-btn">${escapeHtml(t("ai.idle.load"))}</button>
+        <button class="btn-text" id="ai-reset-cache" ${state.aiResetBusy ? "disabled" : ""}>${escapeHtml(state.aiResetBusy ? t("ai.reset.busy") : t("ai.reset.btn"))}</button>
       </div>
-      ${state.aiCacheResetMsg ? `<div class="s" style="margin-top:8px;">${escapeHtml(state.aiCacheResetMsg)}</div>` : ""}
+      ${state.aiCacheResetMsg ? `<div class="s" role="status" style="margin-top:8px;">${escapeHtml(state.aiCacheResetMsg)}</div>` : ""}
       </div></div>`;
   }
 
@@ -15694,43 +15980,82 @@ function aiStatusHtml(){
     const pct = Math.max(0, Math.min(100, state.aiLoadProgress || 0));
     const det = aiProgressDetails();
     const detailBits = [];
-    if(det.fetchedMB !== null) detailBits.push(`${Math.round(det.fetchedMB)} Mo téléchargés` + (det.estTotalMB ? ` sur ~${det.estTotalMB} Mo estimés` : ""));
+    if(det.fetchedMB !== null) detailBits.push(t("ai.load.fetched", { mb: Math.round(det.fetchedMB) }) + (det.estTotalMB ? " " + t("ai.load.of_est", { mb: det.estTotalMB }) : ""));
     if(det.etaLabel) detailBits.push(det.etaLabel);
-    return `<div class="ai-status checking"><span class="ai-spinner"></span><div style="flex:1;"><b>Chargement du modèle IA… ${pct}%</b>
-      <div class="ai-loadbar"><div class="ai-loadbar-fill" style="width:${pct}%;"></div></div>
-      <div class="s">${escapeHtml(state.aiLoadText || "Téléchargement en cours…")}${detailBits.length ? "<br>" + escapeHtml(detailBits.join(" · ")) : ""}<br>Ne ferme pas cet onglet. Ce téléchargement ne se fera qu'une seule fois : il sera ensuite conservé en cache par ton navigateur.</div>
-      <button class="btn outline small" id="ai-cancel-load" style="margin-top:12px;">Annuler le chargement</button>
+    const tierName = state.aiLoadingTier ? t("ai.tier." + state.aiLoadingTier + ".name") : "";
+    return `<div class="ai-status checking"><span class="ai-spinner"></span><div style="flex:1; min-width:0;"><b>${escapeHtml(t("ai.load.title", { tier: tierName }))} <span id="ai-load-pct">${pct}%</span></b>
+      ${aiNoticeHtml()}
+      <div class="ai-loadbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${escapeHtml(t("ai.load.aria"))}"><div class="ai-loadbar-fill" id="ai-loadbar-fill" style="width:${pct}%;"></div></div>
+      <div class="s" aria-live="polite"><span id="ai-load-text">${escapeHtml(aiLoadLabel())}</span>${detailBits.length ? "<br>" + escapeHtml(detailBits.join(" · ")) : ""}<br>${escapeHtml(t("ai.load.once"))}</div>
+      <button class="btn outline small" id="ai-cancel-load" style="margin-top:12px;">${escapeHtml(t("ai.load.cancel"))}</button>
       </div></div>`;
   }
 
   if(state.aiStatus === "error"){
-    return `<div class="ai-status ko"><span class="dot"></span><div><b>Le chargement de l'IA a échoué</b>
-      ${state.aiDiagnostic ? aiDiagnosticHtml(state.aiDiagnostic) : `<div class="s">${escapeHtml(state.aiError || "Erreur inconnue.")}</div>`}
+    return `<div class="ai-status ko"><span class="dot"></span><div style="flex:1; min-width:0;"><b>${escapeHtml(t("ai.err_title"))}</b>
+      ${state.aiDiagnostic ? aiDiagnosticHtml(state.aiDiagnostic) : `<div class="s">${escapeHtml(state.aiError || t("ai.err.UNKNOWN"))}</div>`}
+      ${aiNoticeHtml()}
       ${aiModelPickerHtml()}
       <div style="margin-top:12px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
-        <button class="btn red small" id="ai-load-btn">Réessayer</button>
-        <button class="btn-text" id="ai-reset-cache">Réinitialiser le cache IA</button>
+        <button class="btn red small" id="ai-load-btn">${escapeHtml(t("ai.err.retry"))}</button>
+        <button class="btn-text" id="ai-reset-cache" ${state.aiResetBusy ? "disabled" : ""}>${escapeHtml(state.aiResetBusy ? t("ai.reset.busy") : t("ai.reset.btn"))}</button>
       </div>
-      ${state.aiCacheResetMsg ? `<div class="s" style="margin-top:8px;">${escapeHtml(state.aiCacheResetMsg)}</div>` : ""}
+      ${state.aiCacheResetMsg ? `<div class="s" role="status" style="margin-top:8px;">${escapeHtml(state.aiCacheResetMsg)}</div>` : ""}
       </div></div>`;
   }
 
-  const meta = aiModelMeta(state.aiModelId);
-  return `<div class="ai-status ok"><span class="dot"></span><div><b>Assistant IA prêt (100% local)</b>
-    <div class="s">Modèle chargé : <b>${escapeHtml(meta.label)}</b> (${meta.size}). Tout tourne dans ton navigateur, sans serveur ni clé API — tes questions restent privées.</div>
-    <button class="btn-text" id="ai-reset-cache" style="margin-top:8px;">Réinitialiser le cache IA</button>
-    ${state.aiCacheResetMsg ? `<div class="s" style="margin-top:8px;">${escapeHtml(state.aiCacheResetMsg)}</div>` : ""}
+  return `<div class="ai-status ok"><span class="dot"></span><div style="flex:1; min-width:0;"><b>${escapeHtml(t("ai.ready.title"))}</b>
+    <div class="s">${escapeHtml(t("ai.ready.desc", { name: t("ai.tier." + state.aiTier + ".name"), model: (AIE.TIERS[state.aiTier] || {}).family || "" }))}</div>
+    ${aiNoticeHtml()}
+    ${aiModelPickerHtml()}
+    <button class="btn-text" id="ai-reset-cache" style="margin-top:8px;" ${state.aiResetBusy ? "disabled" : ""}>${escapeHtml(state.aiResetBusy ? t("ai.reset.busy") : t("ai.reset.btn"))}</button>
+    ${state.aiCacheResetMsg ? `<div class="s" role="status" style="margin-top:8px;">${escapeHtml(state.aiCacheResetMsg)}</div>` : ""}
     </div></div>`;
 }
 
+/* Message d'information de l'assistant (repli automatique, mode
+   compatibilité, changement refusé…). Toujours en langage simple. */
+function aiNoticeHtml(){
+  const n = state.aiNotice;
+  if(!n) return "";
+  let text = "";
+  if(n.kind === "fallback"){ text = t(n.to === "avance" ? "ai.notice.fallback_avance" : "ai.notice.fallback_rapide"); }
+  else if(n.kind === "fallback_pending"){ text = t(n.to === "avance" ? "ai.notice.fallback_avance" : "ai.notice.fallback_rapide"); }
+  else if(n.kind === "compat") text = t("ai.notice.compat");
+  else if(n.kind === "cache_backend") text = t("ai.notice.cache_backend");
+  else if(n.kind === "busy") text = t("ai.notice.busy");
+  if(!text) return "";
+  return `<div class="ai-notice-line" role="status">${escapeHtml(text)}</div>`;
+}
+
+/* Sélecteur de palier : trois cartes, un seul palier chargé à la fois. */
 function aiModelPickerHtml(){
-  const current = state.aiModelId === AI_MODELS.small.id ? "small" : "large";
-  return `<div class="ai-modelpicker">
-    ${Object.entries(AI_MODELS).map(([key,m]) => `
-      <button type="button" class="ai-modelchoice ${current===key ? "active" : ""}" data-aimodel="${key}">
-        <span class="t">${m.label}</span><span class="sz">${m.size}</span>
-        <span class="n">${m.note}</span>
-      </button>`).join("")}
+  const env = aiEnv(), mem = aiMem();
+  const rec = AIE.recommendTier(env);
+  const active = state.aiStatus === "ready" ? state.aiTier : AIE.chooseStartTier(env, mem).tier;
+  const unrec = {};
+  AIE.TIER_ORDER.forEach(k => { const why = AIE.unrecommendedReason(k, env, mem); if(why) unrec[k] = why; });
+  const phase = (state.aiLoadPhase === "download" || state.aiLoadPhase === "prepare") ? "download" : "init";
+  const ctx = {
+    loadingTier: state.aiStatus === "loading" ? state.aiLoadingTier : null, phase,
+    readyTier: state.aiStatus === "ready" ? state.aiTier : null, fallbackFrom: state.aiFallbackFrom,
+    failed: state.aiFailedTiers || {}, unrecommended: unrec,
+  };
+  const locked = state.aiStatus === "loading" || state.aiResetBusy;
+  return `<div class="ai-tiers" role="group" aria-label="${escapeHtml(t("ai.tier.group"))}">
+    ${AIE.TIER_ORDER.map(k => {
+      const T = AIE.TIERS[k];
+      const st = AIE.tierStatus(k, ctx);
+      const isActive = active === k;
+      return `<button type="button" class="ai-tier st-${st}${isActive ? " is-active" : ""}" data-aitier="${k}" aria-pressed="${isActive ? "true" : "false"}" ${locked ? "disabled" : ""}>
+        <span class="ai-tier-head"><span class="ai-tier-name">${escapeHtml(t("ai.tier." + k + ".name"))}</span>${k === rec ? `<span class="ai-tier-badge">${escapeHtml(t("ai.tier.badge_recommended"))}</span>` : ""}</span>
+        <span class="ai-tier-model">${escapeHtml(T.family)}</span>
+        <span class="ai-tier-sub">${escapeHtml(t("ai.tier." + k + ".sub"))}</span>
+        <span class="ai-tier-meta"><span class="ai-tier-mem">${escapeHtml(t("ai.tier.memory", { gb: "≈" + new Intl.NumberFormat(currentLocaleTag(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(T.memMB.f16 / 1000) }))}</span><span class="ai-tier-state"><i class="ai-tier-dot" aria-hidden="true"></i>${escapeHtml(t("ai.state." + st))}</span></span>
+        ${unrec[k] ? `<span class="ai-tier-why">${escapeHtml(t("ai.why." + unrec[k]))}</span>` : ""}
+        ${(st === "failed" && ctx.failed[k]) ? `<span class="ai-tier-why">${escapeHtml(t("ai.why.failed"))}</span>` : ""}
+      </button>`;
+    }).join("")}
   </div>`;
 }
 
@@ -16210,7 +16535,7 @@ function attachAIEvents(){
   });
 
   const loadBtn = document.getElementById("ai-load-btn");
-  if(loadBtn) loadBtn.addEventListener("click", ()=> aiLoadModel(state.aiModelId || pickModelForDevice()));
+  if(loadBtn) loadBtn.addEventListener("click", ()=> aiLoadModel(state.aiStatus === "error" ? state.aiRequestedTier : undefined));
 
   const cancelLoadBtn = document.getElementById("ai-cancel-load");
   if(cancelLoadBtn) cancelLoadBtn.addEventListener("click", aiCancelLoad);
@@ -16229,12 +16554,16 @@ function attachAIEvents(){
   if(gotoImportNoAiBtn) gotoImportNoAiBtn.addEventListener("click", ()=>{ goToCourseImport(); switchTab("library"); });
 
   const resetCacheBtn = document.getElementById("ai-reset-cache");
-  if(resetCacheBtn) resetCacheBtn.addEventListener("click", ()=>{
-    if(confirm("Réinitialiser le cache IA ? Le modèle devra être retéléchargé au prochain chargement.")) aiResetCache();
+  if(resetCacheBtn) resetCacheBtn.addEventListener("click", async ()=>{
+    const ok = await dsConfirm({ title: t("ai.reset.confirm_title"), body: t("ai.reset.confirm_body"), confirmLabel: t("ai.reset.btn"), cancelLabel: t("ai.expert.confirm_no") });
+    if(ok) aiResetCache();
   });
 
-  document.querySelectorAll("[data-aimodel]").forEach(btn=>{
-    btn.addEventListener("click", ()=> aiChangeModel(btn.dataset.aimodel));
+  const copyDiagBtn = document.getElementById("ai-copy-diag-btn");
+  if(copyDiagBtn) copyDiagBtn.addEventListener("click", aiCopyDiagnostic);
+
+  document.querySelectorAll("[data-aitier]").forEach(btn=>{
+    btn.addEventListener("click", ()=> aiChangeModel(btn.dataset.aitier));
   });
 
   const cancelBtn = document.getElementById("ai-cancel-btn");
@@ -19533,7 +19862,7 @@ async function ensureCourseAIReady(eventId){
   // de l'onglet principal — un seul modèle, jamais deux instances.
   state.courseAIUI.pendingKind = "loading";
   render();
-  await aiLoadModel(state.aiModelId || pickModelForDevice());
+  await aiLoadModel();
   return state.aiStatus === "ready";
 }
 
@@ -20041,7 +20370,7 @@ function attachCourseModalEvents(){
   });
 
   const retryBtn = document.getElementById("cw-ai-retry");
-  if(retryBtn) retryBtn.addEventListener("click", ()=> aiLoadModel(state.aiModelId || pickModelForDevice()));
+  if(retryBtn) retryBtn.addEventListener("click", ()=> aiLoadModel());
 
   document.querySelectorAll("[data-course-ai-action]").forEach(btn=>{
     if(btn.disabled) return;

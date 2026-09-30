@@ -1,23 +1,32 @@
 /* ============================================================
-   ai-worker.js — Worker WebLLM (inférence locale, hors thread principal)
+   ai-worker.js — Worker de l'assistant IA local (inférence hors thread principal)
    ------------------------------------------------------------
-   Ce fichier tourne dans un Web Worker séparé, chargé par index.html via :
-     new Worker("ai-worker.js", { type: "module" })
-   Il ne fait qu'une chose : brancher le moteur WebLLM (@mlc-ai/web-llm)
-   sur les messages envoyés par le thread principal (via WebWorkerMLCEngine
-   côté page). Tout le calcul GPU (WebGPU) et le téléchargement du modèle
-   se font ici, pour ne jamais geler l'interface du site.
+   Chargé par index.html via : new Worker("ai-worker.js", { type: "module" })
+   Ce fichier ne contient que le BRANCHEMENT ; toute la logique (protocole,
+   machine d'états, un seul moteur WebLLM, erreurs classées) est dans
+   ai-host.js, partagée avec le mode « fil principal » de secours. Voir
+   ai-host.js pour la description complète du protocole.
 
-   Aucune clé API, aucun appel réseau vers un serveur à toi : les poids du
-   modèle sont téléchargés directement depuis Hugging Face par le
-   navigateur de l'utilisateur, puis mis en cache par le navigateur lui-même.
+   Aucune clé API, aucun serveur à toi : les poids du modèle sont téléchargés
+   par le navigateur de l'utilisateur depuis Hugging Face puis mis en cache
+   par le navigateur lui-même. La bibliothèque WebLLM est chargée à la demande
+   (import dynamique) à la version épinglée de ai-engine.js.
    ============================================================ */
-import { WebWorkerMLCEngineHandler } from "https://esm.run/@mlc-ai/web-llm";
+import { createAiHost } from "./ai-host.js";
 
-// Instancié immédiatement au chargement du script (recommandation officielle WebLLM) :
-// l'écouteur de messages doit être prêt dès l'évaluation initiale du worker.
-const handler = new WebWorkerMLCEngineHandler();
+const host = createAiHost((msg) => self.postMessage(msg), { context: "worker" });
 
-self.onmessage = (msg) => {
-  handler.onmessage(msg);
-};
+/* Toute erreur non gérée du worker est renvoyée STRUCTURÉE à la page : sans
+   cela, la page ne voyait qu'un événement `error` vide. */
+function reportWorkerError(e){
+  const message = (e && (e.message || (e.reason && (e.reason.message || String(e.reason))))) || "erreur inconnue dans le worker";
+  self.postMessage({ type: "WORKER_ERROR", id: null, state: host.state, message: String(message).slice(0, 500), filename: (e && e.filename) || "" });
+}
+self.addEventListener("error", reportWorkerError);
+self.addEventListener("unhandledrejection", reportWorkerError);
+
+self.onmessage = (event) => host.handle(event.data);
+
+/* Poignée de main : la page sait ainsi que le worker a bien démarré et que ses
+   imports locaux sont évalués (avant de lui confier un chargement de plusieurs Go). */
+self.postMessage({ type: "WORKER_READY", id: null, state: host.state, webllmVersion: globalThis.RevemAI.WEBLLM_VERSION });
