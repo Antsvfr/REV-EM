@@ -331,6 +331,7 @@ try {
     await A.page.evaluate(() => { state.aiStatus = "ready"; });
     await A.page.evaluate(() => { libGoto("subjectDetail", { subjectId: "s_fin" }); switchTab("library"); });
     await A.page.click("#lib-import-into-subject-btn"); await A.page.waitForTimeout(300);
+    await A.page.evaluate(() => { closeImportCenter(); libGoto("import"); });   // l'Import Center est une fenêtre : ce scénario alimente le pipeline directement, depuis la vue d'import
     await A.page.evaluate(() => { state.courseImport.pasteText = "Le bilan comptable présente l'actif et le passif de l'entreprise à une date donnée, avec leurs composantes."; courseImportAddPasteAsFile(); state.courseImport.files[0].name = "bilan.txt"; state.courseImport.step = "detect"; return courseImportProcessFile(0); });
     await A.page.click("#import-confirm-generate-btn");
     await A.page.waitForTimeout(3500);

@@ -413,7 +413,7 @@ try {
       ['[data-qa="resume_course"]',  () => state.tab === "quiz" && state.screen === "quiz"],
       ['[data-qa="planning_today"]', () => state.tab === "planning"],
       ['[data-qa="quiz_start"]',     () => state.tab === "quiz" && state.screen === "picker"],
-      ['[data-qa="import_course"]',  () => state.tab === "library" && state.library.view === "import"],
+      ['[data-qa="import_course"]',  () => !!document.getElementById("import-center") && state.tab === "dashboard"],   // l'Import Center s'ouvre PAR-DESSUS le tableau de bord
       ["#dash-progress-link",       () => state.tab === "progress"],
       ["#dash-stats-link",          () => state.tab === "stats"],
       ["#dash-viewall-subjects",    () => state.tab === "library" && state.library.view === "subjects"],
@@ -434,6 +434,7 @@ try {
         try { return !!new Function("return (" + fn + ")()")(); } catch (e) { return String(e); }
       }, assertFn.toString());
       check(`« ${sel} » mène au bon écran`, ok === true, ok);
+      await page.evaluate(() => { if (window.closeImportCenter) closeImportCenter(); });   // l'Import Center est une fenêtre : on la referme avant la route suivante
     }
 
     /* ── LES HUIT ANCIENNES DESTINATIONS SONT TOUJOURS ATTEIGNABLES ────────
@@ -442,7 +443,7 @@ try {
        barre de navigation, le Command Center et les tuiles ci-dessus — c'est
        lui qu'on interroge, une destination après l'autre. */
     const ANCIENNES = [
-      ["import-course", () => state.tab === "library" && state.library.view === "import"],
+      ["import-course", () => !!document.getElementById("import-center")],
       ["library",       () => state.tab === "library" && state.library.view === "subjects"],
       ["library-add",   () => state.tab === "library" && state.library.view === "subjectForm"],
       ["activities",    () => state.tab === "activities"],
@@ -459,6 +460,7 @@ try {
         try { return !!new Function("return (" + fn + ")()")(); } catch (e) { return String(e); }
       }, { g: goto, fn: assertFn.toString() });
       check(`la destination « ${goto} » n'a pas disparu`, ok === true, ok);
+      await page.evaluate(() => { if (window.closeImportCenter) closeImportCenter(); });
     }
 
     /* L'ancienne destination « la semaine dans Planning » n'a pas disparu :

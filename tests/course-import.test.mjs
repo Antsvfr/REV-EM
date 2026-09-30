@@ -440,6 +440,9 @@ try {
     await page.evaluate((id) => { libGoto("subjectDetail", { subjectId: id }); switchTab("library"); }, subjectId);
     await page.click("#lib-import-into-subject-btn");
     await page.waitForTimeout(200);
+    /* Le bouton ouvre l'Import Center (fenêtre) et pose le contexte de la matière ; ce
+       scénario simule ensuite le texte collé directement dans le pipeline : on referme la fenêtre. */
+    await page.evaluate(() => closeImportCenter());
     await pasteAndGoReview(page, "Les méthodes quantitatives et qualitatives d'étude de marché, avec leurs avantages respectifs.", "etude-marche.pdf");
     await page.click("#import-confirm-generate-btn");
     await page.waitForTimeout(2200);

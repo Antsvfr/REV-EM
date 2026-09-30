@@ -38,9 +38,24 @@ séparé n'a été introduit (la relation `flashcard.chapterId → chapitre →
 subjectId → matière` existe déjà, et l'appartenance au compte vient du
 cloisonnement de stockage + RLS, jamais d'un `userId` stocké côté client).
 
+## Import Center — le SEUL point d'entrée de l'import (Phase 1)
+
+Tous les boutons « Importer un cours » appellent `openImportCenter({contextSubjectId,
+origin})` (ou portent `data-import-center="<origine>"`, géré par UN écouteur global) :
+jamais une zone de dépôt ou un `<input type="file">` de plus. La fenêtre choisit et
+**valide** le fichier (`import-center.js`, moteur pur : `validateMeta`, `validateContent`,
+machine d'états `IDLE/DRAGGING/VALIDATING/READY/PROCESSING/SUCCESS/ERROR`), en lit le
+contenu (étapes réelles, annulable), puis le transmet via **`icHandoff(result)`** — la
+frontière avec la suite — qui appelle `courseImportAddPrepared(result)` puis
+`courseImportStart()`. `result` est un `ImportResult`. Lire `IMPORT_CENTER.md` (audit,
+frontière « PRÊT POUR PHASE 2 », WKWebView). Règles : formats annoncés = formats réellement
+lus ; jamais de texte vide vers l'automatisation (`NO_TEXT`) ; erreurs = un code + un message
+traduit (`imp.err.<CODE>`), le détail technique va à la console ; aucune API propre à
+Chromium.
+
 ## Pipeline d'import de cours (vérifié dans index.html)
 
-1. `courseImportProcessFile(index)` — extraction du texte, puis détection
+1. `courseImportProcessFile(index)` — extraction du texte (déjà faite par l'Import Center : élément `preExtracted`, le fichier n'est pas relu), puis détection
    (IA ou heuristique) du titre/de la matière/du chapitre/des notions.
    - **Contexte prioritaire** : si l'import a été lancé depuis une matière
      déjà ouverte (`goToCourseImport(subjectId)`, bouton "Importer un

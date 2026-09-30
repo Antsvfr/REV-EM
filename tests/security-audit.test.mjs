@@ -70,7 +70,7 @@ const PLACEHOLDER = /<[^>]*>|\u2026|\.\.\.|de-test|test-|factice|xyz|EXEMPLE|exa
   {
     const served = ["index.html", "auth.js", "translations.js", "smart-revision.js",
       "statistics.js", "planning.js", "content-sources.js", "sync-engine.js",
-      "source-adapters.js", "ai-worker.js", "supabase-config.js", "supabase-config.example.js"];
+      "source-adapters.js", "ai-worker.js", "ai-engine.js", "ai-host.js", "import-center.js", "supabase-config.js", "supabase-config.example.js"];
     for (const f of served) {
       let src;
       try { src = readFileSync(join(ROOT, f), "utf8"); } catch { continue; }
@@ -118,7 +118,11 @@ const PLACEHOLDER = /<[^>]*>|\u2026|\.\.\.|de-test|test-|factice|xyz|EXEMPLE|exa
 
     /* Passe 1 — secrets réels : aucune tolérance, quel que soit le fichier. */
     for (const { name, rx } of SECRET_PATTERNS) {
-      const hits = scanHistory(rx);
+      /* Exception UNIQUE et nommée : l'exemple public de jwt.io (charge utile
+         {"sub":"1234567890"}, aucune clé) que tests/ai-engine.test.js utilise comme
+         FAUX jeton pour vérifier que le diagnostic copiable masque les JWT. Il est
+         dans l'historique depuis le commit de l'assistant IA ; ce n'est pas un secret. */
+      const hits = scanHistory(rx).filter(h => !/eyJzdWIiOiIxMjM0NTY3ODkwIn0/.test(h.line));
       check(`aucun ${name} n'a jamais été committé`, hits.length === 0,
         hits.slice(0, 2).map(h => h.file + " → " + h.line.slice(0, 60)).join(" | "));
     }

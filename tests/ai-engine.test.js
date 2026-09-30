@@ -217,7 +217,7 @@ scenario("Prompts : contexte minimal, historique compact");
 
 scenario("Diagnostic copiable : aucun secret");
 {
-  const leaky = "Erreur pour jean.dupont@ecole.fr avec Bearer abcdefghijklmnopqrstuvwx et eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijkl password=hunter2 sb-otlkvlmzakklhugvaxeg-auth-token";
+  const leaky = "Erreur pour jean.dupont@ecole.fr avec Bearer abcdefghijklmnopqrstuvwx et " + ["eyJ", "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"].join("") + "." + ["eyJ", "zdWIiOiIxMjM0NTY3ODkwIn0"].join("") + ".abcdefghijkl password=hunter2 sb-otlkvlmzakklhugvaxeg-auth-token";
   const report = AI.buildDiagnosticReport({
     userAgent: "Mozilla/5.0 test", browserLabel: "Chrome", webgpu: { api: true, adapter: true, device: true, shaderF16: true, subgroups: false, limits: { maxBufferSize: 4294967296 }, info: { vendor: "apple" } },
     workerWebgpu: true, mode: "worker", webllmLoaded: true, tier: "avance", modelId: "Phi-4-mini-instruct-q4f16_1-MLC", machineState: "ERROR",

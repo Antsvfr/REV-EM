@@ -840,24 +840,6 @@
   .planning-source-bar .s{ font-size: var(--text-label); color: var(--muted); }
 
   /* ===== IMPORTATION DE COURS ===== */
-  .import-dropzone{
-    background: var(--surface); border:2px dashed var(--border-strong); border-radius: var(--radius-xl);
-    padding:32px 24px; text-align:center; cursor:pointer; transition: border-color .15s var(--ease), background .15s var(--ease);
-  }
-  .import-dropzone:hover, .import-dropzone:focus-visible{ border-color: var(--red); outline:none; }
-  .import-dropzone.is-dragover{ border-color: var(--red); background: var(--red-tint); }
-  .import-dropzone-icon{ font-size: var(--text-h1); margin-bottom:12px; }
-  .import-dropzone-title{ font-size: var(--text-body); font-weight: var(--weight-semibold); color: var(--ink); margin-bottom:4px; }
-  .import-dropzone-sub{ font-size: var(--text-metadata); color: var(--ink-soft); margin-bottom:8px; }
-  .import-dropzone-formats{ font-size: var(--text-label); color: var(--muted); }
-
-  .import-filelist{ display:flex; flex-direction:column; gap:8px; margin-top:16px; }
-  .import-file-row{
-    display:flex; align-items:center; gap:12px; background: var(--surface-2); border:1px solid var(--border);
-    border-radius: var(--radius-sm); padding:8px 12px; font-size: var(--text-metadata);
-  }
-  .import-file-row .name{ flex:1; font-weight: var(--weight-semibold); color: var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .import-file-row .size{ color: var(--muted); flex-shrink:0; }
 
   .import-stats-row{ display:flex; gap:16px; flex-wrap:wrap; font-size: var(--text-metadata); color: var(--ink-soft); margin:16px 0 4px; }
   .import-notion-tags{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
@@ -1838,6 +1820,109 @@
   .modal--confirm{ max-width: 400px; }
   .modal--confirm .modal-title{ font-size: var(--text-h3); font-family: var(--font-ui); }
   .modal--confirm .modal-foot{ margin-top:var(--space-md); }
+
+  /* ==========================================================================
+     IMPORT CENTER — un seul espace pour importer un cours (préfixe `ic-`).
+     Même famille de modale que le reste (.modal-backdrop / .modal) : sur mobile
+     elle devient une feuille ancrée en bas (voir la règle ≤ 640 px plus haut).
+     Rouge utilisé avec parcimonie : l'icône de la zone et l'état « en cours ».
+     ========================================================================== */
+  body.ic-open{ overflow:hidden; }
+  .modal--import{ max-width: 720px; padding: var(--space-xl); max-height: min(92vh, 780px); }
+  .ic-head{ margin-bottom: var(--space-lg); }
+  .ic-headtext{ min-width:0; }
+  .ic-lead{ margin:6px 0 0; font-size: var(--text-small); line-height:1.6; color: var(--text-secondary); max-width: 54ch; }
+  .ic-context{ display:inline-flex; align-items:center; gap:6px; margin:12px 0 0; padding:3px 12px 3px 8px; border:1px solid var(--border); border-radius:999px; font-size: var(--text-label); color: var(--ink-soft); }
+  .ic-context-icon{ display:inline-flex; color: var(--red); }
+  .ic-context-icon svg{ width:14px; height:14px; }
+  .ic-body{ position:relative; }
+  .ic-body > *{ margin:0; }
+  .ic-body > * + *{ margin-top: var(--space-md); }
+
+  .ic-drop{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    min-height:280px; padding: var(--space-xl) var(--space-lg);
+    border:1.5px dashed var(--border-strong); border-radius: var(--radius-lg); background: var(--surface-2, var(--bg));
+    transition: border-color var(--motion-micro) var(--ease-enter), background-color var(--motion-micro) var(--ease-enter);
+  }
+  .ic-drop:hover{ border-color: var(--red); }
+  .modal--import.is-dragging .ic-drop{ border-color: var(--red); border-style:solid; background: var(--red-tint); }
+  .ic-drop > *{ margin:0; }
+  .ic-drop-icon{
+    display:inline-flex; align-items:center; justify-content:center; width:56px; height:56px; margin-bottom: var(--space-md);
+    color: var(--red); background: var(--surface); border:1px solid var(--border); border-radius:16px;
+  }
+  .ic-drop-icon svg{ width:28px; height:28px; }
+  .ic-drop-title{ font-size: var(--text-h3); font-weight: var(--weight-semibold); color: var(--ink); }
+  .ic-drop-or{ margin:6px 0 10px; font-size: var(--text-label); color: var(--muted); text-transform:lowercase; }
+  .ic-pick{ min-height:44px; padding-left:24px; padding-right:24px; }
+  .ic-drop-formats{ margin-top:16px; font-size: var(--text-metadata); font-weight: var(--weight-medium); color: var(--ink-soft); }
+  .ic-drop-more{ margin-top:2px; font-size: var(--text-label); color: var(--muted); }
+
+  /* Un fichier déjà choisi + on glisse un autre par-dessus : « remplacer ». */
+  .modal--import.is-dragging .ic-body[data-has-file]::after{
+    content: attr(data-drop-label); position:absolute; inset:-6px; display:flex; align-items:center; justify-content:center;
+    border:1.5px solid var(--red); border-radius: var(--radius-lg); background: rgba(255,255,255,.92);
+    font-size: var(--text-body); font-weight: var(--weight-semibold); color: var(--red-dark); pointer-events:none;
+  }
+
+  .ic-file{ display:flex; align-items:center; gap: var(--space-md); padding: var(--space-md) var(--space-lg); border:1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); }
+  .ic-file--error{ border-color: var(--amber-strong); }
+  .ic-file-icon{ display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:48px; height:48px; border-radius:14px; background: var(--red-tint); color: var(--red-dark); }
+  .ic-file-icon svg{ width:24px; height:24px; }
+  .ic-file-body{ flex:1; min-width:0; }
+  .ic-file-name{ font-size: var(--text-body); font-weight: var(--weight-semibold); color: var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ic-file-meta{ margin-top:2px; font-size: var(--text-metadata); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ic-file-status{ display:inline-flex; align-items:center; gap:8px; margin-top:8px; font-size: var(--text-metadata); font-weight: var(--weight-medium); color: var(--ink-soft); }
+  .ic-file-status.is-ok{ color: var(--green); }
+  .ic-dot{ width:8px; height:8px; border-radius:50%; background: var(--green); }
+  .ic-file-actions{ display:flex; align-items:center; gap: var(--space-sm); flex-shrink:0; }
+  .ic-remove{ color: var(--red-dark); }
+
+  .ic-progress{ margin-top:10px; }
+  .ic-bar{ height:6px; border-radius:999px; background: var(--border); overflow:hidden; }
+  .ic-bar-fill{ height:100%; border-radius:999px; background: var(--red); transition: width var(--motion-micro) linear; }
+  .ic-step{ margin:8px 0 0; font-size: var(--text-metadata); color: var(--ink-soft); }
+  .ic-spinner{ display:inline-block; width:16px; height:16px; border:2px solid var(--border-strong); border-top-color: var(--red); border-radius:50%; flex-shrink:0; }
+  .ic-progress .ic-spinner{ vertical-align:middle; margin-right:8px; }
+
+  .ic-alert{ display:flex; align-items:flex-start; gap:10px; padding:12px 14px; border:1px solid var(--amber-strong); background: var(--amber-tint); border-radius: var(--radius-md); }
+  .ic-alert p{ margin:0; font-size: var(--text-small); line-height:1.55; color: var(--ink); }
+  .ic-alert-icon{ display:inline-flex; color: var(--amber); flex-shrink:0; margin-top:1px; }
+  .ic-alert-icon svg{ width:20px; height:20px; }
+  .ic-note{ margin:0; font-size: var(--text-metadata); color: var(--ink-soft); }
+
+  .ic-success{ display:flex; flex-direction:column; align-items:center; text-align:center; padding: var(--space-xl) var(--space-md); }
+  .ic-success > *{ margin:0; }
+  .ic-success-icon{ display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; border-radius:50%; background: var(--green-tint); color: var(--green); margin-bottom: var(--space-md); }
+  .ic-success-icon svg{ width:26px; height:26px; }
+  .ic-success-title{ font-size: var(--text-h3); font-weight: var(--weight-semibold); color: var(--ink); }
+  .ic-success-meta{ margin-top:4px; font-size: var(--text-small); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .ic-success-next{ margin-top: var(--space-md); font-size: var(--text-metadata); color: var(--muted); }
+
+  .ic-paste{ margin-top: var(--space-md); }
+  .ic-paste-panel{ display:flex; flex-direction:column; gap:8px; margin-top:8px; align-items:flex-start; }
+  .ic-paste-panel .ai-textarea{ width:100%; min-height:110px; }
+  .ic-paste-label{ font-size: var(--text-metadata); font-weight: var(--weight-medium); color: var(--ink-soft); }
+  .ic-foot{ margin-top: var(--space-lg); }
+
+  /* Cachée VISUELLEMENT mais réellement présente et focalisable par programme :
+     un input `display:none` est capricieux dans certaines WebView. */
+  .ic-file-input{ position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; opacity:0; pointer-events:none; }
+  .ic-live{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; margin:0; }
+
+  @media (prefers-reduced-motion: no-preference){
+    .ic-body[data-enter] > *{ animation: ds-rise var(--motion-enter) var(--ease-enter); }
+    .ic-spinner{ animation: ic-spin .7s linear infinite; }
+    @keyframes ic-spin{ to{ transform: rotate(360deg); } }
+  }
+  @media (max-width: 640px){
+    .modal--import{ padding: var(--space-md); }
+    .ic-drop{ min-height:200px; padding: var(--space-lg) var(--space-md); }
+    .ic-pick{ width:100%; min-height:48px; }
+    .ic-file{ flex-wrap:wrap; }
+    .ic-file-actions{ width:100%; justify-content:flex-end; }
+  }
 
   /* ==========================================================================
      TOAST — un fait accompli, brièvement. Jamais une question, jamais une
@@ -4301,7 +4386,6 @@
   }
   .automate-head .h{ font-size: var(--text-body); font-weight: var(--weight-medium); margin-bottom:4px; }
   .automate-head .d{ font-size: var(--text-metadata); color: var(--ink-soft); line-height:1.55; max-width:560px; }
-  .import-dropzone-compact{ padding:24px 16px; }
   .automate-advanced{ margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
   .automate-advanced summary{ font-size: var(--text-metadata); font-weight: var(--weight-medium); color: var(--ink-soft); cursor:pointer; list-style:none; }
   .automate-advanced summary::marker{ content:""; }
@@ -5124,6 +5208,9 @@
      prompts, diagnostic). Comme les autres moteurs : ni DOM, ni state, ni WebGPU.
      Partagée avec ai-host.js (Worker). Voir AI_AUDIT.md. -->
 <script src="ai-engine.js"></script>
+<!-- Logique PURE de l'Import Center (validation du fichier, machine d'états, ImportResult).
+     Ni DOM, ni state, ni PDF.js. Voir IMPORT_CENTER.md. -->
+<script src="import-center.js"></script>
 
 <script>
 /* ============================================================
@@ -6514,6 +6601,11 @@ const DASH_ICONS = {
   layers:   '<path d="m12 3.5 8.5 4.5L12 12.5 3.5 8zM3.5 12.5 12 17l8.5-4.5M3.5 16.5 12 21l8.5-4.5"/>',
   clock:    '<circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.2 2"/>',
   search:   '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.7-4.7"/>',
+  file:     '<path d="M6.5 3h8L19 7.5V21H6.5z"/><path d="M14.5 3v5H19"/>',
+  filein:   '<path d="M6.5 3h8L19 7.5V21H6.5z"/><path d="M14.5 3v5H19M12.7 17.5v-6M10 14l2.7-2.7L15.4 14"/>',
+  check:    '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  x:        '<path d="M6 6l12 12M18 6 6 18"/>',
+  alert:    '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.2"/>',
 };
 
 /* `name` vient toujours du code, jamais d'une donnée utilisateur : une clé
@@ -8331,6 +8423,7 @@ function qaMeta(id, c){
   if(id === "study_plan")       return t("qa.meta_sessions", {n: c.planTasksToday});
   if(id === "planning_today")   return t("qa.meta_courses", {n: c.todayEvents});
   if(id === "explore_subjects") return t(c.subjectCount > 1 ? "qa.meta_subjects" : "qa.meta_subject", {n: c.subjectCount});
+  if(id === "import_course")    return t("imp.qa_meta");
   return "";
 }
 
@@ -8399,7 +8492,7 @@ function qaRun(id){
     case "quiz_start":       return handleNavGoto({goto: "quiz"});
     case "flash_start":      return handleNavGoto({goto: "flash"});
     case "exam":             return handleNavGoto({goto: "exam"});
-    case "import_course":    return handleNavGoto({goto: "import-course"});
+    case "import_course":    return handleNavGoto({goto: "import-course", origin: "dashboard"});
     case "new_subject":      return handleNavGoto({goto: "library-add"});
     case "explore_subjects": return handleNavGoto({goto: "library"});
     case "ai":               return handleNavGoto({goto: "ai"});
@@ -8969,7 +9062,7 @@ function renderDashboardRevisions(){
   if(recentChapters.length === 0){
     html += `<div class="empty empty--inline">
       <p class="empty-text">${t("dashboard.no_recent_courses")}</p>
-      <div class="empty-actions"><button class="btn btn--secondary" data-dash-import>${t("dashboard.quick_import")}</button></div>
+      <div class="empty-actions"><button class="btn btn--secondary" data-dash-import data-import-center="dashboard">${t("dashboard.quick_import")}</button></div>
     </div></section>`;
     return html;
   }
@@ -9128,9 +9221,6 @@ function attachDashboardEvents(){
      de répéter un identifiant dans la page. */
   document.querySelectorAll("[data-dash-add-subject]").forEach(btn=>{
     btn.addEventListener("click", ()=>{ libGoto("subjectForm", {editingSubjectId:null}); switchTab("library"); });
-  });
-  document.querySelectorAll("[data-dash-import]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{ goToCourseImport(); switchTab("library"); });
   });
   const aiBtn = document.getElementById("dash-ai-btn");
   if(aiBtn) aiBtn.addEventListener("click", ()=> switchTab("ai"));
@@ -9323,7 +9413,7 @@ function renderSubjectsList(){
     <div class="lib-pagehead">
       <h1 class="page-title tight">Mes matières</h1>
       <div class="actions" style="justify-content:flex-start;margin:0;">
-        <button class="btn-text" id="lib-import-course-btn">Importer un cours</button>
+        <button class="btn-text" id="lib-import-course-btn" data-import-center="subjects">${escapeHtml(t("imp.title"))}</button>
         <button class="btn-text" id="lib-add-subject-btn">+ Ajouter une matière</button>
       </div>
     </div>
@@ -9419,7 +9509,7 @@ function renderSubjectDetail(){
 
   html += `<div class="actions" style="margin:16px 0 24px;justify-content:flex-start;">
     <button class="btn red small" id="lib-add-chapter-btn">+ Ajouter un chapitre</button>
-    <button class="btn outline small" id="lib-import-into-subject-btn">Importer un cours</button>
+    <button class="btn outline small" id="lib-import-into-subject-btn" data-import-center="subject" data-import-subject="${escapeHtml(s.id)}">${escapeHtml(t("imp.title"))}</button>
     ${!s.builtin ? `<button class="btn outline small" id="lib-edit-subject-btn">Modifier la matière</button>
     <button class="btn-text" id="lib-delete-subject-btn">Supprimer la matière</button>` : ""}
   </div>`;
@@ -9695,8 +9785,6 @@ function attachLibraryEvents(){
   if(lib.view === "subjects"){
     const addBtn = document.getElementById("lib-add-subject-btn");
     if(addBtn) addBtn.addEventListener("click", ()=> libGoto("subjectForm", {editingSubjectId:null}));
-    const importBtn = document.getElementById("lib-import-course-btn");
-    if(importBtn) importBtn.addEventListener("click", ()=> goToCourseImport());
     /* Les cartes sont réécrites à chaque frappe : un seul écouteur sur leur
        conteneur (délégation), jamais un par carte à ré-attacher. */
     const results = document.getElementById("lib-results");
@@ -9738,8 +9826,6 @@ function attachLibraryEvents(){
     });
     const addCh = document.getElementById("lib-add-chapter-btn");
     if(addCh) addCh.addEventListener("click", ()=> libGoto("chapterForm", {editingChapterId:null}));
-    const importIntoSubject = document.getElementById("lib-import-into-subject-btn");
-    if(importIntoSubject) importIntoSubject.addEventListener("click", ()=> goToCourseImport(lib.subjectId));
     const editS = document.getElementById("lib-edit-subject-btn");
     if(editS) editS.addEventListener("click", ()=> libGoto("subjectForm", {editingSubjectId: lib.subjectId}));
     const delS = document.getElementById("lib-delete-subject-btn");
@@ -10259,8 +10345,10 @@ async function libRegeneratePart(ch, key){
    disponibles (libGenerateUserChapterQuiz / libGenerateUserChapterCards /
    libRunUserChapterAI) pour la régénération individuelle.
    ============================================================ */
-const COURSE_IMPORT_MAX_BYTES = 15 * 1024 * 1024; // ~15 Mo par fichier
-const COURSE_IMPORT_MIN_CHARS = 40;               // en dessous : considéré vide/illisible
+/* Une seule source pour ces deux limites : import-center.js (validation à l'entrée)
+   et le pipeline (lecture) ne peuvent plus diverger. */
+const COURSE_IMPORT_MAX_BYTES = window.RevemImport ? RevemImport.MAX_BYTES : 15 * 1024 * 1024; // ~15 Mo par fichier
+const COURSE_IMPORT_MIN_CHARS = window.RevemImport ? RevemImport.MIN_TEXT_CHARS : 40;          // en dessous : considéré vide/illisible
 /* Budget de contexte envoyé au modèle pour LA génération des supports (fiche,
    résumé, quiz, flashcards, questions) — une seule constante réutilisée
    partout pour rester cohérent, au lieu de plusieurs limites différentes
@@ -10336,28 +10424,45 @@ function loadPdfJsModule(){
   }
   return pdfjsModulePromise;
 }
-async function extractPdfText(file, onProgress){
+/* `opts` (facultatif) : { signal:{cancelled}, onStep(step, progress) } — utilisé par
+   l'Import Center pour annuler réellement la lecture entre deux pages et
+   afficher des étapes RÉELLES ("reader", "read"). Sans `opts`, comportement
+   historique inchangé. */
+function courseCancelledError(){ return Object.assign(new Error("Lecture annulée."), { code: "CANCELLED" }); }
+async function extractPdfText(file, onProgress, opts){
+  opts = opts || {};
+  const step = opts.onStep || (()=>{});
+  const cancelled = () => !!(opts.signal && opts.signal.cancelled);
   let pdfjs;
+  step("reader");
   try{ pdfjs = await loadPdfJsModule(); }
-  catch(e){ throw new Error("Impossible de charger le lecteur PDF (connexion internet nécessaire au premier import). Colle le texte de ton cours à la place."); }
+  catch(e){ throw Object.assign(new Error("Impossible de charger le lecteur PDF (connexion internet nécessaire au premier import). Colle le texte de ton cours à la place."), { code: "READER_LOAD_FAILED" }); }
+  if(cancelled()) throw courseCancelledError();
   const buf = await file.arrayBuffer();
   const doc = await pdfjs.getDocument({data: buf}).promise;
-  const numPages = doc.numPages;
-  const maxPages = Math.min(numPages, 100);
-  let text = "";
-  for(let i=1; i<=maxPages; i++){
-    if(onProgress) onProgress(i, maxPages);
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    text += content.items.map(it => it.str).join(" ") + "\n\n";
+  try{
+    const numPages = doc.numPages;
+    const maxPages = Math.min(numPages, 100);
+    let text = "";
+    for(let i=1; i<=maxPages; i++){
+      if(cancelled()) throw courseCancelledError();
+      if(onProgress) onProgress(i, maxPages);
+      step("read", { page: i, total: maxPages });
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(it => it.str).join(" ") + "\n\n";
+      try{ page.cleanup(); }catch(e){}
+    }
+    const trimmed = text.trim();
+    return {
+      text: trimmed,
+      truncated: numPages > maxPages,
+      numPages,
+      isScanned: trimmed.length < 20, // quasiment aucun texte détecté → probablement des pages scannées (images)
+    };
+  }finally{
+    try{ doc.destroy(); }catch(e){}   // libère le lecteur (mémoire, worker) — l'ancien code ne le faisait jamais
   }
-  const trimmed = text.trim();
-  return {
-    text: trimmed,
-    truncated: numPages > maxPages,
-    numPages,
-    isScanned: trimmed.length < 20, // quasiment aucun texte détecté → probablement des pages scannées (images)
-  };
 }
 
 let mammothModulePromise = null;
@@ -10365,10 +10470,15 @@ function loadMammothModule(){
   if(!mammothModulePromise) mammothModulePromise = import("https://esm.run/mammoth");
   return mammothModulePromise;
 }
-async function extractDocxText(file){
+async function extractDocxText(file, opts){
+  opts = opts || {};
+  const step = opts.onStep || (()=>{});
   let mammoth;
+  step("reader");
   try{ mammoth = await loadMammothModule(); }
-  catch(e){ throw new Error("Impossible de charger le lecteur DOCX (connexion internet nécessaire au premier import). Colle le texte de ton cours à la place."); }
+  catch(e){ throw Object.assign(new Error("Impossible de charger le lecteur DOCX (connexion internet nécessaire au premier import). Colle le texte de ton cours à la place."), { code: "READER_LOAD_FAILED" }); }
+  if(opts.signal && opts.signal.cancelled) throw courseCancelledError();
+  step("read");
   const buf = await file.arrayBuffer();
   const api = mammoth.extractRawText ? mammoth : mammoth.default;
   const result = await api.extractRawText({arrayBuffer: buf});
@@ -10384,7 +10494,7 @@ function courseFileKind(file){
   return null;
 }
 
-async function extractCourseFileText(file, onProgress){
+async function extractCourseFileText(file, onProgress, opts){
   if(file.size > COURSE_IMPORT_MAX_BYTES){
     throw new Error("« " + file.name + " » est trop volumineux (limite ~15 Mo).");
   }
@@ -10392,9 +10502,12 @@ async function extractCourseFileText(file, onProgress){
   if(!kind){
     throw new Error("Format non pris en charge pour « " + file.name + " ». Formats acceptés : PDF, DOCX, TXT, Markdown. (PPTX et les images/OCR ne sont pas encore pris en charge — colle le texte directement à la place.)");
   }
-  if(kind === "text") return { text: (await readFileAsText(file)).trim(), truncated: false, numPages: null, isScanned: false };
-  if(kind === "pdf") return extractPdfText(file, onProgress);
-  return extractDocxText(file);
+  if(kind === "text"){
+    if(opts && opts.onStep) opts.onStep("read");
+    return { text: (await readFileAsText(file)).trim(), truncated: false, numPages: null, isScanned: false };
+  }
+  if(kind === "pdf") return extractPdfText(file, onProgress, opts);
+  return extractDocxText(file, opts);
 }
 
 /* ---- découpage + condensation pour les cours très longs ---- */
@@ -10870,38 +10983,35 @@ function heuristicSummary(rawText){
 
 function genImportId(){ return "imp" + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
-function courseImportAddFiles(fileList){
+/* Reçoit un ImportResult (import-center.js) et le range dans la file du pipeline
+   existant — MÊME structure d'élément qu'avant, avec le texte DÉJÀ extrait
+   (preExtracted) : le pipeline ne relit pas le fichier une seconde fois. Le File
+   d'origine est conservé (le PDF est ensuite stocké dans IndexedDB). */
+function courseImportAddPrepared(result){
   const ci = state.courseImport;
-  Array.from(fileList).slice(0, 10 - ci.files.length).forEach(file=>{
-    ci.files.push({
-      id: genImportId(), name: file.name, size: file.size, file,
-      status: "pending", error: null, warning: null,
-      extractedText: "", charCount: 0, workingText: "", numPages: null,
-      detected: null, generated: {fiche:null, summary:null, quiz:null, flashcards:null, reviewQuestions:null},
-      failedSteps: [], genStepIndex: -1,
-      resultChapterId: null, resultSubjectId: null,
-      extractProgress: null, chunkProgress: null,
-      genStartedAt: null, currentStepStartedAt: null, lastStepError: null, cancelled: false,
-    });
-  });
-}
-function courseImportRemoveFile(id){
-  state.courseImport.files = state.courseImport.files.filter(f => f.id !== id);
-}
-function courseImportAddPasteAsFile(){
-  const ci = state.courseImport;
-  const text = ci.pasteText.trim();
-  if(!text) return;
   ci.files.push({
-    id: genImportId(), name: "Texte collé", size: text.length, file: null,
-    status: "pending", error: null, warning: null,
-    extractedText: text, charCount: text.length, workingText: "", numPages: null,
+    id: genImportId(), name: result.filename, size: result.size, file: result.file || null,
+    status: "pending", error: null, warning: result.truncated ? "Document très long : seules les " + (window.RevemImport ? RevemImport.MAX_PDF_PAGES : 100) + " premières pages ont été lues." : null,
+    preExtracted: true, truncated: !!result.truncated,
+    extractedText: result.extractedText, charCount: result.charCount, workingText: "", numPages: result.numPages || null,
+    sourceContext: result.sourceContext || null,
     detected: null, generated: {fiche:null, summary:null, quiz:null, flashcards:null, reviewQuestions:null},
     failedSteps: [], genStepIndex: -1,
     resultChapterId: null, resultSubjectId: null,
     extractProgress: null, chunkProgress: null,
     genStartedAt: null, currentStepStartedAt: null, lastStepError: null, cancelled: false,
   });
+}
+function courseImportRemoveFile(id){
+  state.courseImport.files = state.courseImport.files.filter(f => f.id !== id);
+}
+/* Texte collé : même sortie que l'Import Center (un ImportResult) — plus de
+   second chemin de construction d'élément de file. */
+function courseImportAddPasteAsFile(){
+  const ci = state.courseImport;
+  const text = ci.pasteText.trim();
+  if(!text) return;
+  courseImportAddPrepared(RevemImport.buildImportResult({ file: null, filename: "Texte collé", kind: "text", extractedText: text, sourceContext: { origin: "paste" } }));
   ci.pasteText = "";
 }
 
@@ -10938,7 +11048,8 @@ async function courseImportProcessFile(index){
   render();
   let extracted;
   try{
-    extracted = item.file ? await extractCourseFileText(item.file, (page, total)=>{
+    extracted = item.preExtracted ? { text: item.extractedText, truncated: !!item.truncated, numPages: item.numPages, isScanned: false }
+    : item.file ? await extractCourseFileText(item.file, (page, total)=>{
       item.extractProgress = { page, total };
       item.warning = "Lecture du PDF : page " + page + "/" + total + "…";
       render();
@@ -11413,24 +11524,497 @@ function courseImportReset(){
   render();
 }
 
-/* Point d'entrée commun (dashboard / Mes matières / Ressources / une matière
-   précise) : repart d'un import vierge, sauf si une importation est déjà en
-   cours (pour ne pas la perdre) — dans ce cas le contexte de la nouvelle
-   demande est ignoré, celui de l'import en cours prévaut.
+/* ============================================================
+   7ter-bis. IMPORT CENTER — UN seul espace, UN seul point d'entrée
+   ------------------------------------------------------------
+   Tous les boutons « Importer un cours » (tableau de bord, Mes matières, une
+   matière, Ressources, états vides, barre de navigation, Command Center)
+   appellent openImportCenter(). Il choisit et VALIDE le fichier, en lit le
+   contenu (étapes réelles), puis le TRANSMET au pipeline existant
+   (courseImportAddPrepared → courseImportStart → détection → confirmation →
+   génération) sans jamais le réécrire.
 
-   `subjectId` : quand l'import est lancé DEPUIS une matière déjà ouverte
-   (voir renderSubjectDetail), cette matière est IMPOSÉE — jamais proposée à
-   la détection, jamais remplaçable par l'IA. C'est le contexte le plus fort
-   qui existe : l'utilisateur a déjà choisi où il se trouve. */
-function goToCourseImport(subjectId){
-  const ci = state.courseImport;
-  const hasActiveWork = ci.files.some(f => ["pending","extracting","detecting","review","generating"].includes(f.status));
-  if(!hasActiveWork){
-    courseImportStopTimer();
-    state.courseImport = freshCourseImportState(subjectId);
-  }
-  libGoto("import");
+   Logique pure (validation, machine d'états, ImportResult) : import-center.js.
+   Ici : le DOM, les événements (glisser-déposer robuste, sélecteur natif), la
+   lecture PDF.js/mammoth, la navigation au clavier.
+
+   PRÊT POUR LA PHASE 2 : l'unique frontière est icHandoff(result) — voir
+   IMPORT_CENTER.md, section « PRÊT POUR PHASE 2 ».
+   ============================================================ */
+const IMPORT = window.RevemImport;
+let ic = null;                       // l'instance ouverte, ou null : jamais deux Import Center
+
+/* Reprise si un import est déjà en cours dans la bibliothèque (extraction,
+   détection, confirmation, génération) : on ne le perd pas, on y retourne. */
+function courseImportHasActiveWork(){
+  return state.courseImport.files.some(f => ["pending","extracting","detecting","review","generating"].includes(f.status));
 }
+
+/* API historique, conservée : « goToCourseImport(subjectId) » ouvre maintenant
+   l'Import Center (plus une page de la bibliothèque). */
+function goToCourseImport(subjectId){
+  openImportCenter({ contextSubjectId: subjectId || null, origin: subjectId ? "subject" : "legacy" });
+}
+
+/* opts : { contextSubjectId, origin }
+   origin (d'où vient l'action) : dashboard | nav | subjects | subject |
+   resources | command-center | empty-state | window-drop. */
+function openImportCenter(opts){
+  opts = opts || {};
+  if(ic){ icFocusHint("pick"); return ic; }                 // déjà ouvert : jamais deux
+  if(courseImportHasActiveWork()){
+    showToast(t("imp.resume_toast"));
+    libGoto("import"); switchTab("library");
+    return null;
+  }
+  courseImportStopTimer();
+  state.courseImport = freshCourseImportState(opts.contextSubjectId || null);
+  if(!IMPORT){ showToast(t("imp.err.EXTRACT_FAILED"), "error"); return null; }
+
+  const back = document.createElement("div");
+  back.className = "modal-backdrop ic-backdrop";
+  back.id = "import-center";
+  back.innerHTML = `<div class="modal modal--import ic" id="ic-dialog" role="dialog" aria-modal="true" aria-labelledby="ic-title" aria-describedby="ic-lead">
+    <div class="ic-view" id="ic-view"></div>
+    <input type="file" class="ic-file-input" id="ic-file-input" tabindex="-1" aria-hidden="true" accept="${IMPORT.ACCEPT}">
+  </div>`;
+  const me = ic = {
+    back, dialog: back.firstElementChild, view: back.querySelector("#ic-view"), input: back.querySelector("#ic-file-input"),
+    machine: IMPORT.createMachine(), opts, opener: document.activeElement,
+    dragDepth: 0, signal: null, pasteOpen: false, pasteText: "", note: null, handoff: null, keydown: null,
+  };
+  me.machine.on((next, prev) => {
+    if(ic !== me) return;
+    /* Glisser au-dessus : on n'allume qu'un état visuel, on ne redessine RIEN
+       (redessiner à chaque événement de survol est ce qui fait clignoter). */
+    if(next === "DRAGGING"){ icSetDragClass(true); return; }
+    if(prev === "DRAGGING" && (next === "IDLE" || next === "READY" || next === "ERROR")){ icSetDragClass(false); return; }
+    icRender();
+  });
+
+  /* Événements DÉLÉGUÉS, posés une seule fois sur la coque : les rendus
+     successifs de la vue ne les dupliquent jamais. */
+  back.addEventListener("click", icOnClick);
+  back.addEventListener("input", icOnInput);
+  me.input.addEventListener("change", () => { const files = me.input.files; icAcceptFiles(files); me.input.value = ""; });
+  back.addEventListener("dragenter", icOnDragEnter);
+  back.addEventListener("dragover", icOnDragOver);
+  back.addEventListener("dragleave", icOnDragLeave);
+  back.addEventListener("drop", icOnDrop);
+  me.keydown = icOnKeydown;
+  document.addEventListener("keydown", me.keydown, true);
+
+  document.body.appendChild(back);
+  document.body.classList.add("ic-open");
+  icRender();
+  icFocusHint("pick");
+  return me;
+}
+
+function closeImportCenter(){
+  const me = ic;
+  if(!me) return;
+  if(me.machine.state === "SUCCESS" && !me.forceClose) return;   // la transmission est en cours (600 ms) : on ne l'interrompt pas
+  if(me.signal) me.signal.cancelled = true;                 // une lecture en cours s'arrête réellement
+  if(me.handoff) clearTimeout(me.handoff);
+  document.removeEventListener("keydown", me.keydown, true);
+  ic = null;
+  me.back.remove();
+  document.body.classList.remove("ic-open");
+  const o = me.opener;
+  if(o && o.focus && document.contains(o)){ try{ o.focus(); }catch(e){} }
+}
+
+/* ── lecture d'octets, avec repli pour les WebView anciennes ── */
+function icReadBytes(blob){
+  if(blob.arrayBuffer) return blob.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error("lecture impossible"));
+    r.readAsArrayBuffer(blob);
+  });
+}
+
+/* ── fichier(s) reçu(s) : MÊME chemin pour le sélecteur et le dépôt ── */
+async function icAcceptFiles(fileList){
+  const me = ic;
+  if(!me) return;
+  const files = Array.from(fileList || []);
+  if(!files.length) return;
+  const m = me.machine, file = files[0];
+  if(!m.beginValidate(file)) return;                        // doublon d'événement, ou traitement en cours
+  me.note = files.length > 1 ? { key: "imp.multi_note", vars: { name: file.name } } : null;
+
+  const meta = IMPORT.validateMeta(file);
+  if(!meta.ok){ m.rejected(meta); return; }
+  let content;
+  try{
+    const head = new Uint8Array(await icReadBytes(file.slice(0, 4096)));
+    content = IMPORT.validateContent(meta.kind, head);
+  }catch(e){
+    console.warn("[REV-EM · Import] lecture des premiers octets impossible", e);
+    content = { ok: false, code: "UNREADABLE", params: { name: file.name } };
+  }
+  if(ic !== me) return;                                     // fermé pendant la vérification
+  if(!content.ok){ m.rejected(content); return; }
+  m.accepted(meta.kind);
+}
+
+function icUsePastedText(){
+  const me = ic;
+  if(!me) return;
+  const text = me.pasteText;
+  const v = IMPORT.validateText(text);
+  if(!me.machine.beginValidateText(text)) return;
+  if(!v.ok){ me.machine.rejected(v); return; }
+  me.machine.accepted("text");
+}
+
+/* ── lecture réelle du contenu, puis transmission ── */
+async function icProcess(){
+  const me = ic;
+  if(!me) return;
+  const m = me.machine;
+  if(!m.beginProcess()) return;                             // UN seul traitement, même après un double clic
+  if(aiEngineBusy()){ m.failed({ code: "ENGINE_BUSY" }); return; }
+  const src = m.source;
+  const signal = me.signal = { cancelled: false };
+  try{
+    let extracted;
+    if(src.type === "text"){
+      m.setStep("read_text"); icRenderStep();
+      extracted = { text: src.text.trim(), truncated: false, numPages: null, isScanned: false };
+    }else{
+      m.setStep("prepare"); icRenderStep();
+      await new Promise(r => setTimeout(r, 30));            // laisse peindre « Préparation… » avant le travail
+      extracted = await extractCourseFileText(src.file, null, {
+        signal,
+        onStep: (step, prog) => { if(ic === me && !signal.cancelled){ m.setStep(step, prog); icRenderStep(); } },
+      });
+    }
+    if(ic !== me || signal.cancelled) return;
+    if(extracted.isScanned || String(extracted.text || "").trim().length < IMPORT.MIN_TEXT_CHARS){
+      m.failed({ code: "NO_TEXT" }); return;                // jamais de chaîne vide vers l'automatisation
+    }
+    const result = IMPORT.buildImportResult({
+      file: src.type === "file" ? src.file : null,
+      filename: src.type === "file" ? src.file.name : t("imp.file.text_name"),
+      kind: src.kind, extractedText: extracted.text, numPages: extracted.numPages, truncated: extracted.truncated,
+      sourceContext: { subjectId: me.opts.contextSubjectId || null, origin: me.opts.origin || "unknown" },
+    });
+    m.succeeded(result);
+    me.handoff = setTimeout(() => icHandoff(result), 600);
+  }catch(e){
+    if(ic !== me || signal.cancelled) return;
+    console.error("[REV-EM · Import] lecture impossible :", e);      // le détail reste dans la console, jamais dans l'interface
+    m.failed({ code: IMPORT.classifyExtractionError(e) });
+  }
+}
+
+/* LA FRONTIÈRE AVEC LA PHASE 2 : `result` est un ImportResult (import-center.js).
+   Aujourd'hui il est converti en élément de file du pipeline existant ; la
+   Phase 2 remplacera CE point (et lui seul) par sa propre chaîne. */
+function icHandoff(result){
+  if(!ic) return;
+  closeImportCenterNow();
+  state.courseImport = freshCourseImportState(result.sourceContext.subjectId);
+  courseImportAddPrepared(result);
+  courseImportStart();
+  if(state.courseImport.step !== "detect") showToast(t("imp.err.ENGINE_BUSY"), "error");   // le pipeline a refusé de démarrer : on le dit, le fichier reste dans la file
+}
+function closeImportCenterNow(){
+  const me = ic; if(!me) return;
+  me.forceClose = true;                                     // la transmission est terminée : la fermeture est alors autorisée
+  closeImportCenter();
+}
+
+function icCancelProcess(){
+  const me = ic; if(!me) return;
+  if(me.signal) me.signal.cancelled = true;
+  me.machine.cancel();
+}
+
+/* ── événements délégués ── */
+function icOnClick(e){
+  const me = ic; if(!me) return;
+  const m = me.machine;
+  const el = e.target.closest("[data-ic]");
+  if(el){
+    const act = el.getAttribute("data-ic");
+    if(act === "pick" || act === "replace"){ e.preventDefault(); icOpenPicker(); return; }
+    if(act === "close"){ closeImportCenter(); return; }
+    if(act === "remove"){ me.note = null; m.remove(); icFocusHint("pick"); return; }
+    if(act === "primary"){ icProcess(); return; }
+    if(act === "cancel-read"){ icCancelProcess(); return; }
+    if(act === "retry"){ if(m.retry()) icFocusHint("primary"); return; }
+    if(act === "paste-toggle"){ me.pasteOpen = !me.pasteOpen; icRender(); icFocusHint(me.pasteOpen ? "paste" : "pick"); return; }
+    if(act === "paste-use"){ icUsePastedText(); return; }
+    return;
+  }
+  /* Clic sur le fond assombri (hors de la fenêtre) : fermer. */
+  if(e.target === me.back){ closeImportCenter(); return; }
+  /* Clic sur la zone de dépôt (souris) : ouvre le même sélecteur, UNE seule fois. */
+  const zone = e.target.closest("[data-ic-drop]");
+  if(zone && !e.target.closest("button, a, textarea, input, label")){ icOpenPicker(); }
+}
+function icOnInput(e){
+  const me = ic; if(!me) return;
+  if(e.target && e.target.id === "ic-paste"){
+    me.pasteText = e.target.value;
+    const use = me.view.querySelector('[data-ic="paste-use"]');
+    if(use) use.disabled = me.pasteText.trim().length === 0;
+  }
+}
+
+/* Le SEUL endroit qui ouvre le sélecteur natif : pas d'input.click() dupliqué. */
+function icOpenPicker(){
+  const me = ic; if(!me) return;
+  const st = me.machine.state;
+  if(st === "PROCESSING" || st === "SUCCESS" || st === "VALIDATING") return;
+  me.input.value = "";
+  me.input.click();
+}
+
+function icHasFiles(e){
+  const dt = e.dataTransfer;
+  return !!(dt && dt.types && Array.prototype.indexOf.call(dt.types, "Files") >= 0);
+}
+/* Glisser-déposer : un COMPTEUR d'entrées/sorties, parce que dragenter/dragleave
+   se déclenchent aussi en passant sur chaque élément enfant — sans lui, la zone
+   clignote à chaque survol d'un texte ou d'un bouton. */
+function icOnDragEnter(e){
+  const me = ic; if(!me || !icHasFiles(e)) return;
+  e.preventDefault();
+  me.dragDepth++;
+  me.machine.dragEnter();
+}
+function icOnDragOver(e){
+  const me = ic; if(!me || !icHasFiles(e)) return;
+  e.preventDefault();                                       // sans cela, le navigateur refuse le dépôt
+  if(e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+}
+function icOnDragLeave(e){
+  const me = ic; if(!me || !icHasFiles(e)) return;
+  me.dragDepth = Math.max(0, me.dragDepth - 1);
+  if(me.dragDepth === 0) me.machine.dragLeave();
+}
+function icOnDrop(e){
+  const me = ic; if(!me) return;
+  if(!icHasFiles(e)) return;
+  e.preventDefault(); e.stopPropagation();
+  me.dragDepth = 0;
+  me.machine.dragLeave();                                   // sort de DRAGGING avant de valider
+  icAcceptFiles(e.dataTransfer.files);
+}
+function icSetDragClass(on){
+  const me = ic; if(!me) return;
+  me.dialog.classList.toggle("is-dragging", !!on);
+}
+
+function icOnKeydown(e){
+  const me = ic; if(!me) return;
+  if(e.key === "Escape"){
+    e.preventDefault(); e.stopPropagation();
+    if(me.machine.state === "PROCESSING") icCancelProcess(); else closeImportCenter();
+    return;
+  }
+  if(e.key !== "Tab") return;
+  /* Piège à focus : le clavier ne sort pas de la fenêtre. */
+  const f = Array.prototype.filter.call(me.dialog.querySelectorAll("button:not([disabled]), [href], textarea, input:not([type=file]), select, [tabindex]:not([tabindex='-1'])"), n => n.offsetParent !== null);
+  if(!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if(!me.dialog.contains(document.activeElement)){ e.preventDefault(); first.focus(); return; }
+  if(e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+}
+
+/* Après chaque rendu, le focus va où l'utilisateur l'attend. */
+function icFocusHint(hint){
+  const me = ic; if(!me) return;
+  const map = { pick: '[data-ic="pick"]', primary: '[data-ic="primary"]', paste: "#ic-paste", cancel: '[data-ic="cancel-read"]', close: '[data-ic="close"]' };
+  const sel = map[hint];
+  const target = (sel && me.view.querySelector(sel)) || me.view.querySelector('[data-ic="pick"], [data-ic="primary"], [data-ic="close"]');
+  if(target && target.focus){ try{ target.focus({ preventScroll: true }); }catch(e){ target.focus(); } }
+}
+
+/* ── rendu ── */
+function icStepLabel(kind, step, prog){
+  if(step === "prepare") return t("imp.step.prepare");
+  if(step === "reader")  return t(kind === "docx" ? "imp.step.reader_docx" : "imp.step.reader_pdf");
+  if(step === "read_text") return t("imp.step.read_text");
+  if(step === "read"){
+    if(kind === "pdf" && prog && prog.total) return t("imp.step.read_pdf", { page: prog.page, total: prog.total });
+    return t(kind === "docx" ? "imp.step.read_docx" : "imp.step.read_text");
+  }
+  return t("imp.step.prepare");
+}
+function icSizeUnits(){ return { b: t("imp.unit_b"), kb: t("imp.unit_kb"), mb: t("imp.unit_mb") }; }
+function icFileSummary(src){
+  if(!src) return { name: "", meta: "" };
+  if(src.type === "text") return { name: t("imp.file.text_name"), meta: t("imp.file.chars", { n: src.text.length.toLocaleString(currentLocaleTag()) }) };
+  return { name: src.file.name, meta: (IMPORT.kindLabel(src.kind) ? IMPORT.kindLabel(src.kind) + " · " : "") + IMPORT.formatSize(src.file.size, currentLocaleTag(), icSizeUnits()) };
+}
+function icErrorText(err){
+  const p = Object.assign({}, err.params || {});
+  if(p.max != null) p.max = IMPORT.formatSize(p.max, currentLocaleTag(), icSizeUnits());
+  if(p.size != null) p.size = IMPORT.formatSize(p.size, currentLocaleTag(), icSizeUnits());
+  if(p.family) p.family = p.family;
+  return t(err.messageKey, p);
+}
+
+function icRender(){
+  const me = ic; if(!me) return;
+  const m = me.machine, st = m.state;
+  me.dialog.setAttribute("data-ic-state", st);
+  me.dialog.classList.remove("is-dragging");
+  const subj = me.opts.contextSubjectId ? findSubject(me.opts.contextSubjectId) : null;
+  const src = m.source;
+  const sum = icFileSummary(src);
+  const err = m.error;
+
+  const head = `<div class="modal-head ic-head">
+    <div class="ic-headtext">
+      <h2 class="modal-title" id="ic-title">${escapeHtml(t("imp.title"))}</h2>
+      <p class="ic-lead" id="ic-lead">${escapeHtml(t("imp.lead"))}</p>
+      ${subj ? `<p class="ic-context"><span class="ic-context-icon">${dashIcon("book")}</span>${escapeHtml(t("imp.context", { name: subj.name }))}</p>` : ""}
+    </div>
+    <button type="button" class="modal-close ic-close" data-ic="close" aria-label="${escapeHtml(t("imp.close"))}">${dashIcon("x")}</button>
+  </div>`;
+
+  const dropzone = () => `<div class="ic-drop" data-ic-drop role="group" aria-label="${escapeHtml(t("imp.aria.drop"))}">
+      <span class="ic-drop-icon">${dashIcon("filein")}</span>
+      <p class="ic-drop-title">${escapeHtml(t("imp.drop.title"))}</p>
+      <p class="ic-drop-or">${escapeHtml(t("imp.drop.or"))}</p>
+      <button type="button" class="btn btn--secondary ic-pick" data-ic="pick">${escapeHtml(t("imp.pick"))}</button>
+      <p class="ic-drop-formats">${escapeHtml(t("imp.formats_main", { max: IMPORT.formatSize(IMPORT.MAX_BYTES, currentLocaleTag(), icSizeUnits()) }))}</p>
+      <p class="ic-drop-more">${escapeHtml(t("imp.formats_more"))}</p>
+    </div>`;
+
+  const alertBox = () => err ? `<div class="ic-alert" role="alert"><span class="ic-alert-icon">${dashIcon("alert")}</span><p>${escapeHtml(icErrorText(err))}</p></div>` : "";
+  const noteBox = () => me.note ? `<p class="ic-note" role="status">${escapeHtml(t(me.note.key, me.note.vars))}</p>` : "";
+
+  const pasteBlock = () => `<div class="ic-paste">
+      <button type="button" class="btn-text ic-paste-toggle" data-ic="paste-toggle" aria-expanded="${me.pasteOpen ? "true" : "false"}" aria-controls="ic-paste-panel">${escapeHtml(t(me.pasteOpen ? "imp.paste.hide" : "imp.paste.toggle"))}</button>
+      ${me.pasteOpen ? `<div class="ic-paste-panel" id="ic-paste-panel">
+        <label class="ic-paste-label" for="ic-paste">${escapeHtml(t("imp.paste.label"))}</label>
+        <textarea class="ai-textarea" id="ic-paste" rows="5" placeholder="${escapeHtml(t("imp.paste.placeholder"))}">${escapeHtml(me.pasteText)}</textarea>
+        <button type="button" class="btn btn--secondary" data-ic="paste-use" ${me.pasteText.trim() ? "" : "disabled"}>${escapeHtml(t("imp.paste.use"))}</button>
+      </div>` : ""}
+    </div>`;
+
+  const fileCard = (variant, inner, actions) => `<div class="ic-file ic-file--${variant}">
+      <span class="ic-file-icon">${dashIcon("file")}</span>
+      <div class="ic-file-body">
+        <div class="ic-file-name" title="${escapeHtml(sum.name)}">${escapeHtml(sum.name)}</div>
+        <div class="ic-file-meta">${escapeHtml(sum.meta)}</div>
+        ${inner}
+      </div>
+      ${actions || ""}
+    </div>`;
+
+  let body = "", foot = "", live = "";
+  if(st === "IDLE" || st === "DRAGGING"){
+    body = dropzone() + noteBox() + pasteBlock();
+    foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
+            <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
+  }else if(st === "VALIDATING"){
+    body = fileCard("busy", `<div class="ic-file-status"><span class="ic-spinner" aria-hidden="true"></span>${escapeHtml(t("imp.file.checking"))}</div>`, "");
+    foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
+            <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
+  }else if(st === "READY"){
+    body = fileCard("ready", `<div class="ic-file-status is-ok"><span class="ic-dot" aria-hidden="true"></span>${escapeHtml(t("imp.file.ready"))}</div>`,
+      `<div class="ic-file-actions"><button type="button" class="btn-text" data-ic="replace">${escapeHtml(t("imp.file.replace"))}</button><button type="button" class="btn-text ic-remove" data-ic="remove">${escapeHtml(t("imp.file.remove"))}</button></div>`)
+      + noteBox();
+    foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
+            <button type="button" class="btn btn--primary" data-ic="primary">${escapeHtml(t("imp.cta"))}</button>`;
+    live = t("imp.live.ready", { name: sum.name });
+  }else if(st === "PROCESSING"){
+    const pr = m.progress, real = pr && pr.total;
+    const pct = real ? Math.round(pr.page / pr.total * 100) : null;
+    body = fileCard("busy", `<div class="ic-progress">
+        ${pct === null ? `<span class="ic-spinner" aria-hidden="true"></span>` : `<div class="ic-bar" id="ic-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="${escapeHtml(t("imp.aria.progress"))}"><div class="ic-bar-fill" id="ic-bar-fill" style="width:${pct}%"></div></div>`}
+        <p class="ic-step" id="ic-step" aria-live="polite">${escapeHtml(icStepLabel(src.kind, m.step, pr))}</p>
+      </div>`, "");
+    foot = `<button type="button" class="btn btn--tertiary" data-ic="cancel-read">${escapeHtml(t("imp.cancel_read"))}</button>
+            <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta_busy"))}</button>`;
+  }else if(st === "SUCCESS"){
+    const r = m.result;
+    const pages = r.numPages ? t("imp.pages", { n: r.numPages }) + " · " : "";
+    body = `<div class="ic-success" role="status"><span class="ic-success-icon">${dashIcon("check")}</span>
+      <p class="ic-success-title">${escapeHtml(t("imp.success"))}</p>
+      <p class="ic-success-meta">${escapeHtml(pages + t("imp.chars", { n: r.charCount.toLocaleString(currentLocaleTag()) }))}</p>
+      ${r.truncated ? `<p class="ic-note">${escapeHtml(t("imp.warn.truncated", { n: IMPORT.MAX_PDF_PAGES }))}</p>` : ""}
+      <p class="ic-success-next">${escapeHtml(t("imp.success_next"))}</p></div>`;
+    foot = "";
+  }else if(st === "ERROR"){
+    if(src){        // échec de TRAITEMENT : le fichier est toujours là
+      body = fileCard("error", "", `<div class="ic-file-actions"><button type="button" class="btn-text" data-ic="replace">${escapeHtml(t("imp.file.replace"))}</button><button type="button" class="btn-text ic-remove" data-ic="remove">${escapeHtml(t("imp.file.remove"))}</button></div>`) + alertBox();
+      foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
+              ${err.retry ? `<button type="button" class="btn btn--primary" data-ic="retry">${escapeHtml(t("imp.retry"))}</button>` : `<button type="button" class="btn btn--primary" data-ic="pick">${escapeHtml(t("imp.other"))}</button>`}`;
+    }else{          // refus de VALIDATION : la zone reste utilisable, rien ne se ferme
+      body = alertBox() + dropzone() + pasteBlock();
+      foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
+              <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
+    }
+  }
+
+  /* L'apparition douce ne rejoue QUE quand l'écran change d'état — pas quand on
+     déplie « coller le texte », ce qui ferait clignoter la zone de dépôt. */
+  const entering = me.lastState !== st; me.lastState = st;
+  me.view.innerHTML = head + `<div class="ic-body"${entering ? " data-enter" : ""}${(src && (st === "READY" || st === "ERROR")) ? ` data-has-file="1" data-drop-label="${escapeHtml(t("imp.drop.replace"))}"` : ""}>${body}</div>` + (foot ? `<div class="modal-foot ic-foot">${foot}</div>` : "") + `<p class="ic-live" id="ic-live" role="status" aria-live="polite">${escapeHtml(live)}</p>`;
+  icFocusForState();
+}
+
+/* Met à jour seulement l'étape et la barre pendant la lecture : jamais un
+   rendu complet par page lue. */
+function icRenderStep(){
+  const me = ic; if(!me) return;
+  const m = me.machine;
+  if(m.state !== "PROCESSING") return;
+  const label = document.getElementById("ic-step");
+  const pr = m.progress;
+  const fill = document.getElementById("ic-bar-fill");
+  const needsBar = !!(pr && pr.total);
+  if(!label || (needsBar && !fill) || (!needsBar && document.getElementById("ic-bar"))){ icRender(); return; }
+  label.textContent = icStepLabel(m.source.kind, m.step, pr);
+  if(fill && needsBar){
+    const pct = Math.round(pr.page / pr.total * 100);
+    fill.style.width = pct + "%";
+    const bar = document.getElementById("ic-bar"); if(bar) bar.setAttribute("aria-valuenow", String(pct));
+  }
+}
+
+function icFocusForState(){
+  const me = ic; if(!me) return;
+  const st = me.machine.state;
+  const active = document.activeElement;
+  if(active && me.dialog.contains(active) && active !== me.dialog && active.isConnected) return;   // le focus est déjà dans la fenêtre : on n'y touche pas
+  const hint = { IDLE: "pick", ERROR: "pick", READY: "primary", PROCESSING: "cancel", VALIDATING: "close" }[st];
+  if(hint) icFocusHint(hint);
+}
+
+/* Un changement de langue redessine l'Import Center ouvert (il est hors du rendu de page). */
+if(window.LyonI18n && LyonI18n.onChange) LyonI18n.onChange(() => { if(ic) icRender(); });
+
+/* Dépôt d'un fichier sur la fenêtre de l'application ALORS QUE l'Import Center
+   est fermé : sans ce garde, le navigateur (ou le WKWebView de REV-EM.app)
+   QUITTE l'application pour afficher le PDF. On l'empêche, et on ouvre l'import. */
+window.addEventListener("dragover", (e) => { if(!ic && icHasFiles(e)){ e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect = "copy"; } });
+window.addEventListener("drop", (e) => {
+  if(ic || !icHasFiles(e)) return;
+  e.preventDefault();
+  const files = e.dataTransfer.files;
+  if(openImportCenter({ origin: "window-drop" })) icAcceptFiles(files);
+});
+/* Tout bouton portant data-import-center ouvre l'Import Center : UN écouteur
+   pour toute l'application, jamais un par bouton à ré-attacher après un rendu. */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("[data-import-center]");
+  if(!b) return;
+  e.preventDefault();
+  openImportCenter({ origin: b.getAttribute("data-import-center") || "unknown", contextSubjectId: b.getAttribute("data-import-subject") || null });
+});
 
 function fmtFileSize(bytes){
   if(bytes < 1024) return bytes + " o";
@@ -11457,40 +12041,17 @@ function renderImportCancelled(item){
   </div>`;
 }
 
+/* L'ancienne page « Importer un cours » (zone de dépôt + texte collé + file de
+   fichiers) n'existe plus : l'Import Center la remplace, partout. Cette vue ne
+   s'affiche que si l'on arrive ici sans import en cours (ex. après avoir retiré
+   le dernier fichier) — elle ne contient PAS de second système, juste un accès. */
 function renderImportPick(){
-  const ci = state.courseImport;
-  let html = `<h1 class="page-title">Importer un cours</h1>
-  <p class="ai-intro">Dépose un fichier ou colle ton cours : REV-EM génère automatiquement une fiche structurée, un résumé, un quiz, des flashcards et des questions de révision — sans rien remplir à la main.</p>`;
-
-  html += `<div class="import-dropzone ${ci.dragOver ? "is-dragover" : ""}" id="import-dropzone" role="button" tabindex="0" aria-label="Importer un fichier de cours">
-    <div class="import-dropzone-title">Dépose ton cours ici ou clique pour importer un fichier</div>
-    <div class="import-dropzone-sub">Tu peux aussi importer plusieurs fichiers à la fois.</div>
-    <div class="import-dropzone-formats">Formats acceptés : PDF, DOCX, TXT, Markdown · 15 Mo max par fichier</div>
-    <input type="file" id="import-file-input" accept=".pdf,.docx,.txt,.md,.markdown" multiple style="display:none;">
+  return `<h1 class="page-title">${escapeHtml(t("imp.title"))}</h1>
+  <p class="ai-intro">${escapeHtml(t("imp.lead"))}</p>
+  <div class="actions" style="justify-content:flex-start;margin-top:16px;">
+    <button class="btn red" id="import-open-center-btn" data-import-center="wizard">${escapeHtml(t("imp.title"))}</button>
+    <button class="btn-text" id="import-cancel-btn">${escapeHtml(t("imp.cancel"))}</button>
   </div>`;
-
-  html += `<div class="ai-field" style="margin-top:16px;">
-    <label for="import-paste-text">Tu peux également coller ton cours directement ici</label>
-    <textarea class="ai-textarea" id="import-paste-text" style="min-height:110px;" placeholder="Colle le texte de ton cours…">${escapeHtml(ci.pasteText)}</textarea>
-    <button class="btn-text" id="import-add-paste-btn" style="margin-top:8px;">+ Ajouter ce texte à la file</button>
-  </div>`;
-
-  if(ci.files.length){
-    html += `<div class="import-filelist">` + ci.files.map(f=>`
-      <div class="import-file-row">
-        <span class="name">${escapeHtml(f.name)}</span>
-        <span class="size">${fmtFileSize(f.size)}</span>
-        <button class="btn-text" data-import-remove="${f.id}" aria-label="Retirer ${escapeHtml(f.name)}">✕</button>
-      </div>`).join("") + `</div>`;
-  }
-
-  html += `<div class="actions" style="justify-content:flex-start;margin-top:16px;">
-    <button class="btn red" id="import-generate-btn" ${ci.files.length === 0 ? "disabled" : ""}>Générer mes supports${ci.files.length > 1 ? " (" + ci.files.length + " fichiers)" : ""}</button>
-    <button class="btn-text" id="import-cancel-btn">Annuler</button>
-  </div>`;
-
-  html += `<footer class="hint">Le traitement se fait localement dans ton navigateur lorsque l'assistant IA est disponible : ton cours n'est envoyé à aucun serveur. Les formats PPTX et les images (OCR) ne sont pas encore pris en charge — colle le texte directement dans ce cas.</footer>`;
-  return html;
 }
 
 /* Bloc de progression partagé (barre + %, étape sur 3, minuteur, annuler,
@@ -11766,40 +12327,7 @@ function attachCourseImportEvents(){
   if(state.aiStatus === "checking") checkAIStatus();
   const ci = state.courseImport;
 
-  /* ---- étape "pick" ---- */
-  const dropzone = document.getElementById("import-dropzone");
-  const fileInput = document.getElementById("import-file-input");
-  if(dropzone && fileInput){
-    dropzone.addEventListener("click", ()=> fileInput.click());
-    dropzone.addEventListener("keydown", (e)=>{ if(e.key === "Enter" || e.key === " "){ e.preventDefault(); fileInput.click(); } });
-    dropzone.addEventListener("dragover", (e)=>{ e.preventDefault(); if(!ci.dragOver){ ci.dragOver = true; render(); } });
-    dropzone.addEventListener("dragleave", ()=>{ if(ci.dragOver){ ci.dragOver = false; render(); } });
-    dropzone.addEventListener("drop", (e)=>{
-      e.preventDefault();
-      ci.dragOver = false;
-      if(e.dataTransfer && e.dataTransfer.files.length) courseImportAddFiles(e.dataTransfer.files);
-      render();
-    });
-    fileInput.addEventListener("change", ()=>{
-      if(fileInput.files.length) courseImportAddFiles(fileInput.files);
-      fileInput.value = "";
-      render();
-    });
-  }
-  const pasteTa = document.getElementById("import-paste-text");
-  if(pasteTa) pasteTa.addEventListener("input", (e)=>{ ci.pasteText = e.target.value; });
-  const addPasteBtn = document.getElementById("import-add-paste-btn");
-  if(addPasteBtn) addPasteBtn.addEventListener("click", ()=>{
-    const ta = document.getElementById("import-paste-text");
-    if(ta) ci.pasteText = ta.value;
-    courseImportAddPasteAsFile();
-    render();
-  });
-  document.querySelectorAll("[data-import-remove]").forEach(btn=>{
-    btn.addEventListener("click", ()=>{ courseImportRemoveFile(btn.dataset.importRemove); render(); });
-  });
-  const genBtn = document.getElementById("import-generate-btn");
-  if(genBtn && !genBtn.disabled) genBtn.addEventListener("click", courseImportStart);
+  /* ---- étape "pick" : plus de zone de dépôt ici, voir l'Import Center ---- */
   const cancelBtn = document.getElementById("import-cancel-btn");
   if(cancelBtn) cancelBtn.addEventListener("click", ()=> libGoto("subjects"));
 
@@ -11824,7 +12352,7 @@ function attachCourseImportEvents(){
     const next = ci.files.findIndex(f => f.status === "pending" || f.status === "review");
     if(next !== -1) courseImportProcessFile(next);
     else if(ci.files.some(f=>f.status==="done"||f.status==="error")) ci.step = "result";
-    else ci.step = "pick";
+    else { ci.step = "pick"; libGoto("subjects"); return; }   // plus rien à traiter : retour aux matières
     render();
   });
 
@@ -11915,7 +12443,7 @@ function attachCourseImportEvents(){
   const backBtn = document.getElementById("import-back-btn");
   if(backBtn) backBtn.addEventListener("click", ()=> libGoto("subjects"));
   const newImportBtn = document.getElementById("import-new-btn");
-  if(newImportBtn) newImportBtn.addEventListener("click", ()=>{ courseImportReset(); });
+  if(newImportBtn) newImportBtn.addEventListener("click", ()=>{ courseImportStopTimer(); state.courseImport = freshCourseImportState(); libGoto("subjects"); openImportCenter({ origin: "result" }); });
 }
 
 /* ============================================================
@@ -12963,52 +13491,29 @@ function courseIsRevised(ch){
   return isUserChapter(ch.id) ? !!ch.markedReviewed : !!chapterMetrics(ch).mastered;
 }
 
+/* « Automatiser mes révisions » (page Ressources) : plus de seconde zone de
+   dépôt — un seul accès, vers le MÊME Import Center que partout ailleurs. */
 function renderCourseAutomationCard(){
-  const ci = state.courseImport;
-  let html = `<div class="card automate-card">
+  return `<div class="card automate-card">
     <div class="automate-head">
       <div>
-        <div class="h">Automatiser mes révisions</div>
-        <div class="d">Importe un cours et génère automatiquement une fiche, un résumé, des quiz et des flashcards grâce à l'assistant IA local.</div>
+        <div class="h">${escapeHtml(t("imp.res.title"))}</div>
+        <div class="d">${escapeHtml(t("imp.res.desc"))}</div>
       </div>
     </div>
-
-    <div class="import-dropzone import-dropzone-compact ${ci.dragOver ? "is-dragover" : ""}" id="import-dropzone" role="button" tabindex="0" aria-label="Importer un fichier de cours">
-      <div class="import-dropzone-title">Dépose ton PDF ici</div>
-      <div class="import-dropzone-sub">ou clique pour choisir un fichier</div>
-      <div class="import-dropzone-formats">PDF, DOCX, TXT, Markdown · 15 Mo max</div>
-      <input type="file" id="import-file-input" accept=".pdf,.docx,.txt,.md,.markdown" multiple style="display:none;">
+    <div class="actions" style="justify-content:flex-start;margin-top:16px;">
+      <button class="btn red" id="resources-import-btn" data-import-center="resources">${escapeHtml(t("imp.title"))}</button>
     </div>
 
-    <details class="ai-extra" style="margin-top:12px;">
-      <summary>Ou coller le texte directement</summary>
-      <textarea class="ai-textarea" id="import-paste-text" style="min-height:90px;margin-top:8px;" placeholder="Colle le texte de ton cours…">${escapeHtml(ci.pasteText)}</textarea>
-      <button class="btn-text" id="import-add-paste-btn" style="margin-top:8px;">+ Ajouter ce texte à la file</button>
-    </details>`;
-
-  if(ci.files.length){
-    html += `<div class="import-filelist" style="margin-top:16px;">` + ci.files.map(f=>`
-      <div class="import-file-row">
-        <span class="name">${escapeHtml(f.name)}</span>
-        <span class="size">${fmtFileSize(f.size)}</span>
-        <button class="btn-text" data-import-remove="${f.id}" aria-label="Retirer ${escapeHtml(f.name)}">✕</button>
-      </div>`).join("") + `</div>`;
-  }
-
-  html += `<div class="actions" style="justify-content:flex-start;margin-top:16px;">
-    <button class="btn red" id="import-generate-btn" ${ci.files.length === 0 ? "disabled" : ""}>Importer un cours${ci.files.length > 1 ? " (" + ci.files.length + " fichiers)" : ""}</button>
-  </div>
-
-  <details class="ai-extra automate-advanced">
-    <summary>Options avancées</summary>
-    <p class="ai-hint" style="margin:8px 0;">Pour sauvegarder ou restaurer l'ensemble de tes matières et chapitres au format JSON — pas pour importer un cours.</p>
-    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
-      <button class="btn-text" id="catalog-export-btn">Exporter mes cours (JSON)</button>
-      <label class="btn-text" style="cursor:pointer;margin:0;">Importer une sauvegarde JSON<input type="file" id="catalog-import-input" accept=".json,application/json" style="display:none;"></label>
-    </div>
-  </details>
+    <details class="ai-extra automate-advanced">
+      <summary>Options avancées</summary>
+      <p class="ai-hint" style="margin:8px 0;">Pour sauvegarder ou restaurer l'ensemble de tes matières et chapitres au format JSON — pas pour importer un cours.</p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+        <button class="btn-text" id="catalog-export-btn">Exporter mes cours (JSON)</button>
+        <label class="btn-text" style="cursor:pointer;margin:0;">Importer une sauvegarde JSON<input type="file" id="catalog-import-input" accept=".json,application/json" style="display:none;"></label>
+      </div>
+    </details>
   </div>`;
-  return html;
 }
 
 function fmtCourseDate(ch){
@@ -15958,7 +16463,7 @@ function aiStatusHtml(){
       <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
         <button class="btn outline small" id="ai-retry-check-btn" ${checking?"disabled":""}>${checking ? "Vérification…" : "Réessayer"}</button>
         <button class="btn-text" id="ai-goto-simplified-btn">Utiliser le mode simplifié</button>
-        <button class="btn-text" id="ai-goto-import-noai-btn">Importer et enregistrer sans IA</button>
+        <button class="btn-text" id="ai-goto-import-noai-btn" data-import-center="ai-panel">Importer et enregistrer sans IA</button>
       </div>
       </div></div>`;
   }
@@ -16550,8 +17055,6 @@ function attachAIEvents(){
   if(diagPanel) diagPanel.addEventListener("toggle", ()=>{ state.aiDiagPanelOpen = diagPanel.open; });
   const gotoSimplifiedBtn = document.getElementById("ai-goto-simplified-btn");
   if(gotoSimplifiedBtn) gotoSimplifiedBtn.addEventListener("click", ()=> switchTab("fiches"));
-  const gotoImportNoAiBtn = document.getElementById("ai-goto-import-noai-btn");
-  if(gotoImportNoAiBtn) gotoImportNoAiBtn.addEventListener("click", ()=>{ goToCourseImport(); switchTab("library"); });
 
   const resetCacheBtn = document.getElementById("ai-reset-cache");
   if(resetCacheBtn) resetCacheBtn.addEventListener("click", async ()=>{
@@ -17333,7 +17836,7 @@ function renderSmartHome(){
     html += `<div class="dash-section sr-empty-hero">
       <p>${t("smart.subtitle_empty")}</p>
       <div class="sr-empty-actions">
-        ${hasChapters ? `<button class="btn red" id="smart-empty-quiz-btn">${t("smart.empty_cta_quiz")}</button>` : `<button class="btn red" id="smart-empty-import-btn">${t("smart.empty_cta_import")}</button>`}
+        ${hasChapters ? `<button class="btn red" id="smart-empty-quiz-btn">${t("smart.empty_cta_quiz")}</button>` : `<button class="btn red" id="smart-empty-import-btn" data-import-center="empty-state">${t("smart.empty_cta_import")}</button>`}
         <button class="btn outline" id="smart-empty-subjects-btn">${t("smart.empty_cta_subjects")}</button>
       </div>
     </div>`;
@@ -17467,8 +17970,6 @@ function attachSmartRevisionEvents(){
   });
   const emptyQuiz = document.getElementById("smart-empty-quiz-btn");
   if(emptyQuiz) emptyQuiz.addEventListener("click", ()=> switchTab("quiz"));
-  const emptyImport = document.getElementById("smart-empty-import-btn");
-  if(emptyImport) emptyImport.addEventListener("click", ()=>{ goToCourseImport(); switchTab("library"); });
   const emptySubjects = document.getElementById("smart-empty-subjects-btn");
   if(emptySubjects) emptySubjects.addEventListener("click", ()=>{ libGoto("subjects"); switchTab("library"); });
 }
@@ -17544,7 +18045,7 @@ function renderStatsEmptyState(){
   return `<div class="dash-section sr-empty-hero">
     <p>${t("stats.subtitle_empty")}</p>
     <div class="sr-empty-actions">
-      ${hasChapters ? `<button class="btn red" id="stats-empty-quiz-btn">${t("smart.empty_cta_quiz")}</button>` : `<button class="btn red" id="stats-empty-import-btn">${t("smart.empty_cta_import")}</button>`}
+      ${hasChapters ? `<button class="btn red" id="stats-empty-quiz-btn">${t("smart.empty_cta_quiz")}</button>` : `<button class="btn red" id="stats-empty-import-btn" data-import-center="empty-state">${t("smart.empty_cta_import")}</button>`}
       <button class="btn outline" id="stats-empty-subjects-btn">${t("smart.empty_cta_subjects")}</button>
     </div>
   </div>`;
@@ -17815,8 +18316,6 @@ function attachStatisticsEvents(){
   if(reviseBtn) reviseBtn.addEventListener("click", ()=> statsReviseChapter(reviseBtn.dataset.statsRevise));
   const emptyQuiz = document.getElementById("stats-empty-quiz-btn");
   if(emptyQuiz) emptyQuiz.addEventListener("click", ()=> switchTab("quiz"));
-  const emptyImport = document.getElementById("stats-empty-import-btn");
-  if(emptyImport) emptyImport.addEventListener("click", ()=>{ goToCourseImport(); switchTab("library"); });
   const emptySubjects = document.getElementById("stats-empty-subjects-btn");
   if(emptySubjects) emptySubjects.addEventListener("click", ()=>{ libGoto("subjects"); switchTab("library"); });
 }
@@ -21357,7 +21856,7 @@ function handleNavGoto(ds){
     switchTab("fiches");
     return;
   }
-  if(goto === "import-course"){ goToCourseImport(); return switchTab("library"); }
+  if(goto === "import-course"){ openImportCenter({ origin: ds.origin || "nav" }); return; }
   if(goto === "flash"){ state.flashScreen = "picker"; return switchTab("flash"); }
   if(goto === "quiz"){ state.screen = "picker"; return switchTab("quiz"); }
   if(goto === "exam"){ state.exam.screen = "setup"; return switchTab("exam"); }
@@ -21690,7 +22189,7 @@ function ccRegisterSources(){
           run: () => ccGoto({ goto: "smart" }) },
         { key: "cc.act_import",         icon: "upload",   suggested: true,
           kw: ["importer", "pdf", "cours", "upload", "ajouter document"],
-          run: () => ccGoto({ goto: "import-course" }) },
+          run: () => ccGoto({ goto: "import-course", origin: "command-center" }) },
         { key: "cc.act_new_subject",    icon: "plus",     suggested: true,
           kw: ["creer", "nouvelle", "matiere", "ajouter"],
           run: () => ccGoto({ goto: "library-add" }) },

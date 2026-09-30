@@ -310,9 +310,10 @@ try {
     await typeQuery(page, "importer un cours");
     await page.keyboard.press("Enter");
     await page.waitForTimeout(500);
-    eq("une action mène là où elle annonce",
-      await page.evaluate(() => ({ tab: state.tab, vue: state.library.view })),
-      { tab: "library", vue: "import" });
+    eq("une action mène là où elle annonce (l'Import Center s'ouvre par-dessus la page courante)",
+      await page.evaluate(() => ({ tab: state.tab, centre: !!document.getElementById("import-center") })),
+      { tab: "dashboard", centre: true });
+    await page.evaluate(() => closeImportCenter());
 
     /* Le clic souris fait la même chose que la touche Entrée. */
     await page.evaluate(() => { switchTab("dashboard"); });
