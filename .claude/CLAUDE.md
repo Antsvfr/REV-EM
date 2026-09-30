@@ -153,6 +153,17 @@ modifier du code dans son domaine, pas après :
 | `performance-security` | avant d'ajouter une dépendance, un appel réseau, une entrée utilisateur |
 | `testing-code-review` | avant de considérer une tâche terminée |
 
+## Déploiement (GitHub Pages)
+
+**GitHub Pages ne publie PAS `main`** : il publie la branche
+`claude/REV-EM-rebrand-restructure-ddinml` (constaté dans les exécutions
+« pages build and deployment »). Pousser sur `main` seul ne met rien en ligne :
+une série entière de correctifs y est restée invisible pour l'utilisateur.
+Après chaque livraison validée, avancer aussi cette branche, sans forcer :
+`git push origin main:refs/heads/claude/REV-EM-rebrand-restructure-ddinml`
+(avancement simple), puis vérifier que l'exécution Pages a réussi. Si le
+réglage Pages est un jour repointé sur `main`, supprimer cette section.
+
 ## Fin de tâche
 
 À la fin d'une tâche significative, résumer : modifications réalisées,
