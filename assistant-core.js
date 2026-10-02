@@ -130,10 +130,11 @@
     math:       /\b(derivee\w*|integrale\w*|equation\w*|matrice\w*|vecteur\w*|logarithme\w*|exponentielle\w*|polynome\w*|derivative|integral|equation|matrix|vector|logarithm|theoreme|theorem)\b/,
     stats:      /\b(loi normale|ecart[- ]type|variance|moyenne|mediane|regression|correlation|p[- ]?value|intervalle de confiance|confidence interval|echantillon|sample|hypothese nulle|distribution|student|khi|chi[- ]?2|probabilite\w*|standard deviation|mean|median|test statistique|anova|biais|bias)\b/,
     accounting: /\b(comptabilite|accounting|compte de resultat|amortissement|provision\w*|passif|actif|capitaux propres|plan comptable|debit|credit)\b/,
-    marketing:  /\b(segmentation|positionnement|mix marketing|4 ?p|swot|marque|branding|persona|etude de marche|ciblage|pricing)\b/,
+    marketing:  /\b(marketing|segmentation|positionnement|mix marketing|4 ?p|swot|marque|branding|persona|etude de marche|ciblage|pricing|campagne\w*|campaign|publicite|advertising|reseaux sociaux|social media|seo|b2b|b2c)\b/,
+    management: /\b(management|manager|leadership|strategie|strategy|gestion de projet|project management|business model|modele economique|kpi|ressources humaines|human resources|culture d'entreprise|organisation du travail|porter)\b/,
   };
   function detectDomain(f){
-    var order = ["stats", "math", "finance", "economics", "accounting", "marketing"], best = "general", bestN = 0;
+    var order = ["stats", "math", "finance", "economics", "accounting", "marketing", "management"], best = "general", bestN = 0;
     order.forEach(function(d){
       var m = f.match(new RegExp(DOMAIN[d].source, "g"));
       if(m && m.length > bestN){ bestN = m.length; best = d; }
@@ -175,7 +176,7 @@
     var domain = detectDomain(f);
     var realtime = detectRealtime(f);
     var source = detectSource(f);
-    var out = { text: raw, lang: lang, domain: domain, flags: flags, realtime: realtime, source: source, numeric: false,
+    var out = { text: raw, lang: lang, domain: domain, topics: [], flags: flags, realtime: realtime, source: source, numeric: false,
                 intent: "GENERAL_KNOWLEDGE", depth: "NORMAL", followType: null, needsHistory: false };
 
     if(realtime){ out.intent = "CURRENT_INFORMATION"; out.depth = "SHORT"; return out; }
@@ -210,7 +211,7 @@
     }
     else if(flags.exercise){ out.intent = "EXERCISE"; }
     else if(/\b(compare\w*|comparer|difference\w* entre|differences? between|compare|versus|\bvs\b|lequel|laquelle|which one|unterschied|diferencia|differenza|unterscheiden)\b/.test(f)){ out.intent = "COMPARISON"; }
-    else if(/\b(comment (faire|calculer|on|je|puis[- ]je|proceder|rediger|construire|determiner|trouver)|etapes|procedure|how (to|do i|can i|do you)|steps to|como (hacer|calcular)|wie (berechne|mache)|come (si|fare|calcolare))\b/.test(f)){ out.intent = "PROCEDURE"; }
+    else if(/\b(comment (faire|calculer|on|je|puis[- ]je|proceder|rediger|construire|determiner|trouver|creer|mettre|lancer|organiser|gerer|choisir|analyser|realiser|elaborer|etablir)|etapes|procedure|how (to|do i|can i|do you)|steps to|como (hacer|calcular)|wie (berechne|mache)|come (si|fare|calcolare))\b/.test(f)){ out.intent = "PROCEDURE"; }
     else if(/\b(resume\w*|synthese|summari[sz]e|summary|resumen|zusammenfassung|riassunto)\b/.test(f)){ out.intent = "SUMMARY"; }
     else if(/\b(idees?|propose\w*|brainstorm\w*|suggestions?|ideas|suggest|propon\w*|vorschl\w+|proposte)\b/.test(f)){ out.intent = "BRAINSTORMING"; }
     else if(/(^|\b)(qu'est[- ]?ce (que|qu')|c'est quoi|definition|definis|define|what is|what are|what does .* mean|que signifie|was ist|was sind|que es|que son|cos'e|che cosa e)\b/.test(f)){ out.intent = "DEFINITION"; }
@@ -544,6 +545,9 @@
     finance: "Finance: give the intuition first, then the mechanism; a formula only if it adds something, a short numeric example if useful, then what it means for the decision.",
     economics: "Economics: concept, then mechanism, who is affected, effects, example. Distinguish correlation from causation and short run from long run when relevant.",
     math: "Maths: intuition, notation, formula, method, computation, interpretation. Never give a bare formula unless a very short answer is requested.",
+    accounting: "Accounting: the principle, the accounts concerned (debit / credit), a short numeric example, then what it shows about the company.",
+    marketing: "Marketing: the concept, the target and context, a concrete example, then how to apply it step by step.",
+    management: "Management: the concept, when it applies, a concrete example, then its limits.",
     stats: "Statistics: concept, assumptions, method, result, interpretation. Never give a bare formula unless a very short answer is requested.",
   };
   var DEPTH_LINES = {
@@ -670,6 +674,58 @@
 
   function languageLine(lang){ return "Answer in " + (LANG_NAME[lang] || "French") + "."; }
 
+  /* ── 9bis. CONNAISSANCES REV-EM (knowledge-engine.js) ───────────────────────
+     Le moteur de connaissances CHOISIT les éléments (retrieve) et les met en forme en deux versions (complète / compacte).
+     Ici, un SEUL budget central décide de ce qui TIENT : priorité question > connaissances > conversation > consignes.
+     Aucun appel au modèle ; ce fichier ne dépend pas de knowledge-engine.js (il reçoit des blocs déjà formatés). */
+  var KNOWLEDGE_MAX_TOKENS = { rapide: 520, avance: 640, expert: 640 };   // plafond par palier (fenêtre réelle : 4096 pour les trois)
+  var KNOWLEDGE_SHARE = { alone: 0.7, withHistory: 0.45 };                  // part du budget restant ; la conversation garde le reste
+  var KNOWLEDGE_MIN_BUDGET = 80;                                            // en dessous : pas de connaissances plutôt qu'un bloc tronqué
+  var KNOWLEDGE_OVERHEAD = 40;                                              // consigne + balises
+
+  function knowledgeInstruction(verifiedAll){
+    return (verifiedAll
+      ? "REV-EM KNOWLEDGE below is verified reference material: prefer it over your memory where they differ, and use only what is relevant. "
+      : "REV-EM KNOWLEDGE below is UNVERIFIED reference material: use it as a hint, and prefer well-established facts you are sure of if they differ. ") +
+      "If it does not cover what is asked, answer from your own knowledge. Never quote it as a cited source or invent any source.";
+  }
+  /* fitKnowledge(blocks, budgetTokens) → { text, ids, tokens, compacted, dropped, verifiedAll }
+     Deux passes : (1) TOUS les éléments classés qui tiennent, en version compacte (comparer VAN et TRI exige les deux) ;
+     (2) avec ce qui reste, on passe à la version complète en commençant par le mieux classé. */
+  function fitKnowledge(blocks, budget, opts){
+    opts = opts || {};
+    var out = { text: "", ids: [], tokens: 0, compacted: [], dropped: [], verifiedAll: true };
+    var room = budget - KNOWLEDGE_OVERHEAD, used = 0, kept = [];
+    (blocks || []).forEach(function(b){
+      if(used + b.compactTokens <= room){ kept.push({ b: b, full: false }); used += b.compactTokens; }
+      else out.dropped.push(b.id);
+    });
+    if(!opts.compactOnly) kept.forEach(function(k){
+      var extra = k.b.fullTokens - k.b.compactTokens;
+      if(extra <= room - used){ k.full = true; used += extra; }
+    });
+    if(!kept.length) return out;
+    kept.forEach(function(k){ out.ids.push(k.b.id); if(!k.full) out.compacted.push(k.b.id); if(!k.b.verified) out.verifiedAll = false; });
+    out.tokens = used + KNOWLEDGE_OVERHEAD;
+    out.text = knowledgeInstruction(out.verifiedAll) + "\n[REV-EM KNOWLEDGE]\n" + kept.map(function(k){ return k.full ? k.b.full : k.b.compact; }).join("\n---\n") + "\n[/REV-EM KNOWLEDGE]";
+    return out;
+  }
+  /* Faut-il même chercher des connaissances ? Pas pour une réponse locale, ni pour une simple reformulation de la réponse précédente. */
+  function wantsKnowledge(a){
+    if(!a || a.realtime || a.source || a.intent === "CURRENT_INFORMATION") return false;
+    if(a.intent === "REFORMULATION" && ["simpler", "shorter", "continue", "another"].indexOf(a.followType) >= 0) return false;
+    return true;
+  }
+  /* Les sujets repérés par le moteur de connaissances complètent l'analyse (et le domaine, s'il était inconnu). */
+  function attachTopics(analysis, topicIds, topicDomain){
+    analysis.topics = (topicIds || []).slice(0, 6);
+    if(analysis.domain === "general" && topicDomain){
+      var d = { mathematics: "math", statistics: "stats" }[topicDomain] || topicDomain;
+      if(DOMAIN[d]) analysis.domain = d;
+    }
+    return analysis;
+  }
+
   /* buildGeneralPrompt({ question, analysis, history, tier, reasoning, calc, contextTokens, interfaceLang })
      → { messages, params:{temperature,topP,maxTokens}, meta }
      Le budget est celui de la fenêtre RÉELLE du modèle : prompt + réponse ≤ contextTokens − marge. */
@@ -691,15 +747,30 @@
     }
     var calcBlock = o.calc ? "VERIFIED CALCULATION (computed locally, exact):\n" + o.calc.block : "";
 
+    var knowText = "", knFit = null;
     function compose(styleLines){
       var parts = [sys, "Instructions for this answer: " + styleLines.join(" ")];
       if(topicLine) parts.push(topicLine);
+      if(knowText) parts.push(knowText);
       if(calcBlock) parts.push(calcBlock);
       return parts.join("\n\n");
     }
     var systemText = compose(style);
     var qTok = estimateTokens(question) + 8;
     var fixed = estimateTokens(systemText) + qTok;
+    // connaissances : après la question et les consignes, AVANT la conversation (priorité : question > connaissances > conversation)
+    var kn = o.knowledge && o.knowledge.blocks && o.knowledge.blocks.length ? o.knowledge : null;
+    var knDropped = [];
+    if(kn){
+      var avail0 = window_ - MARGIN_TOKENS - maxTokens - fixed;
+      var knBudget = Math.min(KNOWLEDGE_MAX_TOKENS[tierKey(o.tier)], Math.floor(avail0 * (analysis.needsHistory ? KNOWLEDGE_SHARE.withHistory : KNOWLEDGE_SHARE.alone)));
+      if(knBudget >= KNOWLEDGE_MIN_BUDGET){
+        // une réponse COURTE (définition, « en une phrase ») n'a pas besoin du dossier complet : version compacte, plus rapide (moins de jetons à lire)
+        knFit = fitKnowledge(kn.blocks, knBudget, { compactOnly: analysis.depth === "SHORT" });
+        knDropped = knFit.dropped.slice();
+        if(knFit.ids.length){ knowText = knFit.text; systemText = compose(style); fixed = estimateTokens(systemText) + qTok; }
+      } else knDropped = kn.blocks.map(function(b){ return b.id; });
+    }
     var budget = window_ - MARGIN_TOKENS - maxTokens - fixed;
     var floorMax = { SHORT: 120, NORMAL: 260, DEEP: 400 }[analysis.depth];
     // peu de place pour l'historique : on rogne d'abord la RÉPONSE autorisée (sans descendre sous un plancher), jamais la question
@@ -713,6 +784,9 @@
     var total = fixed + hist.tokens;
     while(total + maxTokens + MARGIN_TOKENS > window_ && style.length > 1){ style.pop(); dropOptional++; systemText = compose(style); fixed = estimateTokens(systemText) + qTok; total = fixed + hist.tokens; }
     if(total + maxTokens + MARGIN_TOKENS > window_ && hist.turns.length){ hist = { turns: [], tokens: 0, used: 0, dropped: hist.dropped + hist.used / 2, topic: hist.topic, topics: hist.topics }; total = fixed; }
+    if(total + maxTokens + MARGIN_TOKENS > window_ && knowText){      // dernier recours : la conversation a déjà été sacrifiée, puis les connaissances
+      knDropped = knDropped.concat(knFit.ids); knFit = null; knowText = ""; systemText = compose(style); fixed = estimateTokens(systemText) + qTok; total = fixed + hist.tokens;
+    }
     if(total + maxTokens + MARGIN_TOKENS > window_){ maxTokens = Math.max(120, window_ - MARGIN_TOKENS - total); }
 
     // consigne finale, accolée au message : les petits modèles suivent mieux ce qui est le plus récent
@@ -738,7 +812,9 @@
       meta: { intent: analysis.intent, depth: analysis.depth, domain: analysis.domain, followType: analysis.followType, lang: lang, profile: strat.profile,
               promptChars: chars, promptTokens: estimateTokens(messages.map(function(m){ return m.content; }).join("")),
               historyMessages: hist.turns.length, historyDropped: Math.max(0, Math.round(hist.dropped)), topic: topic, systemRole: !reasoning,
-              contextTokens: window_, maxTokens: maxTokens, localCalc: o.calc ? o.calc.kind : null, optionalLinesDropped: dropOptional },
+              contextTokens: window_, maxTokens: maxTokens, localCalc: o.calc ? o.calc.kind : null, optionalLinesDropped: dropOptional,
+              knowledgeIds: knFit ? knFit.ids.slice() : [], knowledgeTokens: knFit ? knFit.tokens : 0, knowledgeCompacted: knFit ? knFit.compacted.slice() : [],
+              knowledgeDropped: knDropped, knowledgeVerified: knFit ? knFit.verifiedAll : null },
     };
   }
 
@@ -772,6 +848,8 @@
     else if(code === "DEVICE_LOST"){ out.code = "DEVICE_LOST"; }
     else if(code === "OUT_OF_MEMORY_OR_RESOURCE_LIMIT"){ out.code = "OUT_OF_MEMORY"; out.retryable = false; }
     else if(code === "WORKER_FAILED"){ out.code = "WORKER_FAILED"; }
+    else if(code === "WEBGPU_UNAVAILABLE" || code === "ADAPTER_FAILED" || code === "DEVICE_FAILED"){ out.code = "WEBGPU_UNAVAILABLE"; out.retryable = false; }
+    else if(code === "MODEL_DOWNLOAD_FAILED"){ out.code = "MODEL_DOWNLOAD_FAILED"; }
     else if(code === "ENGINE_INIT_FAILED" || /init/i.test(code)){ out.code = "ENGINE_INIT_FAILED"; }
     else if(code === "EMPTY_RESPONSE" || /r[eé]ponse vide|empty/i.test(msg)){ out.code = "EMPTY_RESPONSE"; }
     else if(code === "GENERATION_ABORTED" || /cancel|abort/i.test(msg)){ out.code = "GENERATION_ABORTED"; out.retryable = false; }
@@ -866,6 +944,7 @@
     parseNumbers: parseNumbers, parseExpression: parseExpression, localCalculation: localCalculation, fmtNumber: fmtNumber,
     localAnswer: localAnswer, cleanAnswer: cleanAnswer, selectStrategy: selectStrategy, selectHistory: selectHistory,
     buildGeneralPrompt: buildGeneralPrompt, nextPhase: nextPhase, isBusyPhase: isBusyPhase, classifyChatError: classifyChatError,
-    suggestFollowUps: suggestFollowUps, suggestTier: suggestTier, checkAnswer: checkAnswer, isTrivial: isTrivial, stripInterrupted: stripInterrupted,
+    suggestFollowUps: suggestFollowUps, suggestTier: suggestTier, fitKnowledge: fitKnowledge, wantsKnowledge: wantsKnowledge, attachTopics: attachTopics,
+    KNOWLEDGE_MAX_TOKENS: KNOWLEDGE_MAX_TOKENS, checkAnswer: checkAnswer, isTrivial: isTrivial, stripInterrupted: stripInterrupted,
   };
 })(typeof globalThis !== "undefined" ? globalThis : this);

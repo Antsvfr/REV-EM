@@ -434,7 +434,9 @@ try {
     eq("assistant-core.js : idem", bad.test(core), false);
     eq("aucun lookbehind regex (Safari < 16.4)", /\(\?<[=!]/.test(block + core), false);
     check("la copie a un repli (execCommand) quand navigator.clipboard est absent", /execCommand\("copy"\)/.test(block));
-    check("aucune dépendance réseau ajoutée par la fonctionnalité (pas de fetch/XHR dans le bloc)", !/\bfetch\(|XMLHttpRequest|WebSocket/.test(block));
+    // le SEUL accès réseau du bloc : la lecture des fichiers statiques REV-EM Knowledge, même origine (jamais un serveur tiers, jamais Supabase)
+    const fetches = block.match(/\bfetch\([^)]*\)/g) || [];
+    check("aucun accès réseau ajouté, sauf la lecture des fichiers statiques ai-knowledge/ (même origine)", fetches.length === 1 && /ai-knowledge\//.test(block.slice(block.indexOf("const getJson"), block.indexOf("const getJson") + 260)) && !/XMLHttpRequest|WebSocket|https?:\/\//.test(block.slice(block.indexOf("const KEY_KNOWLEDGE_MODE"), block.indexOf("function aiChatFresh"))), fetches);
     check("aucune clé, aucun eval / Function dans le code ajouté", !/\beval\(|new Function|apikey|service_role/i.test(block + core));
   });
 

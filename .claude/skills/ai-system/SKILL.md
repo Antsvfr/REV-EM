@@ -141,3 +141,11 @@ Une seule génération à la fois : machine `IDLE/PREPARING/GENERATING/COMPLETE/
 (`state.aiChat.phase`). Les intentions personnelles (planning, erreurs, réviser) et les actions à panneau
 gardent leur flux historique. Pas de lookbehind regex dans le code chargé par la page (`tests/compat-syntax.test.js`).
 
+**REV-EM Knowledge Engine (voir `AI_KNOWLEDGE.md`).** Étape de plus dans CETTE chaîne (pas un second pipeline) :
+`knowledge-engine.js` (`RevemKnowledge`, pur) choisit de façon déterministe, sans LLM, les éléments de `ai-knowledge/`
+(fichiers JSON versionnés, chargés paresseusement) ; `buildGeneralPrompt` les range sous **un seul budget central**
+(question > connaissances > conversation). Seuls les éléments **vérifiés** sont envoyés (mode Auto) ; les éléments
+`demo` seulement en mode Démo ; un `draft` jamais. Ajouter une connaissance = un fichier JSON + une ligne dans
+`ai-knowledge/index.json` (guide : `ai-knowledge/README.md`), **sans toucher au moteur** ; voir aussi le skill
+`revem-knowledge-quality`. Ne jamais mettre la connaissance REV-EM dans Supabase ni la mêler à « Mes cours ».
+

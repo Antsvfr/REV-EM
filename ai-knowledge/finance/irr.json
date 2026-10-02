@@ -1,0 +1,39 @@
+{
+  "id": "finance.irr",
+  "domain": "finance",
+  "topic": "irr",
+  "topics": ["irr", "discounting"],
+  "title": "Taux de rendement interne (TRI)",
+  "aliases": ["TRI", "TIR", "taux de rendement interne", "IRR", "internal rate of return", "tasa interna de retorno", "interner Zinsfuß", "tasso interno di rendimento"],
+  "keywords": ["rendement d'un projet", "taux exigé", "coût du capital", "cost of capital", "hurdle rate", "flux de trésorerie"],
+  "level": "intermediate",
+  "lang": "fr",
+  "summary": "Le TRI est le taux d'actualisation pour lequel la VAN d'un projet est nulle. C'est le rendement annuel que le projet procure sur l'argent investi, compte tenu de la date des flux.",
+  "facts": [
+    "Règle de décision usuelle : on accepte le projet si son TRI est supérieur au taux exigé (le coût du capital).",
+    "Il n'existe en général pas de formule fermée : on le trouve par essais successifs ou avec un tableur ou une calculatrice financière.",
+    "Un projet peut avoir plusieurs TRI, ou aucun, lorsque les flux changent plusieurs fois de signe."
+  ],
+  "mechanisms": [
+    "On cherche le taux t tel que la somme des flux actualisés à t égale l'investissement initial : à ce taux, le projet ne crée ni ne détruit de valeur.",
+    "Le TRI est un rendement en pourcentage, indépendant de la taille du projet : c'est son attrait, et aussi son piège."
+  ],
+  "formulas": [
+    { "name": "TRI", "expression": "le TRI est le taux t qui vérifie 0 = −I0 + F1/(1+t) + F2/(1+t)^2 + … + FN/(1+t)^N" }
+  ],
+  "examples": [
+    "Investissement de 1 000 €, flux unique de 1 100 € dans 1 an : TRI = 1 100 / 1 000 − 1 = 10 %."
+  ],
+  "commonMistakes": [
+    "Choisir entre deux projets exclusifs avec le seul TRI : un TRI plus élevé n'implique pas une VAN plus élevée (tailles et durées différentes) ; en cas de conflit, la VAN fait référence.",
+    "Supposer que les flux intermédiaires sont réinvestis au TRI, hypothèse souvent irréaliste.",
+    "Utiliser le TRI quand les flux changent plusieurs fois de signe."
+  ],
+  "relatedConcepts": ["finance.npv"],
+  "sources": [],
+  "verified": false,
+  "status": "demo",
+  "lastReviewed": null,
+  "version": 1,
+  "timeSensitive": false
+}

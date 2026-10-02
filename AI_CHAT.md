@@ -277,6 +277,12 @@ répond un texte fixe. Version AVANT = commit `fc9e401` servi tel quel ; APRÈS 
   une **copie** des fichiers web : `assistant-core.js` est un nouveau fichier à inclure.
 * Le service worker précache `assistant-core.js` (`rev-em-v8`).
 
+## 18bis. Suite : REV-EM Knowledge Engine (V1)
+
+Le moteur de connaissances pédagogiques structurées, inséré **avant** `buildGeneralPrompt`, est décrit dans
+`AI_KNOWLEDGE.md` (architecture, schéma, retrieval, budget, mesures OFF/ON, protocole Mac). Guide d'ajout :
+`ai-knowledge/README.md`.
+
 ## 19. « Mes cours » (préparé, NON développé)
 
 `buildGeneralPrompt` prend déjà `history`, `analysis`, `calc` ; un mode « Mes cours » ajoutera

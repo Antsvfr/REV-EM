@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "note": "Lexique des SUJETS : un sujet = un identifiant + les mots (toutes langues) qui le désignent. Sert à repérer de quoi parle une question et à relier question et connaissances. Un terme de 1 à 3 lettres (« van », « tri ») ne compte que si le domaine de la question le corrobore.",
+  "topics": {
+    "bonds": { "domain": "finance", "terms": ["obligation", "obligations", "bond", "bonds", "anleihe", "anleihen", "bono", "bonos", "obbligazione", "obbligazioni"] },
+    "interest_rates": { "domain": "finance", "terms": ["taux d'intérêt", "taux d'intérêts", "taux directeur", "taux directeurs", "taux longs", "hausse des taux", "baisse des taux", "taux montent", "taux baissent", "taux descendent", "taux redescendent", "interest rate", "interest rates", "rates rise", "rates fall", "rate hike", "tipo de interés", "tipos de interés", "tasa de interés", "tasas de interés", "zins", "zinsen", "zinssatz", "tasso d'interesse", "tassi d'interesse"] },
+    "npv": { "domain": "finance", "terms": ["van", "valeur actuelle nette", "npv", "net present value", "valor actual neto", "kapitalwert", "valore attuale netto"] },
+    "irr": { "domain": "finance", "terms": ["tri", "tir", "irr", "taux de rendement interne", "internal rate of return", "tasa interna de retorno", "interner zinsfuß", "interner zinsfuss", "tasso interno di rendimento"] },
+    "discounting": { "domain": "finance", "terms": ["actualisation", "actualiser", "taux d'actualisation", "discount rate", "discounting", "discounted cash flow", "dcf", "tasa de descuento", "abzinsung", "diskontierung", "tasso di sconto"] },
+    "inflation": { "domain": "economics", "terms": ["inflation", "désinflation", "déflation", "disinflation", "deflation", "hausse des prix", "pouvoir d'achat", "purchasing power", "indice des prix", "price index", "inflación", "inflazione"] },
+    "normal_distribution": { "domain": "statistics", "terms": ["loi normale", "distribution normale", "loi de gauss", "loi gaussienne", "courbe en cloche", "normal distribution", "gaussian distribution", "bell curve", "normalverteilung", "distribución normal", "distribuzione normale"] }
+  }
+}

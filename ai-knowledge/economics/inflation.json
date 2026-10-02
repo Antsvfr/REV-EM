@@ -1,0 +1,41 @@
+{
+  "id": "economics.inflation",
+  "domain": "economics",
+  "topic": "inflation",
+  "topics": ["inflation"],
+  "title": "Inflation",
+  "aliases": ["inflation", "Inflation", "inflación", "inflazione", "hausse générale des prix"],
+  "keywords": ["pouvoir d'achat", "indice des prix", "niveau général des prix", "IPC", "CPI", "purchasing power", "price level", "déflation", "désinflation"],
+  "level": "beginner",
+  "lang": "fr",
+  "summary": "L'inflation est la hausse générale et durable du niveau des prix, qui réduit le pouvoir d'achat de la monnaie. Elle se mesure par la variation d'un indice des prix, par exemple l'indice des prix à la consommation.",
+  "facts": [
+    "Elle s'exprime en pourcentage de variation d'un indice des prix sur une période, souvent un an.",
+    "La hausse d'un seul prix n'est pas de l'inflation : il faut une hausse généralisée et durable.",
+    "La déflation est une baisse générale des prix ; la désinflation est un ralentissement de l'inflation (les prix continuent de monter, moins vite)."
+  ],
+  "mechanisms": [
+    "Inflation par la demande : la demande globale dépasse ce que l'économie peut produire, ce qui tire les prix vers le haut.",
+    "Inflation par les coûts : la hausse des coûts de production (énergie, matières premières, salaires) est répercutée dans les prix.",
+    "Anticipations : si les agents s'attendent à de l'inflation, ils demandent des hausses de salaires et de prix, ce qui peut l'entretenir."
+  ],
+  "formulas": [
+    "Taux d'inflation = (Indice_t − Indice_t−1) / Indice_t−1 × 100",
+    "Taux d'intérêt réel ≈ taux nominal − taux d'inflation"
+  ],
+  "examples": [
+    "Si l'indice des prix passe de 100 à 103 en un an, l'inflation est de 3 %. Un salaire qui augmente de 2 % perd alors environ 1 % de pouvoir d'achat."
+  ],
+  "commonMistakes": [
+    "Confondre inflation (hausse du niveau général des prix) et hausse d'un prix particulier.",
+    "Confondre désinflation (l'inflation baisse) et déflation (les prix baissent).",
+    "Oublier de distinguer taux nominal et taux réel."
+  ],
+  "relatedConcepts": [],
+  "sources": [],
+  "verified": false,
+  "status": "demo",
+  "lastReviewed": null,
+  "version": 1,
+  "timeSensitive": false
+}

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "name": "REV-EM Knowledge",
+  "note": "Manifeste : la liste des fichiers que la page charge. Un fichier absent d'ici n'est jamais chargé. Voir README.md.",
+  "topics": "topics.json",
+  "files": [
+    "finance/npv.json",
+    "finance/irr.json",
+    "finance/bond-interest-rates.json",
+    "economics/inflation.json",
+    "statistics/normal-distribution.json"
+  ]
+}

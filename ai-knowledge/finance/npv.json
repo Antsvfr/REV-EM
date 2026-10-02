@@ -1,0 +1,39 @@
+{
+  "id": "finance.npv",
+  "domain": "finance",
+  "topic": "npv",
+  "topics": ["npv", "discounting"],
+  "title": "Valeur actuelle nette (VAN)",
+  "aliases": ["VAN", "valeur actuelle nette", "NPV", "net present value", "valor actual neto", "Kapitalwert", "valore attuale netto"],
+  "keywords": ["actualisation", "taux d'actualisation", "flux de trésorerie", "discount rate", "cash flow", "projet d'investissement", "present value"],
+  "level": "intermediate",
+  "lang": "fr",
+  "summary": "La VAN est la somme des flux de trésorerie futurs d'un projet, chacun actualisé au taux d'actualisation, moins l'investissement initial. Elle mesure la valeur créée (ou détruite) par le projet, exprimée en euros d'aujourd'hui.",
+  "facts": [
+    "Règle de décision : VAN > 0, le projet crée de la valeur au taux exigé ; VAN < 0, il en détruit ; VAN = 0, il rémunère exactement le taux exigé.",
+    "Elle dépend du taux d'actualisation retenu, qui reflète le rendement exigé compte tenu du risque du projet.",
+    "Entre deux projets exclusifs, on retient celui dont la VAN est la plus élevée ; les VAN de projets indépendants s'additionnent."
+  ],
+  "mechanisms": [
+    "Un euro reçu plus tard vaut moins qu'un euro aujourd'hui (on pourrait placer cet euro et le voir fructifier) : chaque flux futur est divisé par (1 + t)^n.",
+    "Pour un projet classique (un investissement, puis des flux positifs), quand le taux d'actualisation augmente, les flux lointains pèsent moins et la VAN diminue."
+  ],
+  "formulas": [
+    { "name": "VAN", "expression": "VAN = −I0 + F1/(1+t) + F2/(1+t)^2 + … + FN/(1+t)^N", "note": "I0 : investissement initial ; Fn : flux de l'année n ; t : taux d'actualisation" }
+  ],
+  "examples": [
+    "Investissement de 1 000 € aujourd'hui, un flux de 1 200 € dans 1 an, taux d'actualisation de 10 % : VAN = −1 000 + 1 200 / 1,10 = 90,91 €. La VAN est positive : le projet crée environ 91 € de valeur."
+  ],
+  "commonMistakes": [
+    "Additionner des flux de dates différentes sans les actualiser.",
+    "Confondre VAN et bénéfice comptable : la VAN raisonne en flux de trésorerie, à leur date, avec le risque.",
+    "Utiliser un taux d'actualisation sans rapport avec le risque du projet."
+  ],
+  "relatedConcepts": ["finance.irr"],
+  "sources": [],
+  "verified": false,
+  "status": "demo",
+  "lastReviewed": null,
+  "version": 1,
+  "timeSensitive": false
+}

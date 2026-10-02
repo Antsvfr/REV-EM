@@ -1,0 +1,39 @@
+{
+  "id": "finance.bond-interest-rates",
+  "domain": "finance",
+  "topic": "bonds",
+  "topics": ["bonds", "interest_rates"],
+  "title": "Prix d'une obligation et taux d'intérêt",
+  "aliases": ["prix des obligations", "prix d'une obligation", "relation entre taux et obligations", "risque de taux", "bond prices and interest rates", "bond price", "interest rate risk", "precio de los bonos", "Anleihekurs", "prezzo delle obbligazioni"],
+  "keywords": ["coupon", "rendement à l'échéance", "yield to maturity", "valeur nominale", "duration", "taux de marché"],
+  "avoid": ["obligation légale", "obligation juridique", "obligation contractuelle", "obligation de moyens", "obligation de résultat", "legal obligation", "contractual obligation"],
+  "level": "intermediate",
+  "lang": "fr",
+  "summary": "Le prix d'une obligation est la valeur actuelle de ses coupons et de son remboursement, actualisés au rendement exigé par le marché. Quand les taux du marché montent, le prix des obligations déjà émises baisse ; quand ils baissent, il monte.",
+  "facts": [
+    "Une obligation à coupon fixe verse toujours les mêmes montants : seul son prix de marché varie.",
+    "Plus l'échéance est lointaine (duration élevée), plus le prix est sensible aux variations de taux.",
+    "À l'échéance, l'obligation est remboursée à sa valeur nominale (sauf défaut de l'émetteur) : la baisse de prix est donc sans conséquence définitive pour qui la conserve jusqu'au bout."
+  ],
+  "mechanisms": [
+    "Intuition : si les taux montent, les nouvelles obligations offrent un coupon plus élevé ; les anciennes, au coupon plus faible, deviennent moins attractives, et il faut baisser leur prix pour que leur rendement rejoigne celui du marché.",
+    "Calcul : le prix est la somme des flux actualisés au nouveau taux ; un taux d'actualisation plus élevé réduit la valeur actuelle de chaque flux."
+  ],
+  "formulas": [
+    { "name": "Prix", "expression": "Prix = C/(1+r) + C/(1+r)^2 + … + (C + N)/(1+r)^T", "note": "C : coupon ; N : valeur nominale ; r : rendement exigé ; T : échéance en années" }
+  ],
+  "examples": [
+    "Obligation de 1 000 € de nominal, coupon de 3 % (30 € par an), échéance dans 2 ans. Si le rendement exigé passe de 3 % à 4 %, son prix passe de 1 000 € à environ 981 € (30/1,04 + 1 030/1,04²)."
+  ],
+  "commonMistakes": [
+    "Croire que le coupon change quand les taux changent : il est fixe, c'est le prix qui s'ajuste.",
+    "Confondre le taux du coupon et le rendement actuariel (le rendement exigé par le marché)."
+  ],
+  "relatedConcepts": ["finance.npv"],
+  "sources": [],
+  "verified": false,
+  "status": "demo",
+  "lastReviewed": null,
+  "version": 1,
+  "timeSensitive": false
+}

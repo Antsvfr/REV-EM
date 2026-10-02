@@ -5272,6 +5272,10 @@
      prompts, diagnostic). Comme les autres moteurs : ni DOM, ni state, ni WebGPU.
      Partagée avec ai-host.js (Worker). Voir AI_AUDIT.md. -->
 <script src="ai-engine.js"></script>
+<!-- REV-EM KNOWLEDGE ENGINE (V1), logique PURE : schéma, validation, index, retrieval déterministe, mise en forme compacte.
+     Les DONNÉES sont des fichiers JSON versionnés (ai-knowledge/), chargés à la demande. Ni DOM, ni state, ni WebLLM, ni réseau.
+     Voir AI_KNOWLEDGE.md et ai-knowledge/README.md. -->
+<script src="knowledge-engine.js"></script>
 <!-- Logique PURE des questions libres (mode Général) : analyse, stratégie, contexte, prompt, calcul local, états, erreurs.
      Ni DOM, ni state, ni WebLLM. Voir AI_CHAT.md. -->
 <script src="assistant-core.js"></script>
@@ -15943,7 +15947,11 @@ function aiDiagSnapshot(){
   };
 }
 async function aiCopyDiagnostic(){
-  const text = AIE.buildDiagnosticReport(aiDiagSnapshot());
+  const lastDiag = state.aiChat && state.aiChat.diag;
+  const text = AIE.buildDiagnosticReport(aiDiagSnapshot())
+    + "\n\n[REV-EM Knowledge] mode=" + aiKnowledgeMode() + " status=" + aiKnowledge.status + " items=" + aiKnowledge.items + " verified=" + aiKnowledge.verified + " demo=" + aiKnowledge.demo
+    + (aiKnowledge.error ? " error=" + AIE.redact(aiKnowledge.error) : "")
+    + (lastDiag ? "\n[Last answer — no question or answer text]\n" + JSON.stringify(lastDiag) : "");
   let ok = false;
   try{ if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); ok = true; } }catch(e){}
   if(!ok){
@@ -15982,6 +15990,7 @@ function aiDiagnosticPanelHtml(){
       <div><b>${escapeHtml(t("ai.diag.engine_mode"))} :</b> ${escapeHtml(modeLine)}</div>
       <div><b>${escapeHtml(t("ai.diag.last_fallback"))} :</b> ${escapeHtml(fb)}</div>
     </div>
+    ${aiKnowledgeControlHtml()}
     ${aiChatDiagHtml()}
     <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
       <button class="btn-text" id="ai-test-btn">${escapeHtml(t("ai.diag.btn_quick"))}</button>
@@ -16679,7 +16688,43 @@ function aiCancelGeneration(){
    Voir AI_CHAT.md.
    ============================================================ */
 const RAssist = window.RevemAssistant;
-function aiChatFresh(){ return { phase: "IDLE", topic: "", lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
+const RKnow = window.RevemKnowledge;
+
+/* ── REV-EM Knowledge : chargement PARESSEUX (au 1er usage, jamais au démarrage) et réglage ──
+   Mode « auto » : seuls les éléments VÉRIFIÉS sont envoyés au modèle (aujourd'hui : aucun, la base ne contient que des
+   éléments de démonstration). « demo » : + éléments de démonstration NON vérifiés, pour tester le moteur. « off » : rien
+   (comparaison ON/OFF). Un réglage d'appareil, jamais synchronisé. */
+const KEY_KNOWLEDGE_MODE = "ai-knowledge-mode";
+const KNOWLEDGE_MODES = ["auto", "off", "demo"];
+const aiKnowledge = { status: "idle", index: null, promise: null, items: 0, verified: 0, demo: 0, rejected: [], error: null, loadMs: null };
+function aiKnowledgeMode(){ const m = lsGet(KEY_KNOWLEDGE_MODE); return KNOWLEDGE_MODES.indexOf(m) >= 0 ? m : "auto"; }
+function aiSetKnowledgeMode(mode){ if(KNOWLEDGE_MODES.indexOf(mode) < 0) return; lsSet(KEY_KNOWLEDGE_MODE, mode); render(); }
+function knowledgeEnsure(){
+  if(!RKnow) return Promise.resolve(null);
+  if(aiKnowledge.index) return Promise.resolve(aiKnowledge.index);
+  if(aiKnowledge.promise) return aiKnowledge.promise;
+  aiKnowledge.status = "loading";
+  const t0 = performance.now();
+  const getJson = async (file) => { const r = await fetch(new URL("ai-knowledge/" + file, document.baseURI).href); if(!r.ok) throw new Error(file + " : HTTP " + r.status); return r.json(); };
+  aiKnowledge.promise = (async () => {
+    try{
+      const manifest = await getJson("index.json");
+      const loaded = await Promise.all([getJson(manifest.topics || "topics.json")].concat((manifest.files || []).map(getJson)));
+      const pack = RKnow.loadPack(loaded[0], loaded.slice(1));
+      Object.assign(aiKnowledge, { index: pack.index, status: "ready", items: pack.index.size, rejected: pack.rejected, error: null, loadMs: Math.round(performance.now() - t0),
+        verified: pack.index.items.filter(x => x.verified === true).length, demo: pack.index.items.filter(x => x.status === "demo").length });
+      if(pack.rejected.length) console.warn("[REV-EM Knowledge] éléments rejetés (jamais envoyés au modèle) :", pack.report.errors);
+      return pack.index;
+    }catch(e){
+      Object.assign(aiKnowledge, { status: "unavailable", error: String(e && e.message || e), promise: null });   // la réponse se fait sans connaissances ; nouvel essai à la question suivante
+      return null;
+    }
+  })();
+  return aiKnowledge.promise;
+}
+const aiWithTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
+
+function aiChatFresh(){ return { phase: "IDLE", topic: "", domain: "", lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
 /* La conversation en cours est-elle une conversation « Mode Général » ? (le premier message la marque ;
    tout autre mode crée un fil sans cette marque : aucune réinitialisation à faire ailleurs.) */
 function aiIsGeneral(){ const th = state.aiThread; return !!(RAssist && th.length && th[0].meta && th[0].meta.general); }
@@ -16692,6 +16737,7 @@ const AI_CHAT_ERR_KEYS = {
   MODEL_NOT_READY: "assistant.err.MODEL_NOT_READY", CONTEXT_TOO_LARGE: "assistant.err.CONTEXT_TOO_LARGE", EMPTY_RESPONSE: "assistant.err.EMPTY_RESPONSE",
   BUSY: "assistant.err.BUSY", UNKNOWN_ERROR: "assistant.err.UNKNOWN_ERROR", DEVICE_LOST: "ai.err.DEVICE_LOST", OUT_OF_MEMORY: "ai.err.OUT_OF_MEMORY_OR_RESOURCE_LIMIT",
   GENERATION_FAILED: "ai.err.GENERATION_FAILED", WORKER_FAILED: "ai.err.WORKER_FAILED", ENGINE_INIT_FAILED: "ai.err.ENGINE_INIT_FAILED",
+  WEBGPU_UNAVAILABLE: "ai.err.WEBGPU_UNAVAILABLE", MODEL_DOWNLOAD_FAILED: "ai.err.MODEL_DOWNLOAD_FAILED",
 };
 /* Un message SIMPLE pour l'utilisateur ; les détails techniques restent dans le diagnostic (jamais le texte brut de l'erreur). */
 function aiChatErrorText(code){ const k = AI_CHAT_ERR_KEYS[code]; return k ? t(k) : t("assistant.err.UNKNOWN_ERROR"); }
@@ -16744,6 +16790,8 @@ async function aiGeneralAsk(text, opts){
   const question = userMsg ? userMsg.content : q;
   const uiLang = (window.LyonI18n && LyonI18n.getLang) ? LyonI18n.getLang() : "fr";
   const analysis = RAssist.analyzeQuestion(question, { previous: aiGeneralPrevious(history), lang: chat.lang || uiLang, forced: opts.forced });
+  // une suite (« donne-moi un exemple », « et si… ») reste dans le domaine de la conversation : mêmes consignes de domaine, mêmes connaissances
+  if(analysis.needsHistory && analysis.domain === "general" && chat.domain) analysis.domain = chat.domain;
   const local = RAssist.localAnswer(analysis);
   const ready = state.aiStatus === "ready" && aiEngineReady();
   if(!ready && !local){
@@ -16763,6 +16811,7 @@ async function aiGeneralAsk(text, opts){
   if(!userMsg){ userMsg = { role: "user", content: question, display: question }; thread.push(userMsg); }
   userMsg.meta = { general: true, intent: analysis.intent, topic: topic, followType: analysis.followType, depth: analysis.depth, lang: analysis.lang };
   chat.topic = topic || chat.topic; chat.lang = analysis.lang;
+  if(analysis.domain !== "general") chat.domain = analysis.domain;
 
   const diag = { at: Date.now(), tier: state.aiTier || null, model: state.aiModelId || null, intent: analysis.intent, depth: analysis.depth, domain: analysis.domain, followType: analysis.followType,
                  lang: analysis.lang, llmCalls: 0, localAnswer: local ? local.kind : null, localCalc: null, errorCode: null };
@@ -16780,15 +16829,36 @@ async function aiGeneralAsk(text, opts){
   const calc = analysis.intent === "CALCULATION" ? RAssist.localCalculation(question, analysis.lang) : null;
   if(calc) diag.localCalc = calc.kind;
   let windowTokens = RAssist.CONTEXT_TOKENS;
+  const signal = { cancelled: false };
+  aiCurrentSignal = signal;
+  render();                                                              // « Réflexion… » (PREPARING)
+
+  /* REV-EM Knowledge : choix DÉTERMINISTE des éléments pertinents, avant la génération (aucun appel au modèle).
+     Ignoré si la réponse est un calcul local exact, si la question n'en a pas besoin, ou si le mode est « off ». */
+  const kMode = aiKnowledgeMode();
+  Object.assign(diag, { knowledgeMode: kMode, knowledgeStatus: null, topicsDetected: [], knowledgeCandidates: 0, knowledgeSelected: [], knowledgeScores: [], knowledgeWithheld: [], retrievalMs: null });
+  let knowledge = null;
+  if(RKnow && kMode !== "off" && RAssist.wantsKnowledge(analysis)){
+    if(calc) diag.knowledgeStatus = "skipped:calculation";
+    else {
+      const idx = await aiWithTimeout(knowledgeEnsure(), 2500);
+      diag.knowledgeStatus = idx ? "ready" : aiKnowledge.status;
+      if(idx && !signal.cancelled){
+        const r = RKnow.retrieve(question, { index: idx, domain: analysis.domain, contextText: analysis.needsHistory ? chat.topic : "", tier, policy: { mode: kMode } });
+        RAssist.attachTopics(analysis, r.topics, r.topics.length && idx.topicInfo[r.topics[0]] ? idx.topicInfo[r.topics[0]].domain : null);
+        if(analysis.domain !== "general") chat.domain = analysis.domain;
+        Object.assign(diag, { domain: analysis.domain, topicsDetected: analysis.topics.slice(), knowledgeCandidates: r.candidates, knowledgeSelected: r.selected.map(x => x.id),
+                              knowledgeScores: r.selected.map(x => x.score), knowledgeWithheld: r.withheld.map(x => x.id + " (" + x.why + ")"), retrievalMs: r.ms });
+        if(!r.none) knowledge = { blocks: RKnow.toBlocks(r.selected, idx) };
+      }
+    }
+  } else diag.knowledgeStatus = kMode === "off" ? "off" : "not-needed";
   const build = () => {
-    const p = RAssist.buildGeneralPrompt({ question, analysis, history, tier, reasoning, calc, contextTokens: windowTokens });
+    const p = RAssist.buildGeneralPrompt({ question, analysis, history, tier, reasoning, calc, contextTokens: windowTokens, knowledge });
     if(chat.regens) p.params.temperature = Math.min(0.95, p.params.temperature + 0.12 * chat.regens);     // une régénération doit pouvoir répondre autrement
     return p;
   };
   let prompt = build();
-  const signal = { cancelled: false };
-  aiCurrentSignal = signal;
-  render();                                                              // « Réflexion… » (PREPARING)
 
   let res = null, err = null, tFirst = null, tDispatch = performance.now();
   for(let attempt = 0; attempt < 2; attempt++){
@@ -16819,6 +16889,7 @@ async function aiGeneralAsk(text, opts){
 
   Object.assign(diag, { promptTokens: prompt.meta.promptTokens, promptChars: prompt.meta.promptChars, historyUsed: prompt.meta.historyMessages, historyDropped: prompt.meta.historyDropped,
                         maxTokens: prompt.params.maxTokens, temperature: prompt.params.temperature, topP: prompt.params.topP, profile: prompt.meta.profile,
+                        knowledgeUsed: prompt.meta.knowledgeIds, knowledgeContextTokens: prompt.meta.knowledgeTokens, knowledgeCompacted: prompt.meta.knowledgeCompacted, knowledgeDropped: prompt.meta.knowledgeDropped,
                         prepMs: Math.round(tDispatch - t0), ttftPageMs: tFirst === null ? null : Math.round(tFirst - tDispatch) });
   if(res) Object.assign(diag, { ttftMs: res.ttftMs === undefined ? null : Math.round(res.ttftMs || 0), genMs: res.totalMs === undefined ? null : Math.round(res.totalMs || 0), finishReason: res.finishReason || null });
 
@@ -16845,6 +16916,50 @@ async function aiGeneralAsk(text, opts){
   render();
   return true;
 }
+
+/* OUTIL DE DÉVELOPPEMENT (console) — « les connaissances améliorent-elles vraiment la réponse ? ».
+   revemKnowledgeCompare("Qu'est-ce que la VAN ?")                 → compare les PROMPTS avec / sans connaissances (rien n'est généré)
+   revemKnowledgeCompare("…", { generate: true, temperature: 0.2 }) → génère les DEUX réponses, l'une après l'autre (jamais en parallèle sur le GPU)
+   N'écrit RIEN dans la conversation ni dans l'historique. Ne pas poser de question pendant la comparaison.
+   « Avec » = le mode courant (ou « demo » si le réglage est « off »). La comparaison des réponses se LIT : aucun score automatique ne dit laquelle est meilleure. */
+async function revemKnowledgeCompare(question, opts){
+  opts = opts || {};
+  if(!RAssist || !RKnow) return null;
+  const idx = await knowledgeEnsure();
+  const uiLang = (window.LyonI18n && LyonI18n.getLang) ? LyonI18n.getLang() : "fr";
+  const tier = state.aiTier || "avance";
+  const reasoning = !!(AIE.TIERS[tier] && AIE.TIERS[tier].reasoning);
+  const current = aiKnowledgeMode();
+  const out = { question, tier, runs: [] };
+  for(const mode of ["off", current === "off" ? "demo" : current]){
+    const analysis = RAssist.analyzeQuestion(question, { previous: null, lang: uiLang });
+    const calc = analysis.intent === "CALCULATION" ? RAssist.localCalculation(question, analysis.lang) : null;
+    let knowledge = null, r = null;
+    if(idx && mode !== "off" && !calc && RAssist.wantsKnowledge(analysis)){
+      r = RKnow.retrieve(question, { index: idx, domain: analysis.domain, tier, policy: { mode } });
+      RAssist.attachTopics(analysis, r.topics, r.topics.length && idx.topicInfo[r.topics[0]] ? idx.topicInfo[r.topics[0]].domain : null);
+      if(!r.none) knowledge = { blocks: RKnow.toBlocks(r.selected, idx) };
+    }
+    const p = RAssist.buildGeneralPrompt({ question, analysis, history: [], tier, reasoning, calc, contextTokens: RAssist.CONTEXT_TOKENS, knowledge });
+    if(typeof opts.temperature === "number") p.params.temperature = opts.temperature;
+    const run = { mode, selected: r ? r.selected.map(x => x.id + ":" + x.score) : [], withheld: r ? r.withheld.map(x => x.id + " (" + x.why + ")") : [],
+                  promptTokens: p.meta.promptTokens, knowledgeTokens: p.meta.knowledgeTokens, maxTokens: p.params.maxTokens };
+    if(opts.generate){
+      if(!(state.aiStatus === "ready" && aiEngineReady()) || aiEngineBusy() || aiGen){ run.error = "modèle non prêt ou occupé"; }
+      else {
+        try{
+          const res = await webllmChat(p.messages, { signal: { cancelled: false }, task: "chat", temperature: p.params.temperature, topP: p.params.topP, maxTokens: p.params.maxTokens, budgetTokens: RAssist.CONTEXT_TOKENS - p.params.maxTokens - 120 });
+          Object.assign(run, { answer: RAssist.cleanAnswer(res.text), ttftMs: res.ttftMs === undefined ? null : Math.round(res.ttftMs || 0), totalMs: res.totalMs === undefined ? null : Math.round(res.totalMs || 0), finishReason: res.finishReason || null });
+        }catch(e){ run.error = String(e && e.message || e); }
+      }
+    }
+    out.runs.push(run);
+  }
+  console.table(out.runs.map(x => ({ mode: x.mode, selected: x.selected.join(" "), promptTokens: x.promptTokens, knowledgeTokens: x.knowledgeTokens, ttftMs: x.ttftMs, totalMs: x.totalMs })));
+  if(opts.generate) out.runs.forEach(x => console.log("── " + x.mode.toUpperCase() + " ──\n" + (x.answer || x.error || "")));
+  return out;
+}
+window.revemKnowledgeCompare = revemKnowledgeCompare;
 
 function aiGeneralStop(){ if(state.aiBusy) aiCancelGeneration(); }
 function aiGeneralRegenerate(){ return aiGeneralAsk(null, { regenerate: true }); }
@@ -16896,6 +17011,22 @@ function aiGeneralActionsHtml(){
   return html;
 }
 /* Diagnostic de la dernière réponse — UNIQUEMENT dans le panneau de diagnostic, jamais dans la conversation. Aucune question ni réponse n'y figure. */
+/* Réglage « Connaissances REV-EM » : dans le panneau de diagnostic UNIQUEMENT (outil de développement / comparaison ON-OFF). */
+function aiKnowledgeControlHtml(){
+  if(!RKnow) return "";
+  const mode = aiKnowledgeMode();
+  if(aiKnowledge.status === "idle" && mode !== "off" && state.aiDiagPanelOpen) knowledgeEnsure().then(() => { if(state.aiDiagPanelOpen) render(); });   // seulement panneau OUVERT : jamais de lecture au simple affichage
+  const status = aiKnowledge.status === "ready" ? t("assistant.kn.status", { n: aiKnowledge.items, v: aiKnowledge.verified, d: aiKnowledge.demo })
+    : aiKnowledge.status === "loading" ? t("assistant.kn.status_loading")
+    : aiKnowledge.status === "unavailable" ? t("assistant.kn.status_unavailable") : t("assistant.kn.status_idle");
+  return `<div id="ai-kn-control" style="margin-top:12px;font-size:var(--text-metadata);line-height:1.8;color:var(--ink-soft);">
+    <div><b>${escapeHtml(t("assistant.kn.title"))}</b> — ${escapeHtml(status)}</div>
+    <div role="group" aria-label="${escapeHtml(t("assistant.kn.title"))}" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+      ${KNOWLEDGE_MODES.map(m => `<button type="button" class="btn-text" data-ai-kn-mode="${m}" aria-pressed="${m === mode}" style="${m === mode ? "font-weight:var(--weight-semibold,600);text-decoration:underline;" : ""}">${escapeHtml(t("assistant.kn.mode_" + m))}</button>`).join("")}
+    </div>
+    <div>${escapeHtml(t("assistant.kn.hint_" + mode))}</div>
+  </div>`;
+}
 function aiChatDiagHtml(){
   const d = state.aiChat && state.aiChat.diag;
   if(!d) return "";
@@ -16906,6 +17037,8 @@ function aiChatDiagHtml(){
     <div>questionIntent : ${escapeHtml(v(d.intent))} · responseDepth : ${escapeHtml(v(d.depth))} · domain : ${escapeHtml(v(d.domain))} · followType : ${escapeHtml(v(d.followType))} · lang : ${escapeHtml(v(d.lang))}</div>
     <div>context : ${v(d.promptTokens, " tokens≈")} · ${v(d.promptChars, " chars")} · historyMessagesUsed : ${v(d.historyUsed)} (omitted ${v(d.historyDropped)})</div>
     <div>params : temperature ${v(d.temperature)} · top_p ${v(d.topP)} · max_tokens ${v(d.maxTokens)} · profile ${escapeHtml(v(d.profile))}</div>
+    <div>knowledge : mode ${escapeHtml(v(d.knowledgeMode))} · ${escapeHtml(v(d.knowledgeStatus))} · topicsDetected : ${escapeHtml((d.topicsDetected || []).join(", ") || "—")} · candidates ${v(d.knowledgeCandidates)} · selected ${escapeHtml((d.knowledgeSelected || []).join(", ") || "none")} · scores ${escapeHtml((d.knowledgeScores || []).join(", ") || "—")}</div>
+    <div>knowledgeContext : ${v(d.knowledgeContextTokens, " tokens≈")} · used ${escapeHtml((d.knowledgeUsed || []).join(", ") || "none")}${(d.knowledgeCompacted || []).length ? " (compact: " + escapeHtml(d.knowledgeCompacted.join(", ")) + ")" : ""}${(d.knowledgeDropped || []).length ? " · dropped " + escapeHtml(d.knowledgeDropped.join(", ")) : ""}${(d.knowledgeWithheld || []).length ? " · withheld " + escapeHtml(d.knowledgeWithheld.join(", ")) : ""} · retrievalTime : ${v(d.retrievalMs, " ms")}</div>
     <div>llmCalls : ${d.llmCalls}${d.retriedSmaller ? " (retry with smaller context)" : ""} · localAnswer : ${escapeHtml(v(d.localAnswer))} · localCalc : ${escapeHtml(v(d.localCalc))}</div>
     <div>timePreparing : ${v(d.prepMs, " ms")} · TTFT(engine) : ${v(d.ttftMs, " ms")} · TTFT(page) : ${v(d.ttftPageMs, " ms")} · generationTime : ${v(d.genMs, " ms")}</div>
     <div>finishReason : ${escapeHtml(v(d.finishReason))} · errorCode : ${escapeHtml(v(d.errorCode))}</div>
@@ -17598,6 +17731,7 @@ function attachAssistantHeroEvents(){
   const retryBtn = document.getElementById("ai-retry-btn");
   if(retryBtn) retryBtn.addEventListener("click", aiGeneralRegenerate);
   document.querySelectorAll("[data-ai-sug]").forEach(b => b.addEventListener("click", () => aiGeneralSuggestion(b.dataset.aiSug)));
+  document.querySelectorAll("[data-ai-kn-mode]").forEach(b => b.addEventListener("click", () => { state.aiDiagPanelOpen = true; aiSetKnowledgeMode(b.dataset.aiKnMode); }));
 
   const reviseNowBtn = document.getElementById("ai-action-revise-now");
   if(reviseNowBtn) reviseNowBtn.addEventListener("click", aiActionReviseNow);

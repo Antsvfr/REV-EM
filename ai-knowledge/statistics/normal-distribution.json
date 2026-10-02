@@ -1,0 +1,41 @@
+{
+  "id": "statistics.normal-distribution",
+  "domain": "statistics",
+  "topic": "normal_distribution",
+  "topics": ["normal_distribution"],
+  "title": "Loi normale",
+  "aliases": ["loi normale", "loi de Gauss", "loi gaussienne", "distribution normale", "courbe en cloche", "normal distribution", "gaussian distribution", "bell curve", "Normalverteilung", "distribución normal", "distribuzione normale"],
+  "keywords": ["écart-type", "z-score", "centrée réduite", "règle 68-95-99,7", "standard deviation", "théorème central limite", "central limit theorem"],
+  "level": "intermediate",
+  "lang": "fr",
+  "summary": "La loi normale est une loi de probabilité continue, symétrique, en forme de cloche, entièrement déterminée par sa moyenne μ et son écart-type σ. Beaucoup de phénomènes (tailles, erreurs de mesure, sommes de nombreux petits effets) sont bien décrits par elle.",
+  "facts": [
+    "Elle est centrée sur μ : moyenne, médiane et mode sont égaux.",
+    "Règle empirique : environ 68 % des valeurs sont à moins de 1 σ de la moyenne, environ 95 % à moins de 2 σ, environ 99,7 % à moins de 3 σ.",
+    "Toute loi normale N(μ, σ²) se ramène à la loi normale centrée réduite N(0, 1) par la transformation Z = (X − μ)/σ.",
+    "Le théorème central limite explique son importance : la moyenne d'un grand nombre de variables indépendantes tend vers une loi normale."
+  ],
+  "mechanisms": [
+    "La moyenne μ déplace la cloche ; l'écart-type σ la rend plus étroite (σ petit) ou plus étalée (σ grand).",
+    "Le z-score Z = (X − μ)/σ dit de combien d'écarts-types une valeur s'éloigne de la moyenne, ce qui permet de lire une probabilité dans la table de N(0, 1)."
+  ],
+  "formulas": [
+    { "name": "z-score", "expression": "Z = (X − μ) / σ" },
+    { "name": "Densité", "expression": "f(x) = 1/(σ√(2π)) × exp(−(x − μ)² / (2σ²))" }
+  ],
+  "examples": [
+    "Notes d'une promotion distribuées selon N(12 ; 2²) : une note de 16 a pour z-score (16 − 12)/2 = 2 ; elle est à 2 écarts-types au-dessus de la moyenne, ce qui place environ 2,3 % des étudiants au-dessus d'elle."
+  ],
+  "commonMistakes": [
+    "Croire que toute variable est normale : il faut le vérifier (symétrie, valeurs extrêmes, graphique ou test).",
+    "Confondre l'écart-type σ et la variance σ².",
+    "Appliquer la règle 68-95-99,7 à une distribution qui n'est pas normale."
+  ],
+  "relatedConcepts": [],
+  "sources": [],
+  "verified": false,
+  "status": "demo",
+  "lastReviewed": null,
+  "version": 1,
+  "timeSensitive": false
+}
