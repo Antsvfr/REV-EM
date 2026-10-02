@@ -155,7 +155,7 @@
     parts = Math.max(1, parts | 0);
     if(text.length <= maxChars || parts === 1) return [text.slice(0, maxChars)];
     var paras = text.split(/\n{2,}/);
-    if(paras.length < parts) paras = text.split(/(?<=[.!?])\s+/);
+    if(paras.length < parts) paras = text.replace(/([.!?])\s+/g, "$1\u0001").split("\u0001");      // pas de lookbehind : refusé par les WebKit anciens
     var total = paras.reduce(function(n, p){ return n + p.length + 2; }, 0);
     var per = total / parts, out = [], cur = "";
     paras.forEach(function(p){

@@ -17,7 +17,7 @@
    PROTOCOLE — page → hôte
      INIT_MODEL     { id, tier }           charger un palier (rapide|avance|expert)
      SWITCH_MODEL   { id, tier }           idem ; annule d'abord toute génération
-     GENERATE       { id, messages, temperature, maxTokens }
+     GENERATE       { id, messages, temperature, topP?, maxTokens }
      ABORT          { id? }                interrompt la génération (ou le chargement)
      RESET_AI_CACHE { id }                 décharge le moteur puis efface le cache IA
      GET_STATUS     { id, probe? }         état + (option) sonde WebGPU de CE contexte
@@ -312,11 +312,15 @@ export function createAiHost(post, opts){
       let ttft = null, chars = 0, usage = null, finish = null;
       const tierNow = current && current.tier;
       try{
-        const stream = await eng.chat.completions.create({
+        const req = {
           messages: msg.messages, stream: true, stream_options: { include_usage: true },
           temperature: typeof msg.temperature === "number" ? msg.temperature : 0.6,
           max_tokens: msg.maxTokens || AI.maxTokensFor("chat"),
-        });
+        };
+        /* top_p : paramètre OpenAI-compatible réellement présent dans WebLLM 0.2.85 (chat_completion.d.ts) ; absent de la
+           requête s'il n'est pas fourni — les appels existants (cours, quiz…) ne changent pas. */
+        if(typeof msg.topP === "number" && msg.topP > 0 && msg.topP <= 1) req.top_p = msg.topP;
+        const stream = await eng.chat.completions.create(req);
         for await (const chunk of stream){
           if(chunk && chunk.usage) usage = chunk.usage;
           const choice = chunk && chunk.choices && chunk.choices[0];

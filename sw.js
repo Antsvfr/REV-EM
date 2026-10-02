@@ -19,7 +19,7 @@
    Ce n'est PAS ce qui garantit que index.html reste à jour — voir la
    stratégie « réseau d'abord » plus bas, qui s'en charge sans dépendre d'un
    humain qui penserait à incrémenter ce numéro à chaque déploiement. */
-const CACHE_VERSION = "rev-em-v7";
+const CACHE_VERSION = "rev-em-v8";
 const SHELL_CACHE = CACHE_VERSION + "-shell";
 const RUNTIME_CACHE = CACHE_VERSION + "-runtime";
 
@@ -45,6 +45,7 @@ const SHELL_URLS = [
   "./quick-actions.js",
   "./subject-search.js",
   "./ai-engine.js",
+  "./assistant-core.js",
   "./import-center.js",
   "./course-hub.js",
   "./revision-bank.js",

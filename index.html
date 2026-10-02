@@ -4255,6 +4255,13 @@
   .ai-modechip:focus-visible{ outline:2px solid var(--red); outline-offset:2px; }
 
   .ai-queryrow{ display:flex; gap:8px; margin-top:4px; }
+  .ai-queryrow-meta{ display:flex; gap:8px; margin-top:8px; }
+  .ai-pill{ display:inline-flex; align-items:center; padding:2px 10px; border:1px solid var(--border); border-radius:999px; font-size:var(--text-label); line-height:1.6; color:var(--text-secondary); background:var(--surface); }
+  .ai-pill.is-tier{ color:var(--text-primary); border-color:var(--border-strong); }
+  .ai-bubble-note{ margin-top:6px; font-size:var(--text-label); color:var(--text-muted); }
+  .ai-tier-hint{ margin:8px 0 0; }
+  .ai-msg-actions .btn-text{ min-height:36px; padding:4px 8px; }
+  .ai-suggestions .ai-suggestion-chip{ min-height:36px; }
   .ai-queryrow input{ flex:1; min-height:46px; }
   .ai-queryrow .btn{ min-height:46px; white-space:nowrap; }
 
@@ -5265,6 +5272,9 @@
      prompts, diagnostic). Comme les autres moteurs : ni DOM, ni state, ni WebGPU.
      Partagée avec ai-host.js (Worker). Voir AI_AUDIT.md. -->
 <script src="ai-engine.js"></script>
+<!-- Logique PURE des questions libres (mode Général) : analyse, stratégie, contexte, prompt, calcul local, états, erreurs.
+     Ni DOM, ni state, ni WebLLM. Voir AI_CHAT.md. -->
+<script src="assistant-core.js"></script>
 <!-- Logique PURE de l'Import Center (validation du fichier, machine d'états, ImportResult).
      Ni DOM, ni state, ni PDF.js. Voir IMPORT_CENTER.md. -->
 <script src="import-center.js"></script>
@@ -7574,6 +7584,7 @@ function resetUserStateInMemory(){
      les chapitres du compte suivant. */
   state.courseGen = courseHubNewGen();
   state.libGenerateBusy = null; state.libToolsBusy = null; state.aiCourseContext = null; state.revisionLast = {};
+  state.aiChat = aiChatFresh(); state.aiThread = []; state.aiBusy = false;      // aucune conversation du compte précédent ne survit au changement de compte
   Object.assign(state.catalog, { query: "", subjectId: "all", semesterId: "all" });
   Object.assign(state.studyWizard, { step: 1, goal: null, deadlineEventId: null, subjectIds: [], chapterIds: [] });
   Object.assign(state.courseImport, { step: "pick", busy: false, files: [], activeIndex: 0, pasteText: "", genSignal: null });
@@ -15496,9 +15507,9 @@ function aiOnHostMessage(m){
     case "GENERATION_COMPLETE":
       if(aiGen && aiGen.id === m.id){
         const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll);
-        state.aiPerf = { ttftMs: m.ttftMs, totalMs: m.totalMs, chars: m.chars, tier: m.tier, at: Date.now() };
+        state.aiPerf = { ttftMs: m.ttftMs, totalMs: m.totalMs, chars: m.chars, tier: m.tier, finishReason: m.finishReason || null, at: Date.now() };
         aiLog("Génération terminée", "premier jeton " + Math.round(m.ttftMs || 0) + " ms · total " + m.totalMs + " ms");
-        g.resolve({ text: AIE.stripReasoning(g.text), raw: g.text, aborted: !!m.aborted, ttftMs: m.ttftMs, totalMs: m.totalMs });
+        g.resolve({ text: AIE.stripReasoning(g.text), raw: g.text, aborted: !!m.aborted, ttftMs: m.ttftMs, totalMs: m.totalMs, finishReason: m.finishReason || null });
       }
       break;
     case "GENERATION_ERROR":
@@ -15971,6 +15982,7 @@ function aiDiagnosticPanelHtml(){
       <div><b>${escapeHtml(t("ai.diag.engine_mode"))} :</b> ${escapeHtml(modeLine)}</div>
       <div><b>${escapeHtml(t("ai.diag.last_fallback"))} :</b> ${escapeHtml(fb)}</div>
     </div>
+    ${aiChatDiagHtml()}
     <div style="margin-top:12px; display:flex; gap:12px; flex-wrap:wrap;">
       <button class="btn-text" id="ai-test-btn">${escapeHtml(t("ai.diag.btn_quick"))}</button>
       <button class="btn-text" id="ai-retry-check-btn">${escapeHtml(t("ai.diag.btn_retry"))}</button>
@@ -16044,29 +16056,30 @@ function aiBuildDiagnostic(res){
 
 /* Génération : envoie l'historique COMPACT à l'hôte et relaie le flux. Un seul
    appel à la fois (l'hôte refuse le second de toute façon). */
-function aiHostGenerate(turns, { task, temperature, onText, signal } = {}){
+function aiHostGenerate(turns, { task, temperature, topP, maxTokens: maxTokensOpt, budgetTokens, onText, signal } = {}){
   return new Promise((resolve, reject) => {
     if(!aiEngineReady()){ reject(new Error("Le modèle n'est pas chargé.")); return; }
     if(aiGen){ reject(new Error("Une génération est déjà en cours.")); return; }
-    const maxTokens = AIE.maxTokensFor(task || "chat");
-    const compact = AIE.compactHistory(turns.map(t0 => ({ role: t0.role, content: t0.content })), { maxNewTokens: maxTokens });
+    const maxTokens = (typeof maxTokensOpt === "number" && maxTokensOpt > 0) ? maxTokensOpt : AIE.maxTokensFor(task || "chat");
+    /* `budgetTokens` : le budget de prompt est alors celui de l'appelant (assistant-core : fenêtre réelle − réponse − marge). */
+    const compact = AIE.compactHistory(turns.map(t0 => ({ role: t0.role, content: t0.content })), budgetTokens ? { budgetTokens } : { maxNewTokens: maxTokens });
     if(compact.dropped) aiLog("Historique compacté", compact.dropped + " échange(s) omis");
     const id = "gen-" + (++aiReqSeq);
     const g = aiGen = { id, text: "", resolve, reject, onText };
     if(signal) g.poll = setInterval(() => { if(signal.cancelled) aiAbortGeneration(); }, 150);
     aiLog("Génération commencée", "≈" + compact.tokens + " jetons de prompt");
-    aiTransport.send({ type: "GENERATE", id, messages: compact.turns, temperature: typeof temperature === "number" ? temperature : 0.6, maxTokens });
+    aiTransport.send({ type: "GENERATE", id, messages: compact.turns, temperature: typeof temperature === "number" ? temperature : 0.6, topP: typeof topP === "number" ? topP : undefined, maxTokens });
   });
 }
 function aiAbortGeneration(){
   if(aiTransport && aiGen) aiTransport.send({ type: "ABORT", id: aiGen.id });
 }
 
-async function webllmChat(turns, { onText, signal, task, temperature } = {}){
+async function webllmChat(turns, { onText, signal, task, temperature, topP, maxTokens, budgetTokens } = {}){
   if(!aiEngineReady()) throw new Error("Le modèle n'est pas chargé.");
-  const res = await aiHostGenerate(turns, { task: task || "chat", temperature: temperature, onText, signal });
+  const res = await aiHostGenerate(turns, { task: task || "chat", temperature: temperature, topP, maxTokens, budgetTokens, onText, signal });
   aiLog("Réponse reçue", res.text.length + " caractères");
-  return { text: res.text };
+  return { text: res.text, aborted: !!res.aborted, finishReason: res.finishReason || null, ttftMs: res.ttftMs, totalMs: res.totalMs };
 }
 
 async function webllmJsonChat(turns, { signal } = {}){
@@ -16093,6 +16106,7 @@ Object.assign(state, {
   aiThread: [],
   aiMode: "text",
   aiBusy: false,
+  aiChat: aiChatFresh(),        // questions libres (mode Général) : machine d'états, sujet, diagnostic, suggestions
   aiStatus: "checking",
   aiModelId: null,
   aiModelChoice: "auto",        // ANCIEN réglage synchronisé (auto|small|large) — plus utilisé pour choisir le modèle
@@ -16553,6 +16567,7 @@ function defaultDisplay(action){
 async function aiFollowUp(text){
   if(aiEngineBusy()) return;
   if(!text.trim()) return;
+  if(aiIsGeneral()){ state.aiFollow = ""; await aiGeneralAsk(text); return; }        // mode Général : la même chaîne centralisée
   state.aiThread.push({role:"user", content:text.trim(), display:text.trim()});
   state.aiFollow = "";
   await aiSend();
@@ -16651,9 +16666,257 @@ function aiCancelGeneration(){
   try{ aiAbortGeneration(); }catch(e){}
 }
 
+/* ============================================================
+   13bis. QUESTIONS LIBRES — MODE GÉNÉRAL
+   ------------------------------------------------------------
+   UNE chaîne, centralisée dans aiGeneralAsk() — la logique pure est dans assistant-core.js :
+     question → analyse (intention, profondeur, langue) → réponse LOCALE si temps réel / fausse source
+              → calcul LOCAL exact → historique pertinent dans le budget réel → stratégie + paramètres
+              → prompt (system / historique / question) → WebLLM en flux → nettoyage → mémoire.
+   Aucun appel au modèle ne sert à classer, résumer ou préparer : le moteur écrit LA réponse, rien d'autre.
+   Le moteur WebLLM reste CHARGÉ d'une question à l'autre (aucun rechargement : on ne touche qu'à GENERATE).
+   Une seule génération à la fois (machine d'états IDLE/PREPARING/GENERATING/COMPLETE/ABORTED/ERROR).
+   Voir AI_CHAT.md.
+   ============================================================ */
+const RAssist = window.RevemAssistant;
+function aiChatFresh(){ return { phase: "IDLE", topic: "", lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
+/* La conversation en cours est-elle une conversation « Mode Général » ? (le premier message la marque ;
+   tout autre mode crée un fil sans cette marque : aucune réinitialisation à faire ailleurs.) */
+function aiIsGeneral(){ const th = state.aiThread; return !!(RAssist && th.length && th[0].meta && th[0].meta.general); }
+function aiChatPhase(event){
+  const r = RAssist.nextPhase(state.aiChat.phase, event);
+  if(r.ok){ state.aiChat.phase = r.phase; state.aiBusy = RAssist.isBusyPhase(r.phase); }
+  return r.ok;
+}
+const AI_CHAT_ERR_KEYS = {
+  MODEL_NOT_READY: "assistant.err.MODEL_NOT_READY", CONTEXT_TOO_LARGE: "assistant.err.CONTEXT_TOO_LARGE", EMPTY_RESPONSE: "assistant.err.EMPTY_RESPONSE",
+  BUSY: "assistant.err.BUSY", UNKNOWN_ERROR: "assistant.err.UNKNOWN_ERROR", DEVICE_LOST: "ai.err.DEVICE_LOST", OUT_OF_MEMORY: "ai.err.OUT_OF_MEMORY_OR_RESOURCE_LIMIT",
+  GENERATION_FAILED: "ai.err.GENERATION_FAILED", WORKER_FAILED: "ai.err.WORKER_FAILED", ENGINE_INIT_FAILED: "ai.err.ENGINE_INIT_FAILED",
+};
+/* Un message SIMPLE pour l'utilisateur ; les détails techniques restent dans le diagnostic (jamais le texte brut de l'erreur). */
+function aiChatErrorText(code){ const k = AI_CHAT_ERR_KEYS[code]; return k ? t(k) : t("assistant.err.UNKNOWN_ERROR"); }
+
+function aiGeneralPrevious(history){
+  let lastA = null;
+  for(let i = history.length - 1; i >= 0; i--){ if(history[i].role === "assistant"){ lastA = history[i]; break; } }
+  const hasAnswer = !!(lastA && !(lastA.meta && lastA.meta.local) && String(lastA.content || "").trim());
+  return { topic: state.aiChat.topic, hasAnswer };
+}
+/* Affichage du flux : au plus une mise à jour du DOM par image (rAF), jamais une par jeton. */
+let aiPaintRaf = 0, aiPaintText = "";
+function aiGeneralPaint(text){
+  aiPaintText = text;
+  if(aiPaintRaf) return;
+  aiPaintRaf = requestAnimationFrame(() => {
+    aiPaintRaf = 0;
+    const el = document.getElementById("ai-stream");
+    const c = RAssist.cleanAnswer(aiPaintText);
+    if(el && c) el.innerHTML = renderAIMarkdown(c);
+  });
+}
+
+/* opts : { regenerate, forced:{intent, followType} (suggestion cliquée) } */
+async function aiGeneralAsk(text, opts){
+  opts = opts || {};
+  if(!RAssist) return false;
+  const q = String(text || "").trim();
+  if(!q && !opts.regenerate) return false;
+  /* Une seule génération GPU à la fois : refus PROPRE (jamais une seconde génération silencieuse). */
+  if(aiEngineBusy() || aiGen || RAssist.isBusyPhase(state.aiChat.phase)){ showToast(t("assistant.busy")); return false; }
+  if(state.aiStatus === "error" && state.aiDiagnostic && state.aiDiagnostic.code === "DEVICE_LOST" && !aiLoadPromise) await aiLoadModel();   // une relance propre, comme aiSend
+  const t0 = performance.now();
+
+  // — nouvelle conversation Générale, ou suite de celle en cours
+  if(!aiIsGeneral()){
+    state.aiThread = []; state.aiCardsDraft = null; state.aiQuizDraft = null;
+    state.aiChat = Object.assign(aiChatFresh(), { phase: state.aiChat.phase });
+  }
+  state.aiAction = "personal"; state.aiMode = "text"; state.aiPersonalIntent = null; state.aiPersonalQuery = ""; state.aiFollow = "";
+  state.aiContextLabel = t("assistant.mode_general");
+  const chat = state.aiChat, thread = state.aiThread;
+
+  let history, userMsg = null;
+  if(opts.regenerate){
+    let i = thread.length - 1; while(i >= 0 && thread[i].role !== "user") i--;
+    if(i < 0) return false;
+    userMsg = thread[i]; history = thread.slice(0, i); thread.length = i + 1;   // la réponse précédente est REMPLACÉE, pas dupliquée
+  } else history = thread.slice();
+  const question = userMsg ? userMsg.content : q;
+  const uiLang = (window.LyonI18n && LyonI18n.getLang) ? LyonI18n.getLang() : "fr";
+  const analysis = RAssist.analyzeQuestion(question, { previous: aiGeneralPrevious(history), lang: chat.lang || uiLang, forced: opts.forced });
+  const local = RAssist.localAnswer(analysis);
+  const ready = state.aiStatus === "ready" && aiEngineReady();
+  if(!ready && !local){
+    state.aiError = aiChatErrorText("MODEL_NOT_READY"); chat.error = { code: "MODEL_NOT_READY" };
+    if(!userMsg) state.aiThread = history.length ? history : [];           // rien n'est ajouté à la conversation si on ne peut pas répondre
+    render(); return false;
+  }
+
+  aiChatPhase("SUBMIT");
+  state.aiError = null; chat.error = null; chat.suggestions = []; chat.tierHint = null; chat.truncated = false; chat.copied = false;
+  if(opts.regenerate) chat.regens++; else chat.regens = 0;
+
+  // — le sujet : celui de la question, ou celui de la conversation pour une suite
+  const own = RAssist.extractTopic(question);
+  const cont = analysis.needsHistory && (analysis.intent === "FOLLOW_UP" || analysis.intent === "REFORMULATION" || analysis.intent === "EXERCISE");
+  const topic = cont && chat.topic ? chat.topic : (analysis.intent === "COMPARISON" && analysis.needsHistory && chat.topic ? chat.topic + " / " + own : own);
+  if(!userMsg){ userMsg = { role: "user", content: question, display: question }; thread.push(userMsg); }
+  userMsg.meta = { general: true, intent: analysis.intent, topic: topic, followType: analysis.followType, depth: analysis.depth, lang: analysis.lang };
+  chat.topic = topic || chat.topic; chat.lang = analysis.lang;
+
+  const diag = { at: Date.now(), tier: state.aiTier || null, model: state.aiModelId || null, intent: analysis.intent, depth: analysis.depth, domain: analysis.domain, followType: analysis.followType,
+                 lang: analysis.lang, llmCalls: 0, localAnswer: local ? local.kind : null, localCalc: null, errorCode: null };
+
+  // — réponse LOCALE : jamais d'invention possible, jamais un appel au modèle
+  if(local){
+    thread.push({ role: "assistant", content: local.text, meta: { local: true, kind: local.kind } });
+    diag.prepMs = Math.round(performance.now() - t0);
+    chat.diag = diag; aiChatPhase("LOCAL_DONE"); render();
+    return true;
+  }
+
+  const tier = state.aiTier || "avance";
+  const reasoning = !!(AIE.TIERS[tier] && AIE.TIERS[tier].reasoning);
+  const calc = analysis.intent === "CALCULATION" ? RAssist.localCalculation(question, analysis.lang) : null;
+  if(calc) diag.localCalc = calc.kind;
+  let windowTokens = RAssist.CONTEXT_TOKENS;
+  const build = () => {
+    const p = RAssist.buildGeneralPrompt({ question, analysis, history, tier, reasoning, calc, contextTokens: windowTokens });
+    if(chat.regens) p.params.temperature = Math.min(0.95, p.params.temperature + 0.12 * chat.regens);     // une régénération doit pouvoir répondre autrement
+    return p;
+  };
+  let prompt = build();
+  const signal = { cancelled: false };
+  aiCurrentSignal = signal;
+  render();                                                              // « Réflexion… » (PREPARING)
+
+  let res = null, err = null, tFirst = null, tDispatch = performance.now();
+  for(let attempt = 0; attempt < 2; attempt++){
+    if(signal.cancelled) break;
+    tDispatch = performance.now();
+    if(attempt === 0) aiChatPhase("DISPATCHED");
+    diag.llmCalls++;
+    try{
+      res = await webllmChat(prompt.messages, {
+        signal, task: "chat", temperature: prompt.params.temperature, topP: prompt.params.topP, maxTokens: prompt.params.maxTokens,
+        budgetTokens: windowTokens - prompt.params.maxTokens - 120,
+        onText: ({ text }) => { if(tFirst === null && text) tFirst = performance.now(); aiGeneralPaint(text); },
+      });
+      err = null; break;
+    }catch(e){
+      err = e;
+      const cls = RAssist.classifyChatError(e);
+      if(cls.shrinkContext && attempt === 0 && !signal.cancelled){ windowTokens = Math.floor(windowTokens * 0.65); prompt = build(); diag.retriedSmaller = true; continue; }
+      break;
+    }
+  }
+  aiCurrentSignal = null;
+  if(aiPaintRaf){ cancelAnimationFrame(aiPaintRaf); aiPaintRaf = 0; }
+  if(state.aiChat !== chat || state.aiThread !== thread){      // la conversation a été effacée / remplacée pendant la génération : on n'écrit plus rien
+    if(state.aiChat === chat){ aiChatPhase(signal.cancelled ? "ABORT" : "DONE"); render(); }
+    return false;
+  }
+
+  Object.assign(diag, { promptTokens: prompt.meta.promptTokens, promptChars: prompt.meta.promptChars, historyUsed: prompt.meta.historyMessages, historyDropped: prompt.meta.historyDropped,
+                        maxTokens: prompt.params.maxTokens, temperature: prompt.params.temperature, topP: prompt.params.topP, profile: prompt.meta.profile,
+                        prepMs: Math.round(tDispatch - t0), ttftPageMs: tFirst === null ? null : Math.round(tFirst - tDispatch) });
+  if(res) Object.assign(diag, { ttftMs: res.ttftMs === undefined ? null : Math.round(res.ttftMs || 0), genMs: res.totalMs === undefined ? null : Math.round(res.totalMs || 0), finishReason: res.finishReason || null });
+
+  const answer = res ? RAssist.cleanAnswer(res.text) : "";
+  if(signal.cancelled || (res && res.aborted)){
+    if(answer.trim()) thread.push({ role: "assistant", content: answer, meta: { aborted: true, intent: analysis.intent } });
+    aiChatPhase("ABORT");
+  } else if(err || !answer.trim()){
+    const code = err ? RAssist.classifyChatError(err).code : "EMPTY_RESPONSE";
+    diag.errorCode = code; chat.error = { code };
+    state.aiError = aiChatErrorText(code);
+    aiChatPhase("FAIL");
+    aiLog("Réponse impossible", code);
+  } else {
+    thread.push({ role: "assistant", content: answer, meta: { intent: analysis.intent, depth: analysis.depth, topic: topic, finishReason: diag.finishReason || null } });
+    chat.truncated = diag.finishReason === "length";
+    chat.suggestions = (chat.truncated ? ["continue"] : []).concat(RAssist.suggestFollowUps(analysis, thread.slice(0, -1))).slice(0, 3);
+    chat.tierHint = RAssist.suggestTier(analysis, tier);
+    state.aiHistory.push({ type: "personal", typeLabel: t("assistant.panel_title"), prompt: question, contextLabel: t("assistant.mode_general"), text: answer, date: new Date().toISOString() });
+    saveAIHistory();
+    aiChatPhase("DONE");
+  }
+  chat.diag = diag;
+  render();
+  return true;
+}
+
+function aiGeneralStop(){ if(state.aiBusy) aiCancelGeneration(); }
+function aiGeneralRegenerate(){ return aiGeneralAsk(null, { regenerate: true }); }
+const AI_SUGGESTION_FORCED = {
+  example: { intent: "REFORMULATION", followType: "example" }, simpler: { intent: "REFORMULATION", followType: "simpler" },
+  deeper: { intent: "REFORMULATION", followType: "detailed" }, check: { intent: "EXERCISE", followType: "check" },
+  explain: { intent: "FOLLOW_UP", followType: "explain" }, change: { intent: "FOLLOW_UP", followType: "change" },
+  hint: { intent: "FOLLOW_UP", followType: "hint" }, "continue": { intent: "REFORMULATION", followType: "continue" },
+};
+function aiGeneralSuggestion(kind){
+  const forced = AI_SUGGESTION_FORCED[kind];
+  if(!forced) return;
+  aiGeneralAsk(t("assistant.sug." + kind), { forced });
+}
+/* Copier : API moderne si disponible (contexte sécurisé), sinon repli execCommand (WKWebView, anciens Safari). */
+async function aiCopyLastAnswer(){
+  const last = [...state.aiThread].reverse().find(m => m.role === "assistant");
+  if(!last) return;
+  const text = last.content;
+  let ok = false;
+  try{ if(navigator.clipboard && navigator.clipboard.writeText){ await navigator.clipboard.writeText(text); ok = true; } }catch(e){}
+  if(!ok){
+    try{
+      const ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;";
+      document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy"); ta.remove();
+    }catch(e){}
+  }
+  state.aiChat.copied = ok;
+  render();
+  if(ok) setTimeout(() => { if(state.aiChat.copied){ state.aiChat.copied = false; render(); } }, 1800);
+}
+
+/* ── interface ── */
+function aiGeneralActionsHtml(){
+  const c = state.aiChat;
+  if(RAssist.isBusyPhase(c.phase)) return "";
+  const last = state.aiThread[state.aiThread.length - 1];
+  let html = "";
+  if(last && last.role === "assistant" && !(last.meta && last.meta.local)){
+    if(last.meta && last.meta.aborted) html += `<div class="ai-bubble-note">${escapeHtml(t("assistant.aborted"))}</div>`;
+    if(c.truncated) html += `<div class="ai-bubble-note">${escapeHtml(t("assistant.truncated"))}</div>`;
+    html += `<div class="ai-msg-actions" role="group" aria-label="${escapeHtml(t("assistant.actions_aria"))}">
+      <button type="button" class="btn-text" id="ai-copy-btn">${escapeHtml(t(c.copied ? "assistant.copied" : "assistant.copy"))}</button>
+      <button type="button" class="btn-text" id="ai-regen-btn">${escapeHtml(t("assistant.regenerate"))}</button>
+    </div><span class="sr-only" role="status" aria-live="polite">${c.copied ? escapeHtml(t("assistant.copied")) : ""}</span>`;
+  }
+  if(c.suggestions.length) html += `<div class="ai-suggestions" role="group" aria-label="${escapeHtml(t("assistant.sug_aria"))}">${c.suggestions.map(k => `<button type="button" class="ai-suggestion-chip" data-ai-sug="${k}">${escapeHtml(t("assistant.sug." + k))}</button>`).join("")}</div>`;
+  if(c.tierHint) html += `<p class="ai-hint ai-tier-hint">${escapeHtml(t("assistant.tier_hint", { tier: t("ai.tier." + c.tierHint + ".name") }))}</p>`;
+  return html;
+}
+/* Diagnostic de la dernière réponse — UNIQUEMENT dans le panneau de diagnostic, jamais dans la conversation. Aucune question ni réponse n'y figure. */
+function aiChatDiagHtml(){
+  const d = state.aiChat && state.aiChat.diag;
+  if(!d) return "";
+  const v = (x, u) => (x === null || x === undefined) ? "—" : x + (u || "");
+  return `<div style="margin-top:12px;font-size:var(--text-label);line-height:1.8;color:var(--muted);font-family:monospace;">
+    <div><b>${escapeHtml(t("assistant.diag.title"))}</b></div>
+    <div>activeModel : ${escapeHtml(v(d.tier))} · ${escapeHtml(v(d.model))}</div>
+    <div>questionIntent : ${escapeHtml(v(d.intent))} · responseDepth : ${escapeHtml(v(d.depth))} · domain : ${escapeHtml(v(d.domain))} · followType : ${escapeHtml(v(d.followType))} · lang : ${escapeHtml(v(d.lang))}</div>
+    <div>context : ${v(d.promptTokens, " tokens≈")} · ${v(d.promptChars, " chars")} · historyMessagesUsed : ${v(d.historyUsed)} (omitted ${v(d.historyDropped)})</div>
+    <div>params : temperature ${v(d.temperature)} · top_p ${v(d.topP)} · max_tokens ${v(d.maxTokens)} · profile ${escapeHtml(v(d.profile))}</div>
+    <div>llmCalls : ${d.llmCalls}${d.retriedSmaller ? " (retry with smaller context)" : ""} · localAnswer : ${escapeHtml(v(d.localAnswer))} · localCalc : ${escapeHtml(v(d.localCalc))}</div>
+    <div>timePreparing : ${v(d.prepMs, " ms")} · TTFT(engine) : ${v(d.ttftMs, " ms")} · TTFT(page) : ${v(d.ttftPageMs, " ms")} · generationTime : ${v(d.genMs, " ms")}</div>
+    <div>finishReason : ${escapeHtml(v(d.finishReason))} · errorCode : ${escapeHtml(v(d.errorCode))}</div>
+  </div>`;
+}
+
 function aiClearThread(){
+  const wasGeneral = aiIsGeneral();
   if(state.aiBusy) aiCancelGeneration();
   state.aiThread = [];
+  if(wasGeneral){ state.aiChat = aiChatFresh(); state.aiBusy = false; }
   state.aiCardsDraft = null;
   state.aiQuizDraft = null;
   state.aiError = null;
@@ -17043,6 +17306,7 @@ function aiModelPickerHtml(){
    "Analyser"→errors) — jamais une seconde copie de cette logique. */
 function aiSelectAction(k){
   if(!AI_ACTIONS[k]) return;
+  if(state.aiBusy) aiCancelGeneration();          // jamais deux fils en même temps : une réponse en cours est arrêtée proprement
   // Un chapitre de bibliothèque récemment consulté (libRunUserChapterAI/
   // libRunUserChapterFree) met volontairement state.aiChapter à null (ce
   // n'est pas un chapitre du programme intégré) — sans repli, une action
@@ -17131,6 +17395,13 @@ function aiRunPersonalMode(intent, displayLabel){
    détecte l'intention par mots-clés, construit uniquement le contexte
    nécessaire, puis réutilise exactement le même pipeline d'envoi
    (aiSend) que le reste de l'assistant. */
+/* Les intentions « personnelles » (aujourd'hui, planning, erreurs, réviser) parlent de L'ÉTUDIANT : on exige un marqueur de
+   première personne ou une tournure explicite. Un mot-clé seul (« examen », « aujourd'hui ») ne suffit plus. */
+function aiIsPersonalRequest(text){
+  const f = RAssist ? RAssist.fold(text) : String(text || "").toLowerCase();
+  return /\b(je|j'|mon|ma|mes|my|i|mi|mis|mein\w*|ich|io|mio|mia|miei|mie)\b|\bm'/.test(f)
+      || /(fais[- ]moi reviser|interroge[- ]moi|revise me|quiz me|test me|que dois[- ]je|what should i|what do i)/.test(f);
+}
 function aiRunPersonalQuery(text){
   if(aiEngineBusy()) return;
   const q = (text || "").trim();
@@ -17141,7 +17412,12 @@ function aiRunPersonalQuery(text){
     render();
     return;
   }
-  const intent = detectAssistantIntent(q);
+  let intent = detectAssistantIntent(q);
+  if(RAssist && intent !== "chapter" && !aiIsPersonalRequest(q)) intent = "chapter";     // « le cours du Bitcoin aujourd'hui » n'est pas une question sur MON planning
+  /* Une question générale (aucune donnée personnelle demandée) passe par la chaîne du mode Général : plus de
+     tableau de maîtrise injecté pour « Qu'est-ce que l'EBITDA ? ». Les intentions personnelles (aujourd'hui,
+     planning, erreurs, réviser) gardent leur flux. */
+  if(intent === "chapter" && RAssist){ aiGeneralAsk(q); return; }
   const ctx = buildAssistantContext(intent);
   state.aiPersonalIntent = intent;
   state.aiMode = "text";
@@ -17249,8 +17525,11 @@ function renderAssistantHeroHtml(){
     <div class="ai-queryrow">
       <label class="sr-only" for="assistant-query-input">${t("assistant.query_placeholder")}</label>
       <input type="text" class="ai-select" id="assistant-query-input" placeholder="${t("assistant.query_placeholder")}" value="${escapeHtml(state.aiPersonalQuery)}" ${ready?"":"disabled"}>
-      <button type="button" class="btn red" id="assistant-query-btn" ${ready && !aiEngineBusy() ? "" : "disabled"}>${t("assistant.query_btn")}</button>
+      ${state.aiBusy
+        ? `<button type="button" class="btn outline" id="assistant-stop-btn">${escapeHtml(t("assistant.stop"))}</button>`
+        : `<button type="button" class="btn red" id="assistant-query-btn" ${ready && !aiEngineBusy() ? "" : "disabled"}>${t("assistant.query_btn")}</button>`}
     </div>
+    ${ready ? `<div class="ai-queryrow-meta" role="group" aria-label="${escapeHtml(t("assistant.meta_aria"))}"><span class="ai-pill">${escapeHtml(t("assistant.mode_general"))}</span>${state.aiTier ? `<span class="ai-pill is-tier">${escapeHtml(t("ai.tier." + state.aiTier + ".name"))}</span>` : ""}</div>` : ""}
     ${showFull && suggestions.length ? `<div class="ai-suggestions">
       ${suggestions.map(s=>`<button type="button" class="ai-suggestion-chip" data-assistant-suggestion-kind="${s.kind}" ${s.chapterId?`data-assistant-suggestion-chapter="${escapeHtml(s.chapterId)}"`:""} ${ready?"":"disabled"}>${escapeHtml(s.label)}</button>`).join("")}
     </div>` : ""}
@@ -17306,10 +17585,19 @@ function attachAssistantHeroEvents(){
   if(queryInput){
     queryInput.addEventListener("input", ()=>{ state.aiPersonalQuery = queryInput.value; });
     queryInput.addEventListener("keydown", (e)=>{
-      if(e.key === "Enter" && !queryBtn.disabled){ e.preventDefault(); aiRunPersonalQuery(queryInput.value); }
+      if(e.key === "Enter" && queryBtn && !queryBtn.disabled){ e.preventDefault(); aiRunPersonalQuery(queryInput.value); }
+      if(e.key === "Escape" && state.aiBusy){ e.preventDefault(); aiGeneralStop(); }            // arrêter une réponse au clavier
     });
   }
   if(queryBtn && !queryBtn.disabled) queryBtn.addEventListener("click", ()=> aiRunPersonalQuery(queryInput ? queryInput.value : state.aiPersonalQuery));
+  document.querySelectorAll("#assistant-stop-btn, #ai-stop-btn").forEach(b => b.addEventListener("click", aiGeneralStop));
+  const copyBtn = document.getElementById("ai-copy-btn");
+  if(copyBtn) copyBtn.addEventListener("click", aiCopyLastAnswer);
+  const regenBtn = document.getElementById("ai-regen-btn");
+  if(regenBtn) regenBtn.addEventListener("click", aiGeneralRegenerate);
+  const retryBtn = document.getElementById("ai-retry-btn");
+  if(retryBtn) retryBtn.addEventListener("click", aiGeneralRegenerate);
+  document.querySelectorAll("[data-ai-sug]").forEach(b => b.addEventListener("click", () => aiGeneralSuggestion(b.dataset.aiSug)));
 
   const reviseNowBtn = document.getElementById("ai-action-revise-now");
   if(reviseNowBtn) reviseNowBtn.addEventListener("click", aiActionReviseNow);
@@ -17410,7 +17698,10 @@ function renderAI(){
       html += `<div class="ai-generate-row"><span class="ai-charcount">${escapeHtml(state.aiContextLabel)}</span></div>`;
     }
 
-    if(state.aiError) html += `<div class="ai-error">${state.aiError}</div>`;
+    if(state.aiError){
+      html += `<div class="ai-error" role="alert">${state.aiError}</div>`;
+      if(aiIsGeneral() && !state.aiBusy && state.aiThread.length && state.aiThread[state.aiThread.length - 1].role === "user") html += `<div class="ai-msg-actions"><button type="button" class="btn-text" id="ai-retry-btn">${escapeHtml(t("assistant.retry"))}</button></div>`;
+    }
 
     if(state.aiThread.length || state.aiBusy){
       html += `<div class="ai-thread">`;
@@ -17423,12 +17714,17 @@ function renderAI(){
         }
       });
       if(state.aiBusy){
-        html += `<div class="ai-bubble assistant"><div class="ai-result-body" id="ai-stream"><span class="ai-loading" style="padding:0;"><span class="ai-spinner"></span>Réflexion…</span></div></div>`;
+        html += `<div class="ai-bubble assistant"><div class="ai-result-body" id="ai-stream" aria-busy="true"><span class="ai-loading" style="padding:0;"><span class="ai-spinner"></span>${escapeHtml(t("assistant.thinking"))}</span></div></div>`;
+        if(aiIsGeneral()) html += `<div class="ai-msg-actions"><button type="button" class="btn-text" id="ai-stop-btn">${escapeHtml(t("assistant.stop"))}</button></div>`;
       }
       html += `</div>`;
-      html += assistantMessageActionsHtml();
-      if((state.aiAction === "explain" || (isPersonal && (state.aiPersonalIntent === "chapter" || state.aiPersonalIntent === null))) && state.aiMode === "text" && !state.aiBusy && state.aiThread.length >= 2){
-        html += assistantExplainQuickActionsHtml();
+      if(aiIsGeneral()){
+        html += aiGeneralActionsHtml();            // Copier · Régénérer · 2–3 suggestions contextuelles
+      } else {
+        html += assistantMessageActionsHtml();
+        if((state.aiAction === "explain" || (isPersonal && (state.aiPersonalIntent === "chapter" || state.aiPersonalIntent === null))) && state.aiMode === "text" && !state.aiBusy && state.aiThread.length >= 2){
+          html += assistantExplainQuickActionsHtml();
+        }
       }
     }
 
@@ -17450,7 +17746,7 @@ function renderAI(){
 
     if(state.aiMode === "text" && state.aiThread.length > 1 && !state.aiBusy){
       html += `<div class="ai-followrow">
-        <input type="text" class="ai-select" id="ai-follow-input" aria-label="${state.aiAction === "drill" ? "Ta réponse" : "Question de suivi"}" placeholder="${state.aiAction === "drill" ? "Ta réponse…" : "Poser une question de suivi…"}" value="${escapeHtml(state.aiFollow)}">
+        <input type="text" class="ai-select" id="ai-follow-input" aria-label="${state.aiAction === "drill" ? "Ta réponse" : escapeHtml(t("assistant.follow_ph"))}" placeholder="${state.aiAction === "drill" ? "Ta réponse…" : escapeHtml(t("assistant.follow_ph"))}" value="${escapeHtml(state.aiFollow)}">
         <button class="btn" id="ai-follow-btn" ${aiEngineBusy() ? "disabled" : ""}>Envoyer</button>
       </div>`;
     }
@@ -17493,7 +17789,9 @@ function attachAIEvents(){
 
   const close = document.getElementById("ai-close");
   if(close) close.addEventListener("click", ()=>{
+    const wasGeneral = aiIsGeneral();
     if(state.aiBusy) aiCancelGeneration();
+    if(wasGeneral){ state.aiChat = aiChatFresh(); state.aiBusy = false; }
     state.aiAction = null; state.aiThread = []; state.aiCardsDraft = null; state.aiQuizDraft = null; state.aiError = null; state.aiPersonalIntent = null;
     render();
   });

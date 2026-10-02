@@ -236,3 +236,7 @@ Voir le rapport final et le protocole ci-dessous.
 - **D — Fermer/rouvrir REV-EM** : le dernier palier stable se recharge tout seul (quelques secondes, il est en cache).
 - **E — Repli** : si Expert échoue, vérifier le message simple et qu'aucun écran d'erreur ne s'affiche quand un repli réussit.
 - **F — REV-EM.app (macOS)** : ouvrir *État de mon assistant IA* → « Copier le diagnostic » → me le coller, **y compris** les lignes « WebGPU (worker) », « shader-f16 », « Limites » et le code d'erreur.
+
+## 7. Questions libres (Mode Général)
+
+La chaîne d'une question libre (analyse, contexte, stratégie, prompt, calcul local, états, arrêt, régénération, mesures avant/après, protocole de test sur Mac) est décrite dans `AI_CHAT.md`. Côté hôte, seul changement : `GENERATE` accepte `topP` (transmis comme `top_p` à WebLLM seulement s'il est fourni et valide).

@@ -23,7 +23,7 @@ const ALL_IDS = AI.TIER_ORDER.flatMap(k => [AI.TIERS[k].ids.f16, AI.TIERS[k].ids
 
 /* Faux WebLLM : compte les moteurs, et surtout combien sont CHARGÉS en même temps. */
 function fakeWebLLM(cfg = {}){
-  const world = { created: 0, loaded: 0, maxLoaded: 0, reloads: [], unloads: 0, backends: [], generations: 0 };
+  const world = { created: 0, loaded: 0, maxLoaded: 0, reloads: [], unloads: 0, backends: [], generations: 0, requests: [] };
   class MLCEngine {
     constructor(conf){
       world.created++; this.conf = conf; this.isLoaded = false; this.interrupted = false; this.gone = false;
@@ -53,7 +53,7 @@ function fakeWebLLM(cfg = {}){
     _create(p){
       if(cfg.warmupThrow && !p.stream && cfg.warmupThrow()) return Promise.reject(cfg.warmupThrow());
       if(!p.stream) return Promise.resolve({ choices: [{ message: { content: "ok" } }] });
-      world.generations++;
+      world.generations++; world.requests.push(p);
       const self = this; self.interrupted = false;
       if(cfg.genThrow && cfg.genThrow()) return Promise.reject(cfg.genThrow());
       return Promise.resolve((async function*(){
@@ -185,6 +185,22 @@ globalThis.caches = { keys: async () => [...cacheSet], delete: async (n) => cach
     const h2 = mk();
     h2.send({ type: "GENERATE", id: "n", messages: [] });
     eq("génération avant chargement → NOT_READY", (await h2.waitFor("GENERATION_ERROR", "n")).code, "NOT_READY");
+  }
+
+  scenario("Paramètres de génération : top_p transmis seulement s'il est fourni et valide");
+  {
+    const h = mk();
+    h.send({ type: "INIT_MODEL", id: "t0", tier: "rapide" }); await h.waitFor("MODEL_READY", "t0");
+    h.send({ type: "GENERATE", id: "t1", messages: [{ role: "user", content: "a" }], temperature: 0.3, topP: 0.9, maxTokens: 222 });
+    await h.waitFor("GENERATION_COMPLETE", "t1");
+    h.send({ type: "GENERATE", id: "t2", messages: [{ role: "user", content: "b" }], temperature: 0.6, maxTokens: 100 });
+    await h.waitFor("GENERATION_COMPLETE", "t2");
+    h.send({ type: "GENERATE", id: "t3", messages: [{ role: "user", content: "c" }], topP: 7 });
+    await h.waitFor("GENERATION_COMPLETE", "t3");
+    const rq = h.fw.world.requests.filter(r => r.stream);
+    eq("top_p, temperature et max_tokens arrivent au moteur", [rq[0].top_p, rq[0].temperature, rq[0].max_tokens], [0.9, 0.3, 222]);
+    eq("sans topP : AUCUNE clé top_p (les appels existants ne changent pas)", "top_p" in rq[1], false);
+    eq("topP invalide (7) ignoré", "top_p" in rq[2], false);
   }
 
   scenario("ABORT : génération interrompue proprement");

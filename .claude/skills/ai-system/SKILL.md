@@ -127,3 +127,17 @@ Aucune clé API, aucun secret ne doit jamais être introduit pour l'IA —
 WebLLM ne nécessite ni clé ni compte. Si une future fonctionnalité
 introduit un vrai appel à un service IA distant, voir
 `performance-security` avant de toucher au frontend.
+
+## Questions libres — Mode Général (voir `AI_CHAT.md`)
+
+Une question libre passe par **`aiGeneralAsk()`** (index.html, section 13bis) et la logique pure de
+`assistant-core.js` (`RevemAssistant`) : `analyzeQuestion` → `localAnswer` (temps réel / fausse source :
+réponse locale, **0 appel au modèle**) → `localCalculation` (calcul exact, jamais eval) → `selectHistory`
+(historique pertinent, comprimé, budget RÉEL de 4096 jetons) → `buildGeneralPrompt` (`system` + historique +
+question ; palier Expert = consignes dans le premier message utilisateur) → `webllmChat` avec `temperature` /
+`topP` / `maxTokens` propres à la question → `cleanAnswer`. **Ne jamais** ajouter un second chemin d'envoi, ni
+un appel LLM pour classer / résumer l'historique, ni un chargement de palier déclenché par une question.
+Une seule génération à la fois : machine `IDLE/PREPARING/GENERATING/COMPLETE/ABORTED/ERROR`
+(`state.aiChat.phase`). Les intentions personnelles (planning, erreurs, réviser) et les actions à panneau
+gardent leur flux historique. Pas de lookbehind regex dans le code chargé par la page (`tests/compat-syntax.test.js`).
+
