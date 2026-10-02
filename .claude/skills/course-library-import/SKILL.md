@@ -28,12 +28,22 @@ description: Bibliothèque de matières/chapitres, import de documents, généra
 
 ## La page d'un cours est un HUB (voir `COURSE_HUB.md`)
 
-Section « Outils de révision » : cinq accès toujours cliquables (Fiche, Résumé,
-Quiz, Flashcards, Questions), états `NOT_GENERATED/QUEUED/GENERATING/READY/ERROR`
+Section « Outils de révision » : six accès toujours cliquables (Fiche, Résumé,
+Quiz, Quiz Flash, Flashcards, Questions), états `NOT_GENERATED/QUEUED/GENERATING/READY/ERROR`
 **déduits** des champs du chapitre (jamais persistés). Logique pure dans
 `course-hub.js` (`RevemHub`) ; générations via **une seule file** (`courseHubGenerate`
 → `courseHubPump` → `courseImportRunAllSteps`), jamais deux travaux WebLLM à la fois.
 Ne jamais ajouter un second bouton qui lance une génération hors de cette file.
+
+## Quiz et flashcards d'un cours = une BANQUE + des SESSIONS (voir `REVISION_BANK.md`)
+
+`chapter.aiQuiz` / `aiFlashcards` sont des **banques** (générées par lots par
+`generateQuestionBank`, plusieurs dizaines d'éléments adaptés à la taille du cours),
+jamais « le quiz ». Pour jouer : **toujours** `courseQuizStart(ch, "quiz"|"quizflash")` /
+`courseFlashStart(ch)` (SessionBuilder de `revision-bank.js` : sélection, ordre et ordre
+des choix nouveaux, `correct` recalculé, banque jamais modifiée, aucun appel IA). Ne plus
+appeler `startQuiz(..., ch.aiQuiz)` / `startFlashDeck(..., ch.aiFlashcards)` directement.
+Tout mélange passe par `RevemBank.shuffleArray` (Fisher-Yates), jamais `sort(random)`.
 
 ## Il n'y a pas d'objet « cours » séparé du chapitre
 

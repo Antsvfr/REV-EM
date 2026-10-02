@@ -53,7 +53,7 @@ const FAKE_AI = `
     return "unknown-chat";
   }
   function keyOfJson(p){
-    if (/questions à choix multiples/.test(p)) return "quiz";
+    if (/questions à choix multiples|questions pour réviser CETTE partie/.test(p)) return "quiz";
     if (/flashcards de révision/.test(p)) return "flashcards";
     if (/questions de révision variées/.test(p)) return "reviewQuestions";
     return "unknown-json";
@@ -150,7 +150,7 @@ try {
     const r = await page.evaluate(() => ({ view: state.library.view, tab: state.tab, chapterId: state.library.chapterId, real: state.userChapters[0].id }));
     eq("on est sur la page du chapitre importé (pas sur un écran passif)", [r.tab, r.view], ["library", "chapterDetail"]);
     eq("c'est bien le chapitre créé par l'import (identifiant stable)", r.chapterId, r.real);
-    eq("les cinq accès sont là, dans l'ordre", await page.$$eval("[data-hub-open]", e => e.map(x => x.dataset.hubOpen)), ["fiche", "summary", "quiz", "flashcards", "questions"]);
+    eq("les cinq accès sont là, dans l'ordre", await page.$$eval("[data-hub-open]", e => e.map(x => x.dataset.hubOpen)), ["fiche", "summary", "quiz", "quizflash", "flashcards", "questions"]);
     const txt = await bodyText(page);
     check("le titre et le sous-titre de la section", txt.includes("Outils de révision") && txt.includes("Tout ce qu'il te faut pour maîtriser ce chapitre"), txt.slice(0, 300));
     check("les libellés demandés", ["Réviser l'essentiel", "Comprendre rapidement", "Tester mes connaissances", "Mémoriser les notions", "Interroger REV-EM"].every(s => txt.includes(s)));
@@ -167,7 +167,7 @@ try {
     const { page, errors } = await open(browser);
     const { ids } = await seed(page, [FULL("A")]);
     await goChapter(page, ids[0]);
-    eq("les quatre ressources générables sont READY", await cardStates(page), { fiche: "READY", summary: "READY", quiz: "READY", flashcards: "READY", questions: "READY" });
+    eq("les ressources générables sont READY", await cardStates(page), { fiche: "READY", summary: "READY", quiz: "READY", quizflash: "READY", flashcards: "READY", questions: "READY" });
     await page.click('[data-hub-open="fiche"]');
     await page.waitForSelector(".fiche-content");
     const txt = await bodyText(page);
@@ -297,7 +297,7 @@ try {
     const { ids } = await seed(page, [PDFONLY("P")]);
     await page.evaluate(() => { state.aiStatus = "nogpu"; state.aiGpuDiag = { message: "WebGPU indisponible." }; });
     await goChapter(page, ids[0]);
-    eq("les cinq outils restent affichés", (await page.$$("[data-hub-open]")).length, 5);
+    eq("les cinq outils restent affichés", (await page.$$("[data-hub-open]")).length, 6);
     check("le PDF reste lisible / téléchargeable", (await page.$$("#lib-open-pdf-btn, #lib-download-pdf-btn")).length === 2);
     await page.click('[data-hub-open="quiz"]');
     await page.click("[data-hub-generate]");
@@ -419,8 +419,8 @@ try {
     await page.setViewportSize({ width: 768, height: 900 });
     eq("tablette : deux colonnes", await page.evaluate(() => new Set([...document.querySelectorAll(".hub-card")].map(c => Math.round(c.getBoundingClientRect().left))).size), 2);
     await page.setViewportSize({ width: 1280, height: 900 });
-    const d = await page.evaluate(() => { const c = [...document.querySelectorAll(".hub-card")]; const top = c.filter(x => Math.round(x.getBoundingClientRect().top) === Math.round(c[0].getBoundingClientRect().top)).length; const q = c[4].getBoundingClientRect(), g = document.querySelector(".hub-grid").getBoundingClientRect(); return { top, wide: Math.round(q.width) >= Math.round(g.width) - 2 }; });
-    eq("bureau : quatre cartes sur une ligne, Questions pleine largeur en dessous", d, { top: 4, wide: true });
+    const d = await page.evaluate(() => { const c = [...document.querySelectorAll(".hub-card")]; const row = c.filter(x => Math.round(x.getBoundingClientRect().top) === Math.round(c[0].getBoundingClientRect().top)).length; return { cards: c.length, row }; });
+    eq("bureau : six cartes, trois par ligne", d, { cards: 6, row: 3 });
     // vue de ressource en mobile
     await page.setViewportSize({ width: 390, height: 800 });
     await page.click('[data-hub-open="fiche"]');
@@ -437,7 +437,7 @@ try {
     const { page, errors } = await open(browser);
     const { ids } = await seed(page, [FULL("A")]);
     await goChapter(page, ids[0]);
-    check("les cartes sont de vrais <button>", await page.$$eval(".hub-card", e => e.length === 5 && e.every(x => x.tagName === "BUTTON" && x.type === "button")));
+    check("les cartes sont de vrais <button>", await page.$$eval(".hub-card", e => e.length === 6 && e.every(x => x.tagName === "BUTTON" && x.type === "button")));
     check("chaque carte a un nom accessible complet", await page.$$eval(".hub-card", e => e.every(x => (x.getAttribute("aria-label") || "").length > 10)));
     check("la section est un repère nommé", await page.$eval("#course-hub", e => e.tagName === "SECTION" && !!document.getElementById(e.getAttribute("aria-labelledby"))));
     await page.focus('[data-hub-open="fiche"]');
@@ -476,13 +476,14 @@ try {
     await page.click("#lib-generate-ai-btn");
     await page.waitForTimeout(150);
     const mid = await cardStates(page);
-    check("pendant la génération : une carte GENERATING, les autres QUEUED (jamais deux GENERATING)", Object.values(mid).filter(s => s === "GENERATING").length <= 1 && Object.values(mid).some(s => s === "GENERATING" || s === "QUEUED"), mid);
+    const jobs = Object.entries(mid).filter(([k]) => k !== "quizflash");   // Quiz Flash reflète le travail du quiz : même travail, pas un second
+    check("pendant la génération : un travail GENERATING, les autres QUEUED (jamais deux travaux à la fois)", jobs.filter(([, s]) => s === "GENERATING").length <= 1 && jobs.some(([, s]) => s === "GENERATING" || s === "QUEUED"), mid);
     check("le bouton « Tout générer » est neutralisé pendant le travail", await page.$eval("#lib-generate-ai-btn", e => e.disabled));
     await page.waitForFunction(() => !state.courseGen.running, null, { timeout: 15000 });
     const end = await page.evaluate(() => ({ calls: window.__AI.calls.slice(), max: window.__AI.maxActive }));
     eq("jamais deux travaux WebLLM en même temps", end.max, 1);
     eq("chaque ressource manquante a été demandée UNE fois, dans l'ordre du pipeline", end.calls, ["fiche", "summary", "quiz", "flashcards", "reviewQuestions"]);
-    eq("tout est READY à la fin", await cardStates(page), { fiche: "READY", summary: "READY", quiz: "READY", flashcards: "READY", questions: "READY" });
+    eq("tout est READY à la fin", await cardStates(page), { fiche: "READY", summary: "READY", quiz: "READY", quizflash: "READY", flashcards: "READY", questions: "READY" });
     check("« Tout générer » disparaît quand il n'y a plus rien à générer", (await page.$$("#lib-generate-ai-btn")).length === 0);
     eq("aucune erreur JavaScript", errors, []);
     await page.close();
@@ -504,7 +505,7 @@ try {
     await goChapter(page, "V");
     txt = await bodyText(page);
     check("chapitre réellement vide : l'ancien message est conservé", txt.includes("Ce chapitre n'a pas encore de contenu."));
-    eq("chapitre vide : les cinq cartes restent affichées et cliquables", await page.$$eval("[data-hub-open]", e => e.length === 5 && e.every(x => !x.disabled)), true);
+    eq("chapitre vide : les cinq cartes restent affichées et cliquables", await page.$$eval("[data-hub-open]", e => e.length === 6 && e.every(x => !x.disabled)), true);
     await page.click('[data-hub-open="quiz"]');
     await page.waitForSelector("[data-hub-edit]");
     check("chapitre vide : la vue propose de modifier le chapitre (pas de génération impossible)", (await bodyText(page)).includes("Ce cours n'a pas de texte à analyser."));

@@ -15,11 +15,11 @@ const eq = (label, got, want) => check(label, JSON.stringify(got) === JSON.strin
 const scenario = (n) => console.log(`\n── ${n} ──`);
 const chap = (over) => Object.assign({ id: "ch_1", subjectId: "s_1", content: "", summary: "", aiQuiz: [], aiFlashcards: [], aiReviewQuestions: [], originalText: "", hasOriginalFile: false, heuristicMode: false }, over || {});
 
-scenario("Les cinq destinations");
+scenario("Les six destinations");
 {
-  eq("ordre et clés", H.RESOURCES.map(r => r.key), ["fiche", "summary", "quiz", "flashcards", "questions"]);
+  eq("ordre et clés", H.RESOURCES.map(r => r.key), ["fiche", "summary", "quiz", "quizflash", "flashcards", "questions"]);
   eq("quatre ressources générables, « questions » est une entrée vers l'assistant", [H.GENERABLE, H.meta("questions").generable], [["fiche", "summary", "quiz", "flashcards"], false]);
-  eq("champs RÉELS du chapitre", H.RESOURCES.filter(r => r.field).map(r => r.field), ["content", "summary", "aiQuiz", "aiFlashcards"]);
+  eq("champs RÉELS du chapitre", H.RESOURCES.filter(r => r.field).map(r => r.field), ["content", "summary", "aiQuiz", "aiQuiz", "aiFlashcards"]);
   eq("les cinq états", H.STATES, ["NOT_GENERATED", "QUEUED", "GENERATING", "READY", "ERROR"]);
   eq("la file connaît aussi les questions de révision (5ᵉ étape du pipeline)", H.QUEUE_KEYS.includes("reviewQuestions"), true);
 }
@@ -57,7 +57,7 @@ scenario("File séquentielle : un seul travail à la fois, aucun doublon");
 {
   const gen = H.newGen(), c = chap();
   eq("on enfile quatre ressources", H.enqueue(gen, "ch_1", ["fiche", "summary", "quiz", "flashcards"]), ["fiche", "summary", "quiz", "flashcards"]);
-  eq("tout est QUEUED", H.allStates(c, gen).filter(s => s.state === "QUEUED").map(s => s.key), ["fiche", "summary", "quiz", "flashcards"]);
+  eq("tout est QUEUED", H.allStates(c, gen).filter(s => s.state === "QUEUED").map(s => s.key), ["fiche", "summary", "quiz", "quizflash", "flashcards"]);
   const t1 = H.takeNext(gen);
   eq("le premier travail démarre", t1, { chapterId: "ch_1", key: "fiche" });
   eq("il est GENERATING, les autres attendent", [H.resourceState(c, gen, "fiche").state, H.resourceState(c, gen, "summary").state], ["GENERATING", "QUEUED"]);
@@ -109,6 +109,25 @@ scenario("IA indisponible : tout ce qui attendait échoue proprement");
   eq("les trois ressources sont en ERROR avec le bon motif", ["fiche", "summary", "quiz"].map(k => H.resourceState(c, gen, k).error.code), ["AI_UNAVAILABLE", "AI_UNAVAILABLE", "AI_UNAVAILABLE"]);
   eq("le cours voisin n'est pas touché", H.isQueued(gen, "AUTRE", "quiz"), true);
   eq("chaque ressource reste réessayable", H.enqueue(gen, "ch_1", ["fiche"]), ["fiche"]);
+}
+
+scenario("Quiz Flash, reprise après indisponibilité de l'IA, obsolescence");
+{
+  const ch = { id: "c", aiQuiz: [{}, {}, {}] };
+  const g = H.newGen();
+  eq("Quiz Flash est READY dès que la banque de questions existe", H.resourceState(ch, g, "quizflash").state, "READY");
+  eq("Quiz Flash dépend du quiz dans la file (QUEUED)", (H.enqueue(g, "d", ["quiz"]), H.resourceState({ id: "d" }, g, "quizflash").state), "QUEUED");
+  eq("Quiz Flash n'est PAS une ressource générable à part (aucune seconde génération)", H.GENERABLE.indexOf("quizflash"), -1);
+  const g2 = H.newGen(); H.enqueue(g2, "w", ["quiz", "flashcards"]);
+  H.failQueuedFor(g2, "w", { code: "AI_UNAVAILABLE" });
+  eq("l'IA absente marque le cours « en attente »", [H.hasWaiting(g2), H.resumeKeys(g2, "w")], [true, ["quiz", "flashcards"]]);
+  eq("on récupère les cours en attente une seule fois", [H.takeWaiting(g2), H.hasWaiting(g2)], [["w"], false]);
+  const g3 = H.newGen(); H.enqueue(g3, "x", ["quiz"]); H.failQueuedFor(g3, "x", { code: "TIMEOUT" });
+  eq("un autre échec (timeout) ne déclenche PAS de reprise automatique", [H.hasWaiting(g3), H.resumeKeys(g3, "x")], [false, []]);
+  eq("l'enrichissement a ses clés de file", [H.QUEUE_KEYS.indexOf("enrich_quiz") >= 0, H.QUEUE_KEYS.indexOf("enrich_flashcards") >= 0], [true, true]);
+  const st = H.resourceState(ch, g, "quiz", { stale: { quiz: true } });
+  eq("banque obsolète : READY mais « à actualiser »", [st.state, st.stale, H.statusLabel(st).key], ["READY", true, "hub.state.stale"]);
+  eq("libellé Quiz Flash", H.statusLabel(H.resourceState(ch, g, "quizflash")).key, "hub.state.flash_ready");
 }
 
 scenario("Libellés : uniquement des faits connus");

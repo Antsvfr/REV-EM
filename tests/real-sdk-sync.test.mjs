@@ -324,7 +324,7 @@ try {
         if (/fiche de révision structurée/.test(p)) return { text: JSON.stringify({ introduction: "i", sections: [{ type: "notions", title: "N", items: [{ title: "Actif", content: "Ce que possède l'entreprise." }] }], keyPoints: ["p"] }) };
         return { text: "Résumé court\\nx\\nIdées essentielles\\n- y" }; };
       window.webllmJsonChat = async (turns) => { const p = turns[0].content;
-        if (/questions à choix multiples/.test(p)) return [{ q: "Q ?", opts: ["a", "b", "c", "d"], correct: 0, exp: "", sourceQuote: "actif" }];
+        if (/questions à choix multiples|questions pour réviser CETTE partie/.test(p)) return [{ q: "Que présente le bilan comptable ?", opts: ["Actif et passif", "Seulement les ventes", "Le plan de marketing", "Les congés annuels"], correct: 0, exp: "", sourceQuote: "actif" }];
         if (/flashcards de révision/.test(p)) return [{ front: "Actif", back: "Ce que possède l'entreprise", sourceQuote: "actif" }];
         return [{ q: "Question ?", a: "Réponse." }]; };
     ` });

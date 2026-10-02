@@ -23,6 +23,12 @@ faux, puisqu'un PDF et son texte existaient.
 | `index.html` section « 7ter-ter » | Branchement : `renderCourseHub`, `renderChapterResource` (vue d'une ressource), `courseHubGenerate` / `courseHubPump` (file), `courseCrumbHtml` (fil d'Ariane des quiz et flashcards). |
 | `translations.js` | Clés `hub.*` dans les 5 langues. |
 
+> **Mise à jour (banque de révision)** : le hub compte désormais **six** accès — Fiche,
+> Résumé, Quiz, **Quiz Flash**, Flashcards, Questions. Quiz Flash est une série courte
+> tirée de la **même** banque que Quiz (aucune seconde génération). Quiz, Quiz Flash et
+> Flashcards lancent une **session** construite instantanément depuis la banque. Les états
+> se lisent « À préparer / En attente / En préparation / Prêt / Erreur ». Voir `REVISION_BANK.md`.
+
 ## Les cinq accès
 
 | Accès | Sous-titre | Ouvre |

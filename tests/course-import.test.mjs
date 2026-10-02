@@ -58,7 +58,7 @@ const FAKE_AI = `
     return "unknown-chat";
   }
   function keyOfJson(p){
-    if (/questions à choix multiples/.test(p)) return "quiz";
+    if (/questions à choix multiples|questions pour réviser CETTE partie/.test(p)) return "quiz";
     if (/flashcards de révision/.test(p)) return "flashcards";
     if (/questions de révision variées/.test(p)) return "reviewQuestions";
     return "unknown-json";
@@ -91,7 +91,7 @@ const FAKE_AI = `
   window.webllmJsonChat = async function(turns){
     const key = keyOfJson(turns[0].content);
     await maybeFailOrDelay(key);
-    if (key === "quiz") return [{ q: "Question ?", opts: ["a", "b", "c", "d"], correct: 0, exp: "", sourceQuote: "texte" }];
+    if (key === "quiz") return [{ q: "Quelle est la question de test posée ici ?", opts: ["Réponse un", "Réponse deux", "Réponse trois", "Réponse quatre"], correct: 0, exp: "", sourceQuote: "texte" }];
     if (key === "flashcards") return [{ front: "Recto", back: "Verso", sourceQuote: "texte" }];
     if (key === "reviewQuestions") return [{ q: "Question de révision ?", a: "Réponse." }];
     return [];

@@ -1923,7 +1923,9 @@
   .hub-head{ display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: var(--space-md); }
   .hub-title{ font-family: var(--font-display); font-size: var(--text-h2); line-height: var(--leading-h2); font-weight: var(--weight-medium); margin:0; color: var(--text-primary); }
   .hub-sub{ margin:2px 0 0; font-size: var(--text-small); line-height: var(--leading-small); color: var(--text-secondary); }
-  .hub-grid{ display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px; }
+  .hub-grid{ display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:12px; }
+  .hub-note{ margin: var(--space-md) 0 0; font-size: var(--text-metadata); color: var(--text-secondary); }
+  .hub-card.is-stale .hub-dot{ background: var(--warning); border-color: var(--warning); }
   .hub-card{
     appearance:none; -webkit-appearance:none; font:inherit; color:inherit; text-align:left; cursor:pointer;
     position:relative; display:grid; grid-template-columns: 40px minmax(0,1fr) 16px; grid-template-areas: "icon body go" "state state state";
@@ -5269,6 +5271,9 @@
 <!-- Logique PURE du Hub de révision d'un cours (états des ressources, file séquentielle,
      référence stable courseId/chapterId/subjectId). Ni DOM, ni state, ni WebLLM. Voir COURSE_HUB.md. -->
 <script src="course-hub.js"></script>
+<!-- Logique PURE de la BANQUE de révision d'un cours et du SESSION BUILDER (Fisher-Yates, choix mélangés,
+     couverture par concept, jamais deux sessions identiques). Ni DOM, ni state, ni WebLLM. Voir REVISION_BANK.md. -->
+<script src="revision-bank.js"></script>
 
 <script>
 /* ============================================================
@@ -6670,6 +6675,7 @@ const DASH_ICONS = {
   cards:    '<rect x="3.5" y="8" width="13" height="11" rx="2"/><path d="M7.5 8V6.5A2 2 0 0 1 9.5 4.5H18A2 2 0 0 1 20 6.5V14a2 2 0 0 1-2 2h-1.5"/>',
   chat:     '<path d="M5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4 3.5V16h-.5A1.5 1.5 0 0 1 4 14.5v-9A1.5 1.5 0 0 1 5.5 4z"/>',
   arrow:    '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  bolt:     '<path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/>',
 };
 
 /* `name` vient toujours du code, jamais d'une donnée utilisateur : une clé
@@ -7567,7 +7573,7 @@ function resetUserStateInMemory(){
      de courseHubPump s'arrête dès que state.courseGen change) — rien n'est jamais écrit dans
      les chapitres du compte suivant. */
   state.courseGen = courseHubNewGen();
-  state.libGenerateBusy = null; state.libToolsBusy = null; state.aiCourseContext = null;
+  state.libGenerateBusy = null; state.libToolsBusy = null; state.aiCourseContext = null; state.revisionLast = {};
   Object.assign(state.catalog, { query: "", subjectId: "all", semesterId: "all" });
   Object.assign(state.studyWizard, { step: 1, goal: null, deadlineEventId: null, subjectIds: [], chapterIds: [] });
   Object.assign(state.courseImport, { step: "pick", busy: false, files: [], activeIndex: 0, pasteText: "", genSignal: null });
@@ -7975,7 +7981,7 @@ function trackChapterVisit(chapterId, type){
   saveDashboardStats();
 }
 
-function logActivity(type, scope, label, score, total, timeUsed){
+function logActivity(type, scope, label, score, total, timeUsed, extra){
   const d = state.dash;
   const now = new Date();
   const pct = total ? Math.round((score/total)*100) : 0;
@@ -7983,6 +7989,7 @@ function logActivity(type, scope, label, score, total, timeUsed){
     ts: now.toISOString(), date: dateKey(now), type, scope, label,
     score, total, pct, timeUsed: (typeof timeUsed === "number" ? timeUsed : null),
   });
+  if(extra) Object.assign(d.recentActivity[0], extra);       // session : sessionId, questionIds, réponses
   if(d.recentActivity.length > 20) d.recentActivity.length = 20;
   if(type === "quiz" || type === "exam") d.quizzesCompleted = (d.quizzesCompleted || 0) + 1;
   if(total >= 10 && pct >= 90) d.best90Achieved = true;
@@ -7993,11 +8000,15 @@ function logActivity(type, scope, label, score, total, timeUsed){
 /* ============================================================
    6. QUIZ — LOGIQUE
    ============================================================ */
-function startQuiz(scope, label, themeKeys, customPool){
+function startQuiz(scope, label, themeKeys, customPool, sessionOpts){
   const source = customPool ? customPool : (themeKeys === "all" ? QUESTIONS : QUESTIONS.filter(q => themeKeys.includes(q.theme)));
   if(!source || source.length === 0) return;
   state.playing = { scope, label, themeKeys, custom: !!customPool, startedAt: Date.now() };
-  state.pool = shuffle(source);
+  /* Une SESSION construite à partir d'une banque (courseQuizStart) est DÉJÀ sélectionnée, ordonnée et à choix
+     mélangés : on ne la re-mélange pas (l'ordre joué = state.playing.questionIds). */
+  const sess = sessionOpts && sessionOpts.session;
+  if(sess) Object.assign(state.playing, { sessionId: sess.sessionId, questionIds: sess.questionIds.slice(), kind: sess.kind, bankChapterId: sessionOpts.chapterId, bankKey: sessionOpts.key });
+  state.pool = sess ? source.slice() : shuffle(source);
   state.index = 0;
   state.score = 0;
   state.answered = false;
@@ -8013,8 +8024,47 @@ function startQuiz(scope, label, themeKeys, customPool){
   window.scrollTo(0,0);
 }
 
+/* ---- SESSIONS À PARTIR DE LA BANQUE (revision-bank.js) ----
+   Un clic sur Quiz / Quiz Flash / Flashcards = lecture de la banque + SessionBuilder :
+   sélection, ordre et ordre des choix NOUVEAUX à chaque fois, sans WebLLM ni réseau — donc
+   immédiat. La banque (ch.aiQuiz / ch.aiFlashcards) n'est jamais modifiée.
+   `state.revisionLast` garde, EN MÉMOIRE seulement, la session précédente de chaque cours
+   pour favoriser des questions différentes. */
+function courseQuizStart(ch, key){
+  const RB = window.RevemBank;
+  if(!RB || !ch || !Array.isArray(ch.aiQuiz) || !ch.aiQuiz.length) return false;
+  key = key === "quizflash" ? "quizflash" : "quiz";
+  const memKey = ch.id + ":" + key, mem = state.revisionLast[memKey] || {};
+  const s = RB.buildQuizSession(ch.aiQuiz, { kind: key === "quizflash" ? "flash" : "quiz", lastIds: mem.ids, lastOrder: mem.order });
+  if(!s.size) return false;
+  state.revisionLast[memKey] = { ids: s.questionIds.slice(), order: s.questionIds.slice() };
+  startQuiz("chapter:" + ch.id, key === "quizflash" ? ch.title + " · " + t("hub.quizflash.title") : ch.title, null, s.items, { session: s, chapterId: ch.id, key });
+  return true;
+}
+function courseFlashStart(ch){
+  const RB = window.RevemBank;
+  if(!RB || !ch || !Array.isArray(ch.aiFlashcards) || !ch.aiFlashcards.length) return false;
+  const memKey = ch.id + ":flashcards", mem = state.revisionLast[memKey] || {};
+  const s = RB.buildFlashSession(ch.aiFlashcards, { lastIds: mem.ids, lastOrder: mem.order });
+  if(!s.size) return false;
+  state.revisionLast[memKey] = { ids: s.questionIds.slice(), order: s.questionIds.slice() };
+  startFlashDeck(ch.id, ch.title, s.items, { session: s, chapterId: ch.id });
+  return true;
+}
+/* Pour les sessions guidées (révision intelligente, planning) : le contenu est construit au
+   moment où la session est préparée, donc différent à chaque fois. */
+function courseQuizPayload(ch){
+  const RB = window.RevemBank;
+  return RB ? RB.buildQuizSession(ch.aiQuiz || [], { kind: "quiz" }).items : (ch.aiQuiz || []).slice();
+}
+function courseFlashPayload(ch){
+  const RB = window.RevemBank;
+  return RB ? RB.buildFlashSession(ch.aiFlashcards || []).items : (ch.aiFlashcards || []).slice();
+}
+
 function selectOption(i){
   if(state.answered) return;
+  if(state.playing && state.playing.bankChapterId && Date.now() - state.playing.startedAt < 250) return;   // double clic sur « Nouveau quiz » : jamais une réponse involontaire
   state.answered = true;
   state.selectedOpt = i;
   const q = state.pool[state.index];
@@ -8047,7 +8097,9 @@ function nextQuestion(){
     const pct = Math.round((state.score / state.pool.length) * 100);
     const timeUsed = state.playing.startedAt ? Math.round((Date.now() - state.playing.startedAt) / 1000) : null;
     saveProgress(state.playing.scope, pct);
-    logActivity("quiz", state.playing.scope, state.playing.label, state.score, state.pool.length, timeUsed);
+    /* Le score appartient à la SESSION (identifiant, questions jouées, réponses), pas à l'ordre permanent de la banque. */
+    const sessExtra = state.playing.sessionId ? { sessionId: state.playing.sessionId, kind: state.playing.kind, questionIds: state.playing.questionIds, startedAt: state.playing.startedAt, completedAt: Date.now(), answers: state.recap.map(r => ({ id: r.q.uid || r.q.id, ok: r.ok })) } : null;
+    logActivity("quiz", state.playing.scope, state.playing.label, state.score, state.pool.length, timeUsed, sessExtra);
     state.playing.timeUsed = timeUsed;
     if(state.smartSession){
       const item = state.smartSession.items[state.smartSession.stepIndex];
@@ -8148,6 +8200,7 @@ function switchTab(tab){
 
 function render(){
   updateNavDynamic();
+  courseHubMaybeResume();
   if(state.accountLoading){
     /* Un compte vient de changer : aucune donnée à montrer (ni l'ancienne, ni
        un espace vide qui ferait croire à une perte). */
@@ -8306,7 +8359,7 @@ function render(){
     attachPickerEvents();
   } else if(state.screen === "quiz"){
     content.className = "quizwrap";
-    content.innerHTML = courseCrumbHtml(state.playing && state.playing.scope, "quiz") + renderQuiz();
+    content.innerHTML = courseCrumbHtml(state.playing && state.playing.scope, state.playing && state.playing.bankKey === "quizflash" ? "quizflash" : "quiz") + renderQuiz();
     attachQuizEvents();
   } else if(state.screen === "results"){
     content.className = "quizwrap";
@@ -8359,11 +8412,11 @@ function continueRevision(){
       if(isUserChapter(ch.id)){
         if(rc.type === "flash" && ch.aiFlashcards && ch.aiFlashcards.length){
           state.tab = "flash";
-          startFlashDeck(ch.id, ch.title, ch.aiFlashcards.slice());
+          courseFlashStart(ch);
           return;
         }
         if(ch.aiQuiz && ch.aiQuiz.length){
-          startQuiz("chapter:"+ch.id, ch.title, null, ch.aiQuiz.slice());
+          courseQuizStart(ch);
           return;
         }
         libGoto("chapterDetail", {subjectId: ch.subjectId, chapterId: ch.id});
@@ -9695,6 +9748,8 @@ function renderChapterDetail(){
           <button class="ai-action" id="lib-ai-drill" ${(!aiReadyNow || toolsBusy)?"disabled":""}><span class="t">Me faire réviser</span><span class="d">${aiReadyNow ? "Interrogation orale par l'IA" : "Nécessite l'assistant IA"}</span></button>
           <button class="ai-action" id="lib-ai-quiz" ${toolsBusy?"disabled":""}><span class="t">${hasQuiz ? "Régénérer le quiz" : "Générer un quiz"}</span><span class="d">${state.libToolsBusy==="quiz" ? "Génération…" : (hasQuiz ? ch.aiQuiz.length+" question"+(ch.aiQuiz.length>1?"s":"")+" actuelle"+(ch.aiQuiz.length>1?"s":"") : (aiReadyNow ? "QCM inédits" : "Mode simplifié si possible"))}</span></button>
           <button class="ai-action" id="lib-ai-cards" ${toolsBusy?"disabled":""}><span class="t">${hasCards ? "Régénérer les flashcards" : "Générer des flashcards"}</span><span class="d">${state.libToolsBusy==="flashcards" ? "Génération…" : (hasCards ? ch.aiFlashcards.length+" carte"+(ch.aiFlashcards.length>1?"s":"")+" actuelle"+(ch.aiFlashcards.length>1?"s":"") : (aiReadyNow ? "Cartes recto/verso" : "Mode simplifié si possible"))}</span></button>
+          ${hasQuiz ? `<button class="ai-action" id="lib-enrich-quiz" ${toolsBusy?"disabled":""}><span class="t">${escapeHtml(t("hub.enrich_quiz"))}</span><span class="d">${escapeHtml(t("hub.enrich_desc"))}</span></button>` : ""}
+          ${hasCards ? `<button class="ai-action" id="lib-enrich-cards" ${toolsBusy?"disabled":""}><span class="t">${escapeHtml(t("hub.enrich_cards"))}</span><span class="d">${escapeHtml(t("hub.enrich_desc"))}</span></button>` : ""}
           <button class="ai-action" id="lib-regen-fiche" ${toolsBusy?"disabled":""}><span class="t">${hasContent ? "Régénérer la fiche" : "Générer la fiche"}</span><span class="d">${state.libToolsBusy==="fiche" ? "Génération…" : "Reprend le texte source"}</span></button>
           ${hasReviewQ ? `<button class="ai-action" id="lib-regen-reviewq" ${toolsBusy?"disabled":""}><span class="t">Régénérer les questions</span><span class="d">${state.libToolsBusy==="reviewQuestions" ? "Génération…" : ch.aiReviewQuestions.length+" question"+(ch.aiReviewQuestions.length>1?"s":"")+" actuelle"+(ch.aiReviewQuestions.length>1?"s":"")}</span></button>` : ""}
         </div>
@@ -9994,6 +10049,11 @@ function attachLibraryEvents(){
           alert("Impossible de télécharger le PDF (" + (e.message||"erreur") + ").");
         }
       });
+      const enrichQ = document.getElementById("lib-enrich-quiz");
+      if(enrichQ) enrichQ.addEventListener("click", ()=> enrichQuestionBank(ch.id, "quiz"));
+      const enrichC = document.getElementById("lib-enrich-cards");
+      if(enrichC) enrichC.addEventListener("click", ()=> enrichQuestionBank(ch.id, "flashcards"));
+      document.querySelectorAll("[data-hub-refresh]").forEach(b=> b.addEventListener("click", ()=> courseHubGenerate(ch.id, b.dataset.hubRefresh.split(","))));
       const regenFiche = document.getElementById("lib-regen-fiche");
       if(regenFiche) regenFiche.addEventListener("click", ()=> libRegeneratePart(ch, "fiche"));
       const regenReviewQ = document.getElementById("lib-regen-reviewq");
@@ -10255,37 +10315,16 @@ async function libGenerateUserChapterQuiz(ch){
   if(state.aiStatus !== "ready"){
     const h = buildHeuristicCourseMaterials(chapterSourceText(ch));
     if(h.quiz.length === 0){ showToast("Pas assez de définitions claires pour générer un quiz fiable."); return; }
-    const quizH = h.quiz.map(q => Object.assign({}, q, {chapterId: ch.id}));
-    ch.aiQuiz = quizH;
+    ch.aiQuiz = h.quiz.map(q => Object.assign({}, q, {chapterId: ch.id}));
     saveUserChapters();
     render();
-    startQuiz("chapter:"+ch.id, ch.title, null, quizH);
+    courseQuizStart(ch);
     return;
   }
-  state.libToolsBusy = "quiz";
-  render();
-  const prompt = aiSystemPrompt() + "\n\n" + libChapterContext(ch) +
-    "\n\nTÂCHE : génère 6 questions à choix multiples inédites sur ce contenu, 4 options chacune, une seule bonne réponse. Pour chaque question, \"sourceQuote\" doit être une COURTE citation EXACTE (mot pour mot, sans reformulation) copiée depuis le contenu ci-dessus, qui justifie la bonne réponse. Si un exemple lié apparaît juste à côté dans le cours, ajoute \"exampleQuote\" (citation exacte) ; sinon laisse-le vide. Réponds UNIQUEMENT par un tableau JSON : [{\"q\":\"...\",\"opts\":[\"a\",\"b\",\"c\",\"d\"],\"correct\":0,\"exp\":\"...\",\"sourceQuote\":\"...\",\"exampleQuote\":\"...\"}]";
-  try{
-    const arr = await webllmJsonChat([{role:"user", content: prompt}], {});
-    const quiz = (arr||[]).filter(q=>q&&q.q&&Array.isArray(q.opts)&&q.opts.length>=2&&typeof q.correct==="number")
-      .map((q,i)=>({
-        uid:"lib-"+ch.id+"-"+Date.now()+"-"+i, ai:true, theme:"ai", q:String(q.q), opts:q.opts.slice(0,4).map(String),
-        correct:Math.max(0,Math.min(q.opts.length-1,q.correct)), exp:q.exp?String(q.exp):"", chapterId: ch.id,
-        sourceQuote: q.sourceQuote ? String(q.sourceQuote) : "",
-        exampleQuote: q.exampleQuote ? String(q.exampleQuote) : "",
-      }));
-    if(quiz.length === 0) throw new Error("format inattendu");
-    ch.aiQuiz = quiz;
-    saveUserChapters();
-    state.libToolsBusy = null;
-    render();
-    startQuiz("chapter:"+ch.id, ch.title, null, quiz);
-  }catch(e){
-    state.libToolsBusy = null;
-    render();
-    showToast("Impossible de générer le quiz pour l'instant.");
-  }
+  /* IA prête : on prépare la BANQUE (plusieurs lots, un seul travail GPU à la fois) par la file du hub ;
+     le quiz se lance ensuite d'un clic sur sa carte, instantanément. */
+  courseHubGenerate(ch.id, ["quiz"]);
+  showToast(t("hub.prep_started"));
 }
 
 async function libGenerateUserChapterCards(ch){
@@ -10293,35 +10332,14 @@ async function libGenerateUserChapterCards(ch){
   if(state.aiStatus !== "ready"){
     const h = buildHeuristicCourseMaterials(chapterSourceText(ch));
     if(h.flashcards.length === 0){ showToast("Aucune définition claire trouvée pour créer des flashcards."); return; }
-    const cardsH = h.flashcards.map(c => Object.assign({}, c, {chapterId: ch.id}));
-    ch.aiFlashcards = cardsH;
+    ch.aiFlashcards = h.flashcards.map(c => Object.assign({}, c, {chapterId: ch.id}));
     saveUserChapters();
     render();
-    startFlashDeck(ch.id, ch.title, cardsH);
+    courseFlashStart(ch);
     return;
   }
-  state.libToolsBusy = "flashcards";
-  render();
-  const prompt = aiSystemPrompt() + "\n\n" + libChapterContext(ch) +
-    "\n\nTÂCHE : génère 10 flashcards de révision sur ce contenu. Pour chaque carte, \"sourceQuote\" doit être une COURTE citation EXACTE (mot pour mot, sans reformulation) copiée depuis le contenu du cours ci-dessus, qui justifie la réponse. Si un exemple lié à la notion apparaît juste à côté dans le cours, ajoute \"exampleQuote\" (citation exacte de cet exemple) ; sinon laisse-le vide. Réponds UNIQUEMENT par un tableau JSON : [{\"front\":\"...\",\"back\":\"...\",\"sourceQuote\":\"...\",\"exampleQuote\":\"...\"}]";
-  try{
-    const arr = await webllmJsonChat([{role:"user", content: prompt}], {});
-    const cards = (arr||[]).filter(c=>c&&c.front&&c.back).map(c=>({
-      front:String(c.front), back:String(c.back), ai:true, chapterId: ch.id,
-      sourceQuote: c.sourceQuote ? String(c.sourceQuote) : "",
-      exampleQuote: c.exampleQuote ? String(c.exampleQuote) : "",
-    }));
-    if(cards.length === 0) throw new Error("format inattendu");
-    ch.aiFlashcards = cards;
-    saveUserChapters();
-    state.libToolsBusy = null;
-    render();
-    startFlashDeck(ch.id, ch.title, cards);
-  }catch(e){
-    state.libToolsBusy = null;
-    render();
-    showToast("Impossible de générer les flashcards pour l'instant.");
-  }
+  courseHubGenerate(ch.id, ["flashcards"]);
+  showToast(t("hub.prep_started"));
 }
 
 /* ---------- édition manuelle des flashcards / questions générées ---------- */
@@ -10365,7 +10383,7 @@ function libAddQuizQuestion(ch, q, opts, correct, exp){
    Repart du texte source d'origine si disponible (chapitre importé), sinon du contenu actuel
    (chapitre créé/édité à la main) — jamais d'un support déjà régénéré, pour éviter l'effet de dérive. */
 function libChapterWorkingText(ch){ return chapterSourceText(ch).trim(); }
-function libChapterMeta(ch){ return { title: ch.title, chapterTitle: ch.desc || "", notions: ch.keyNotions || [] }; }
+function libChapterMeta(ch){ return { title: ch.title, chapterTitle: ch.desc || "", notions: ch.keyNotions || [], chapterId: ch.id, subjectId: ch.subjectId || "", fullText: chapterSourceText(ch), sourceCharCount: chapterSourceText(ch).length }; }
 
 async function libRegeneratePart(ch, key){
   const labels = {fiche:"la fiche", summary:"le résumé", quiz:"le quiz", flashcards:"les flashcards", reviewQuestions:"les questions de révision"};
@@ -10901,35 +10919,50 @@ async function generateCourseSummary(workingText, meta, signal){
   return text;
 }
 
-async function generateCourseQuizFromText(workingText, meta, signal){
-  const n = courseItemCounts(meta.sourceCharCount || workingText.length).quiz;
-  const prompt = aiSystemPrompt() + "\n\n" + courseGenContext(workingText, meta) +
-    "\n\nTÂCHE : génère " + n + " questions à choix multiples sur ce contenu UNIQUEMENT (définition, compréhension, application), 4 options chacune, une seule bonne réponse, explication en une phrase courte. Pour chaque question, \"sourceQuote\" doit être une COURTE citation EXACTE (mot pour mot, sans reformulation) copiée depuis le contenu ci-dessus, qui justifie la bonne réponse. Si un exemple lié apparaît juste à côté dans le texte, ajoute \"exampleQuote\" (citation exacte) ; sinon laisse-le vide. Réponds UNIQUEMENT par un tableau JSON, sans texte autour : [{\"q\":\"...\",\"opts\":[\"a\",\"b\",\"c\",\"d\"],\"correct\":0,\"exp\":\"...\",\"sourceQuote\":\"...\",\"exampleQuote\":\"...\"}]";
-  const arr = await withGenTimeout(webllmJsonChat([{role:"user", content: prompt}], { signal }), 75000, "quiz");
-  const quiz = (arr||[]).filter(q=>q&&q.q&&Array.isArray(q.opts)&&q.opts.length>=2&&typeof q.correct==="number")
-    .map((q,i)=>({
-      uid:"import-"+Date.now()+"-"+i, ai:true, theme:"ai", q:String(q.q), opts:q.opts.slice(0,4).map(String),
-      correct:Math.max(0,Math.min(q.opts.length-1,q.correct)), exp:q.exp?String(q.exp):"",
-      sourceQuote: q.sourceQuote ? String(q.sourceQuote) : "",
-      exampleQuote: q.exampleQuote ? String(q.exampleQuote) : "",
-    }));
-  if(quiz.length === 0) throw new Error("aucune question générée (format inattendu)");
-  return quiz;
+/* ---- BANQUE DE RÉVISION D'UN COURS (voir revision-bank.js et REVISION_BANK.md) ----
+   Au lieu d'UN quiz figé de 4 à 8 questions, l'IA construit une BANQUE adaptée à la taille du
+   cours, en plusieurs LOTS courts (un JSON court est fiable sur un petit modèle) : chaque lot
+   voit une PARTIE DIFFÉRENTE du cours (couverture) et un accent de types de questions
+   différent (variété). Les lots passent l'un après l'autre : un seul travail GPU à la fois.
+   Chaque élément est validé (qualité) et dédoublonné ; une banque PARTIELLE vaut mieux que
+   rien. Les sessions de quiz / flashcards sont ensuite construites en JavaScript, sans IA. */
+async function generateQuestionBank(kind, workingText, meta, signal, opts){
+  const RB = window.RevemBank;
+  opts = opts || {};
+  const full = (meta.fullText && meta.fullText.length > workingText.length) ? meta.fullText : workingText;
+  const sig = RB.contentSignature(full);
+  const base = { courseId: meta.chapterId || "", chapterId: meta.chapterId || "", subjectId: meta.subjectId || "", srcHash: sig.hash, srcLen: sig.len };
+  const existing = opts.existing || [];
+  const target = opts.target || RB.bankTargets(meta.sourceCharCount || full.length)[kind];
+  const plan = RB.batchPlan(kind, target, existing.length);
+  const slices = RB.sliceSource(full, Math.max(1, plan.length), COURSE_GEN_CONTEXT_CHARS);
+  let bank = existing.slice();
+  for(const step of plan){
+    if(signal && signal.cancelled) break;
+    const text = slices[Math.min(step.slice, slices.length - 1)];
+    const stems = bank.map(x => kind === "quiz" ? x.q : x.front);
+    const instr = kind === "quiz"
+      ? RB.quizBatchInstruction({ count: step.count, focus: step.focus, existingStems: stems })
+      : RB.cardBatchInstruction({ count: step.count, existingStems: stems });
+    const prompt = aiSystemPrompt() + "\n\n" + courseGenContext(text, meta) + "\n\n" + instr;
+    try{
+      const arr = await withGenTimeout(webllmJsonChat([{role:"user", content: prompt}], { signal }), 75000, kind === "quiz" ? "quiz" : "flashcards");
+      const res = kind === "quiz"
+        ? RB.parseQuizBatch(arr, Object.assign({}, base, { section: step.slice }), bank)
+        : RB.parseCardBatch(arr, Object.assign({}, base, { section: step.slice }), bank);
+      if(!res.items.length) break;                    // le modèle n'apporte plus rien de neuf
+      bank = RB.mergeBank(bank, res.items);
+    }catch(e){
+      if(signal && signal.cancelled) break;
+      if(bank.length === existing.length) throw e;    // rien obtenu du tout : l'étape échoue
+      break;                                          // banque partielle : on la garde
+    }
+  }
+  if(!bank.length) throw new Error(kind === "quiz" ? "aucune question générée (format inattendu)" : "aucune flashcard générée (format inattendu)");
+  return bank;
 }
-
-async function generateCourseFlashcardsFromText(workingText, meta, signal){
-  const n = courseItemCounts(meta.sourceCharCount || workingText.length).flashcards;
-  const prompt = aiSystemPrompt() + "\n\n" + courseGenContext(workingText, meta) +
-    "\n\nTÂCHE : génère " + n + " flashcards de révision (définitions, notions, formules, dates, mécanismes, distinctions importantes) à partir UNIQUEMENT de ce contenu. Recto court (question/notion), verso court (réponse en une phrase). Pour chaque carte, \"sourceQuote\" doit être une COURTE citation EXACTE (mot pour mot, sans reformulation) copiée depuis le contenu ci-dessus, qui justifie la réponse. Si un exemple lié à la notion apparaît juste à côté dans le texte, ajoute \"exampleQuote\" (citation exacte de cet exemple) ; sinon laisse-le vide. Réponds UNIQUEMENT par un tableau JSON, sans texte autour : [{\"front\":\"...\",\"back\":\"...\",\"sourceQuote\":\"...\",\"exampleQuote\":\"...\"}]";
-  const arr = await withGenTimeout(webllmJsonChat([{role:"user", content: prompt}], { signal }), 75000, "flashcards");
-  const cards = (arr||[]).filter(c=>c&&c.front&&c.back).map(c=>({
-    front:String(c.front), back:String(c.back), ai:true,
-    sourceQuote: c.sourceQuote ? String(c.sourceQuote) : "",
-    exampleQuote: c.exampleQuote ? String(c.exampleQuote) : "",
-  }));
-  if(cards.length === 0) throw new Error("aucune flashcard générée (format inattendu)");
-  return cards;
-}
+async function generateCourseQuizFromText(workingText, meta, signal){ return generateQuestionBank("quiz", workingText, meta, signal); }
+async function generateCourseFlashcardsFromText(workingText, meta, signal){ return generateQuestionBank("flashcards", workingText, meta, signal); }
 
 async function generateCourseReviewQuestions(workingText, meta, signal){
   const n = courseItemCounts(meta.sourceCharCount || workingText.length).reviewQ;
@@ -11304,7 +11337,8 @@ function courseImportApplyGeneratedToChapter(ch, item, onlyKeys){
    étapes qui restaient, jamais celles déjà obtenues (voir
    COURSE_PIPELINE_AUDIT.md, défaut D1). */
 async function courseImportRunAllSteps(item, signal, onlyKeys){
-  const meta = { title: item.detected.title, chapterTitle: item.detected.chapterTitle, notions: item.detected.notions, sourceCharCount: item.charCount };
+  const meta = { title: item.detected.title, chapterTitle: item.detected.chapterTitle, notions: item.detected.notions, sourceCharCount: item.charCount,
+                 chapterId: item.resultChapterId || "", subjectId: item.resultSubjectId || "", fullText: item.fullText || "" };
   const allSteps = [
     {key:"fiche", fn: generateCourseFiche},
     {key:"summary", fn: generateCourseSummary},
@@ -11454,16 +11488,6 @@ async function courseImportGenerate(index){
   const item = ci.files[index];
   if(!item || item.status !== "review" || aiEngineBusy()) return;
   item.aiError = null;
-  try{
-    await ensureImportAIReady();
-  }catch(e){
-    // L'IA reste indisponible : on reste sur l'écran de révision (le cours
-    // n'est ni généré ni perdu) avec un message précis et la possibilité
-    // d'enregistrer sans IA à la place.
-    item.aiError = e.message;
-    render();
-    return;
-  }
   ci.busy = true;
   item.status = "generating"; // avant la résolution de cible : la confirmation de doublon est asynchrone
   render();
@@ -11479,23 +11503,14 @@ async function courseImportGenerate(index){
   item.heuristicMode = false;
   item.lastStepError = null;
   item.cancelled = false;
-  ci.step = "generating";
-  const signal = ci.genSignal = { cancelled: false };
-  courseImportStartTimer(item);
-  aiLog("Étape 2/3 : génération des supports");
-  render();
-  await courseImportRunAllSteps(item, signal);
   ci.busy = false;
-  if(signal.cancelled){
-    courseImportHandleCancelled(item);
-    return;
-  }
-  // Le chapitre a déjà été enregistré, et chaque étape réussie déjà écrite
-  // au fur et à mesure (voir courseImportRunAllSteps) : il ne reste qu'à
-  // faire avancer la file d'import.
+  /* Le COURS est enregistré (texte, PDF, matière) : l'import est terminé pour l'utilisateur. La préparation
+     des ressources (fiche, résumé, banques de questions et de flashcards) continue EN ARRIÈRE-PLAN dans la
+     file du hub — un seul travail GPU à la fois ; si l'IA n'est pas disponible, rien n'est perdu et la
+     préparation reprend toute seule quand elle l'est. */
+  aiLog("Étape 2/3 : préparation des ressources (en arrière-plan)");
+  courseHubGenerate(chapterId, ["fiche", "summary", "quiz", "flashcards", "reviewQuestions"]);
   courseImportFinishAfterGeneration(index);
-  courseImportStopTimer();
-  aiLog("Génération terminée");
 }
 
 /* "Enregistrer sans IA" : sauvegarde immédiatement le cours avec le texte déjà
@@ -11599,7 +11614,10 @@ async function courseHubGenerate(chapterId, keys, opts){
 }
 
 /* Exécute la file, un travail à la fois. S'arrête si le compte change
-   (state.courseGen remplacé) : rien n'est alors écrit dans le mauvais compte. */
+   (state.courseGen remplacé) : rien n'est alors écrit dans le mauvais compte.
+   Deux sortes de travaux, UNE seule file : une ressource du pipeline d'import
+   (fiche, résumé, banque de questions, banque de flashcards, questions de révision)
+   ou un ENRICHISSEMENT d'une banque (« enrich_quiz », « enrich_flashcards »). */
 async function courseHubPump(gen){
   if(gen.running) return;
   gen.running = true;
@@ -11612,7 +11630,9 @@ async function courseHubPump(gen){
         try{ await ensureImportAIReady(); }
         catch(e){
           /* L'IA n'est pas disponible : tout ce qui attendait pour ce cours échoue
-             PROPREMENT (message clair + « Réessayer »), rien ne reste « en préparation ». */
+             PROPREMENT (message clair + « Réessayer »), rien ne reste « en préparation ».
+             Le cours est marqué « en attente » : dès que l'IA redevient prête,
+             courseHubMaybeResume() relance sa préparation — sans recréer le cours. */
           HUB.failQueuedFor(gen, head.chapterId, { code: state.aiStatus === "loading" ? "AI_LOADING" : "AI_UNAVAILABLE", message: (e && e.message) || "" });
           render();
           continue;
@@ -11623,22 +11643,28 @@ async function courseHubPump(gen){
       if(!task) break;
       const ch = findAnyChapter(task.chapterId);
       if(!ch){ HUB.complete(gen, task, { code: "GENERATION_FAILED" }); continue; }
-      if(gen.upgrade.has(ch.id)){ ch.heuristicMode = false; }      // on quitte le mode simplifié dès la tentative (comportement historique)
+      if(gen.upgrade.has(ch.id)){ ch.heuristicMode = false; }           // on quitte le mode simplifié dès la tentative (comportement historique)
       state.libGenerateBusy = ch.id;                                    // verrou partagé : aiEngineBusy() est vrai pendant la génération
       render();
       const sourceText = chapterSourceText(ch);
-      const item = {
-        workingText: clip(sourceText, COURSE_GEN_CONTEXT_CHARS),
-        charCount: sourceText.length,
-        detected: { title: ch.title, chapterTitle: ch.desc || ch.title, notions: ch.keyNotions || [] },
-        generated: {}, failedSteps: [], genStepIndex: -1, resultChapterId: ch.id,
-      };
+      const isEnrich = task.key.indexOf("enrich_") === 0;
       let err = null;
-      try{ await courseImportRunAllSteps(item, null, [task.key]); }
-      catch(e){ err = { code: "GENERATION_FAILED", message: (e && e.message) || "" }; }
+      if(isEnrich){
+        err = await courseHubRunEnrich(ch, task.key.slice(7), sourceText);
+      } else {
+        const item = {
+          workingText: clip(sourceText, COURSE_GEN_CONTEXT_CHARS),
+          charCount: sourceText.length, fullText: sourceText,
+          detected: { title: ch.title, chapterTitle: ch.desc || ch.title, notions: ch.keyNotions || [] },
+          generated: {}, failedSteps: [], genStepIndex: -1, resultChapterId: ch.id, resultSubjectId: ch.subjectId,
+        };
+        try{ await courseImportRunAllSteps(item, null, [task.key]); }
+        catch(e){ err = { code: "GENERATION_FAILED", message: (e && e.message) || "" }; }
+        if(!err && item.failedSteps.indexOf(task.key) >= 0) err = { code: courseHubErrorCode(item.lastStepError), message: (item.lastStepError && item.lastStepError.message) || "" };
+      }
       if(state.courseGen !== gen) return;
-      if(!err && item.failedSteps.indexOf(task.key) >= 0) err = { code: courseHubErrorCode(item.lastStepError), message: (item.lastStepError && item.lastStepError.message) || "" };
-      HUB.complete(gen, task, err);
+      HUB.complete(gen, task, isEnrich ? null : err);
+      if(isEnrich && err) showToast(t(err.code === "NO_NEWS" ? "hub.enrich_none" : "hub.enrich_failed"));
       if(!HUB.busyFor(gen, ch.id)) gen.upgrade.delete(ch.id);
       state.libGenerateBusy = null;
       render();
@@ -11646,6 +11672,46 @@ async function courseHubPump(gen){
   } finally{
     if(state.courseGen === gen){ gen.running = false; state.libGenerateBusy = null; render(); }
   }
+}
+
+/* ENRICHISSEMENT d'une banque : demande à l'IA de NOUVEAUX éléments (elle reçoit la liste de
+   ce qui existe déjà pour ne pas le refaire) et les AJOUTE — l'existant n'est jamais remplacé.
+   Jamais lancé à chaque session : seulement sur demande (outils du cours) — ou plus tard
+   par une automatisation, via courseHubGenerate(chapterId, ["enrich_quiz"]). */
+async function courseHubRunEnrich(ch, kind, sourceText){
+  const RB = window.RevemBank;
+  const field = kind === "quiz" ? "aiQuiz" : "aiFlashcards";
+  const existing = Array.isArray(ch[field]) ? ch[field] : [];
+  try{
+    const meta = Object.assign(libChapterMeta(ch), { sourceCharCount: sourceText.length, fullText: sourceText });
+    const bank = await generateQuestionBank(kind, clip(sourceText, COURSE_GEN_CONTEXT_CHARS), meta, null,
+      { existing, target: Math.min(RB.BANK_MAX, existing.length + (kind === "quiz" ? 8 : 10)) });
+    if(bank.length <= existing.length) return { code: "NO_NEWS" };
+    ch[field] = bank; ch.updatedAt = Date.now(); saveUserChapters();
+    return null;
+  }catch(e){
+    return { code: courseHubErrorCode(classifyGenerationError(e)), message: (e && e.message) || "" };
+  }
+}
+function enrichQuestionBank(chapterId, kind){ return courseHubGenerate(chapterId, ["enrich_" + (kind === "flashcards" ? "flashcards" : "quiz")]); }
+
+/* Les cours dont la préparation attendait l'assistant IA reprennent TOUS SEULS dès qu'il est
+   prêt (jamais de nouveau cours : on relance les ressources en erreur « IA indisponible »). */
+function courseHubMaybeResume(){
+  const gen = state.courseGen, H = window.RevemHub;
+  if(!gen || !H || gen.running || state.aiStatus !== "ready" || !H.hasWaiting(gen)) return;
+  const ids = H.takeWaiting(gen);
+  setTimeout(() => {
+    if(state.courseGen !== gen) return;
+    ids.forEach(id => { const keys = H.resumeKeys(gen, id); if(keys.length) courseHubGenerate(id, keys); });
+  }, 0);
+}
+/* Attend que la file soit vide (pour ne JAMAIS analyser un second fichier pendant qu'un travail GPU tourne). */
+function courseHubWhenIdle(){
+  return new Promise(resolve => {
+    const tick = () => { const g = state.courseGen; if(!g || (!g.running && !g.queue.length)) resolve(); else setTimeout(tick, 250); };
+    tick();
+  });
 }
 
 /* API historique conservée : « Générer avec l'IA » (bandeau, écran de résultat
@@ -11658,10 +11724,12 @@ async function libGenerateChapterAI(chapterId){
   await courseHubGenerate(chapterId, pendingKeys, { upgrade: !!ch.heuristicMode });
 }
 
-/* ── ouverture des cinq accès ── */
+/* ── ouverture des six accès ── */
+/* Quiz / Quiz Flash / Flashcards : lecture de la BANQUE → SessionBuilder → session
+   immédiate (aucun appel IA, aucun réseau). Voir REVISION_BANK.md. */
 function courseHubPlay(ch, key){
-  if(key === "quiz" && ch.aiQuiz && ch.aiQuiz.length) startQuiz("chapter:" + ch.id, ch.title, null, ch.aiQuiz.slice());
-  else if(key === "flashcards" && ch.aiFlashcards && ch.aiFlashcards.length) startFlashDeck(ch.id, ch.title, ch.aiFlashcards.slice());
+  if(key === "quiz" || key === "quizflash") return courseQuizStart(ch, key);
+  if(key === "flashcards") return courseFlashStart(ch);
 }
 /* « Questions » : l'assistant s'ouvre avec CE cours pour contexte. La référence
    stable (courseId / chapterId / subjectId) est posée pour que le futur RAG s'y
@@ -11674,8 +11742,21 @@ function courseHubOpen(ch, key){
   if(!HUB || !ch) return;
   if(key === "questions") return courseHubAsk(ch);
   const st = HUB.resourceState(ch, state.courseGen, key);
-  if(st && st.state === "READY" && (key === "quiz" || key === "flashcards")) return courseHubPlay(ch, key);
-  libGoto("chapterResource", { chapterId: ch.id, resource: key });
+  if(st && st.state === "READY" && (key === "quiz" || key === "quizflash" || key === "flashcards")) return courseHubPlay(ch, key);
+  libGoto("chapterResource", { chapterId: ch.id, resource: key === "quizflash" ? "quiz" : key });
+}
+
+/* Quelles ressources sont OBSOLÈTES : le texte du cours a changé de façon significative
+   depuis la préparation de leur banque (voir RevemBank.isStale). */
+function courseHubFlags(ch){
+  const RB = window.RevemBank, stale = {};
+  if(RB){
+    const src = chapterSourceText(ch);
+    const q = RB.isStale(ch.aiQuiz, src), f = RB.isStale(ch.aiFlashcards, src);
+    if(q){ stale.quiz = true; stale.quizflash = true; }
+    if(f) stale.flashcards = true;
+  }
+  return { stale };
 }
 
 /* ── la section « Outils de révision » ── */
@@ -11686,7 +11767,7 @@ function courseHubCardHtml(ch, r, st){
   const ready = st.state === "READY" && r.key !== "questions";
   const busy = st.state === "GENERATING" || st.state === "QUEUED";
   const id = (ready && r.key === "quiz") ? ` id="lib-play-quiz"` : (ready && r.key === "flashcards") ? ` id="lib-play-flash"` : "";
-  return `<button type="button" class="hub-card st-${st.state.toLowerCase()}${r.key === "questions" ? " hub-card--wide" : ""}"${id} data-hub-open="${r.key}" data-hub-state="${st.state}" ${busy ? 'aria-busy="true"' : ""} aria-label="${escapeHtml(title + " — " + sub + ". " + stateText)}">
+  return `<button type="button" class="hub-card st-${st.state.toLowerCase()}${st.stale ? " is-stale" : ""}"${id} data-hub-open="${r.key}" data-hub-state="${st.state}" ${busy ? 'aria-busy="true"' : ""} aria-label="${escapeHtml(title + " — " + sub + ". " + stateText)}">
     <span class="hub-card-icon">${dashIcon(r.icon)}</span>
     <span class="hub-card-body">
       <span class="hub-card-title">${escapeHtml(title)}</span>
@@ -11698,9 +11779,11 @@ function courseHubCardHtml(ch, r, st){
 }
 function renderCourseHub(ch){
   const gen = state.courseGen;
-  const states = HUB.allStates(ch, gen);
+  const flags = courseHubFlags(ch);
+  const states = HUB.allStates(ch, gen, flags);
   const canAll = HUB.keysForGenerateAll(coursePendingStepKeys(ch), gen, ch.id).length > 0;
   const working = HUB.busyFor(gen, ch.id);
+  const staleKeys = ["quiz", "flashcards"].filter(k => flags.stale[k]);
   return `<section class="hub" id="course-hub" aria-labelledby="hub-title" data-course-id="${escapeHtml(ch.id)}" data-subject-id="${escapeHtml(ch.subjectId || "")}">
     <div class="hub-head">
       <div>
@@ -11712,6 +11795,7 @@ function renderCourseHub(ch){
     <div class="hub-grid">
       ${HUB.RESOURCES.map((r, i) => courseHubCardHtml(ch, r, states[i])).join("")}
     </div>
+    ${(staleKeys.length && !working) ? `<p class="hub-note" id="hub-stale-note">${escapeHtml(t("hub.stale_note"))} <button type="button" class="btn-text" data-hub-refresh="${staleKeys.join(",")}">${escapeHtml(t("hub.stale_action"))}</button></p>` : ""}
   </section>`;
 }
 
@@ -11856,7 +11940,12 @@ function courseImportFinishAfterGeneration(index){
   if(!item) return;
   item.status = "done";
   const next = ci.files.findIndex((f,i) => i > index && f.status === "pending");
-  if(next !== -1){ ci.step = "detect"; courseImportProcessFile(next); return; }
+  if(next !== -1){
+    /* Plusieurs fichiers : on n'analyse JAMAIS le suivant (appel WebLLM) tant qu'un travail GPU tourne. */
+    ci.step = "detect"; render();
+    courseHubWhenIdle().then(() => { if(state.courseImport === ci && ci.files[next] && ci.files[next].status === "pending") courseImportProcessFile(next); });
+    return;
+  }
   /* Un seul cours importé : on ne laisse pas l'utilisateur sur une page passive, on l'amène
      SUR le cours, ses outils de révision visibles (hub). Plusieurs fichiers : le récapitulatif
      reste (il propose « Ouvrir » pour chacun). */
@@ -12662,7 +12751,7 @@ function renderImportResult(){
     const ok = f.status === "done";
     html += `<div class="import-result-row ${ok?"ok":"ko"}">
       <span class="name">${escapeHtml(ok && f.detected ? f.detected.title : f.name)}</span>
-      <span class="meta">${ok ? ((ch&&ch.aiQuiz?ch.aiQuiz.length:0) + " quiz · " + (ch&&ch.aiFlashcards?ch.aiFlashcards.length:0) + " flashcards") : escapeHtml(f.error||"échec")}</span>
+      <span class="meta">${ok && HUB.busyFor(state.courseGen, f.resultChapterId) ? escapeHtml(t("hub.state.GENERATING")) : ok ? ((ch&&ch.aiQuiz?ch.aiQuiz.length:0) + " quiz · " + (ch&&ch.aiFlashcards?ch.aiFlashcards.length:0) + " flashcards") : escapeHtml(f.error||"échec")}</span>
       ${ok ? `<button class="btn-text" data-goto-chapter="${f.resultChapterId}">Ouvrir</button>` : ""}
     </div>`;
   });
@@ -12770,13 +12859,13 @@ function attachCourseImportEvents(){
   document.querySelectorAll("[data-goto-quiz]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const ch = findAnyChapter(btn.dataset.gotoQuiz);
-      if(ch && ch.aiQuiz && ch.aiQuiz.length) startQuiz("chapter:"+ch.id, ch.title, null, ch.aiQuiz);
+      if(ch && ch.aiQuiz && ch.aiQuiz.length) courseQuizStart(ch);
     });
   });
   document.querySelectorAll("[data-goto-flash]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const ch = findAnyChapter(btn.dataset.gotoFlash);
-      if(ch && ch.aiFlashcards && ch.aiFlashcards.length) startFlashDeck(ch.id, ch.title, ch.aiFlashcards);
+      if(ch && ch.aiFlashcards && ch.aiFlashcards.length) courseFlashStart(ch);
     });
   });
   document.querySelectorAll("[data-goto-ask]").forEach(btn=>{
@@ -13515,7 +13604,7 @@ function attachPickerEvents(){
   document.querySelectorAll("[data-import-quiz]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const ch = findAnyChapter(btn.dataset.importQuiz);
-      if(ch && ch.aiQuiz && ch.aiQuiz.length) startQuiz("chapter:"+ch.id, ch.title, null, ch.aiQuiz);
+      if(ch && ch.aiQuiz && ch.aiQuiz.length) courseQuizStart(ch);
     });
   });
   document.querySelectorAll("[data-quizlvl]").forEach(btn=>{
@@ -13752,7 +13841,7 @@ function renderResults(){
       ${timeLine}
       ${reviewBlock}
       <div class="qz-results-actions">
-        <button class="btn red" id="retry-btn">${t("quiz.restart")}</button>
+        <button class="btn red" id="retry-btn">${t(state.playing.bankChapterId ? "hub.new_quiz" : "quiz.restart")}</button>
         ${sessionErrors.length ? `<button class="btn outline" id="review-errors-btn">${t("quiz.review_errors_count", {n: sessionErrors.length})}</button>` : ""}
         <button class="btn-text" id="picker-btn">${t("quiz.continue_revising")}</button>
       </div>
@@ -13762,6 +13851,12 @@ function renderResults(){
 
 function attachResultsEvents(){
   document.getElementById("retry-btn").addEventListener("click", ()=>{
+    if(state.screen !== "results") return;           // double clic : la nouvelle session est déjà lancée
+    if(state.playing.bankChapterId){
+      /* « Nouveau quiz » : NOUVELLE session tirée de la banque (autres questions, autre ordre, autres choix). */
+      const bch = findAnyChapter(state.playing.bankChapterId);
+      if(bch && courseQuizStart(bch, state.playing.bankKey)) return;
+    }
     if(state.playing.custom){
       startQuiz(state.playing.scope, state.playing.label, null, state.pool);
     } else {
@@ -14797,11 +14892,13 @@ function toggleFlashSource(){
 /* ============================================================
    10. FLASHCARDS — LOGIQUE
    ============================================================ */
-function startFlashDeck(scope, label, cards){
+function startFlashDeck(scope, label, cards, sessionOpts){
   if(!cards || cards.length === 0) return;
+  const sess = sessionOpts && sessionOpts.session;
   state.flashDeck = {
     scope, label,
-    cards: shuffle(cards),
+    cards: sess ? cards.slice() : shuffle(cards),
+    bank: sess ? { chapterId: sessionOpts.chapterId, sessionId: sess.sessionId, questionIds: sess.questionIds.slice(), startedAt: sess.startedAt } : null,
     idx: 0,
     flipped: false,
     sourceOpen: false,
@@ -14841,7 +14938,7 @@ function judgeCard(knewIt){
   } else {
     const pct = Math.round((d.known.length / d.cards.length) * 100);
     saveFlashProgress(d.scope, pct);
-    logActivity("flash", d.scope, d.label, d.known.length, d.cards.length);
+    logActivity("flash", d.scope, d.label, d.known.length, d.cards.length, null, d.bank ? { sessionId: d.bank.sessionId, kind: "flashcards", questionIds: d.bank.questionIds, startedAt: d.bank.startedAt, completedAt: Date.now() } : null);
     if(state.smartSession){
       const item = state.smartSession.items[state.smartSession.stepIndex];
       recordSmartSessionStep({ mode: "flash", chapterId: item ? item.chapterId : null, title: d.label, score: d.known.length, total: d.cards.length, pct, timeUsed: null });
@@ -14965,7 +15062,7 @@ function attachFlashPickerEvents(){
   document.querySelectorAll("[data-import-flash]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       const ch = findAnyChapter(btn.dataset.importFlash);
-      if(ch && ch.aiFlashcards && ch.aiFlashcards.length) startFlashDeck(ch.id, ch.title, ch.aiFlashcards);
+      if(ch && ch.aiFlashcards && ch.aiFlashcards.length) courseFlashStart(ch);
     });
   });
   document.querySelectorAll("[data-flashlvl]").forEach(btn=>{
@@ -15086,7 +15183,7 @@ function renderFlashSummary(){
       <p class="msg" style="margin-top:-12px;">${msg}</p>
       <div class="actions" style="justify-content:center;">
         ${d.unknown.length > 0 ? `<button class="btn red" id="flash-replay-unknown">Rejouer les cartes à revoir</button>` : ""}
-        <button class="btn outline" id="flash-replay-all">Rejouer tout le paquet</button>
+        <button class="btn outline" id="flash-replay-all">${d.bank ? t("hub.restart_flash") : "Rejouer tout le paquet"}</button>
         <button class="btn-text" id="flash-picker-btn">Choisir un autre paquet</button>
       </div>
       ${reviewList}
@@ -15098,7 +15195,13 @@ function attachFlashSummaryEvents(){
   const replayUnknownBtn = document.getElementById("flash-replay-unknown");
   if(replayUnknownBtn) replayUnknownBtn.addEventListener("click", replayUnknown);
   document.getElementById("flash-replay-all").addEventListener("click", ()=>{
+    if(state.flashScreen !== "summary") return;      // double clic : la nouvelle session est déjà lancée
     const d = state.flashDeck;
+    if(d.bank){
+      /* « Recommencer » : un NOUVEL ordre (et un nouveau tirage), pas le même paquet rejoué. */
+      const bch = findAnyChapter(d.bank.chapterId);
+      if(bch && courseFlashStart(bch)) return;
+    }
     startFlashDeck(d.scope, d.label, [...d.known, ...d.unknown]);
   });
   document.getElementById("flash-picker-btn").addEventListener("click", backToFlashPicker);
@@ -16029,6 +16132,7 @@ Object.assign(state, {
   // jamais persistée). courseGen.upgrade = cours dont le mode simplifié est à lever.
   courseGen: courseHubNewGen(),
   aiCourseContext: null,        // { courseId, chapterId, subjectId } du cours ouvert dans l'assistant
+  revisionLast: {},             // session précédente de chaque cours/mode (EN MÉMOIRE) : sert à varier la suivante
   aiDiagPanelOpen: false,
   aiRetryChecking: false,
   aiFullTestResult: "",
@@ -18036,11 +18140,11 @@ function attachSessionPayload(item){
 
   const wantsFlash = item.suggestedMode === "flash" || (item.suggestedMode === "course_flash" && !item.hasQuiz);
   if(wantsFlash){
-    const cards = isUserChapter(ch.id) ? (ch.aiFlashcards || []).slice() : deckCards(ch.id);
+    const cards = isUserChapter(ch.id) ? courseFlashPayload(ch) : deckCards(ch.id);
     return Object.assign({}, item, { execMode: "flash", payload: cards });
   }
   if(isUserChapter(ch.id)){
-    return Object.assign({}, item, { execMode: "quiz", payload: (ch.aiQuiz || []).slice() });
+    return Object.assign({}, item, { execMode: "quiz", payload: courseQuizPayload(ch) });
   }
   const themed = QUESTIONS.filter(q => (ch.themes || []).includes(q.theme));
   const weak = themed.filter(q => { const m = masteryOf(q); return m === null || m < 75; });
@@ -18352,8 +18456,8 @@ function statsReviseChapter(chapterId){
   const ch = findAnyChapter(chapterId);
   if(!ch) return;
   if(isUserChapter(chapterId)){
-    if(ch.aiQuiz && ch.aiQuiz.length){ startQuiz("chapter:" + ch.id, ch.title, null, ch.aiQuiz.slice()); return; }
-    if(ch.aiFlashcards && ch.aiFlashcards.length){ startFlashDeck(ch.id, ch.title, ch.aiFlashcards.slice()); return; }
+    if(ch.aiQuiz && ch.aiQuiz.length){ courseQuizStart(ch); return; }
+    if(ch.aiFlashcards && ch.aiFlashcards.length){ courseFlashStart(ch); return; }
   } else {
     startQuiz("chapter:" + ch.id, ch.title, ch.themes);
   }
@@ -22675,7 +22779,7 @@ function ccRegisterSources(){
             icon: "target", keywords: kw.concat(["quiz", "questions"]),
             color: subj && subj.color ? subj.color : null,
             run: () => {
-              if(c.isUser) startQuiz("chapter:" + ch.id, ch.title, null, ch.aiQuiz);
+              if(c.isUser) courseQuizStart(ch);
               else startQuiz("chapter:" + ch.id, ch.title, ch.themes || []);
             },
           });
@@ -22688,7 +22792,7 @@ function ccRegisterSources(){
             icon: "layers", keywords: kw.concat(["flashcards", "cartes"]),
             color: subj && subj.color ? subj.color : null,
             run: () => {
-              if(c.isUser) startFlashDeck(ch.id, ch.title, ch.aiFlashcards);
+              if(c.isUser) courseFlashStart(ch);
               else startFlashDeck(ch.id, ch.title, deckCards(ch.id));
             },
           });
