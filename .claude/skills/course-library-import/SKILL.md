@@ -26,6 +26,15 @@ description: Bibliothèque de matières/chapitres, import de documents, généra
   toute évolution qui en dépendrait pour plusieurs comptes sur le même
   navigateur.
 
+## La page d'un cours est un HUB (voir `COURSE_HUB.md`)
+
+Section « Outils de révision » : cinq accès toujours cliquables (Fiche, Résumé,
+Quiz, Flashcards, Questions), états `NOT_GENERATED/QUEUED/GENERATING/READY/ERROR`
+**déduits** des champs du chapitre (jamais persistés). Logique pure dans
+`course-hub.js` (`RevemHub`) ; générations via **une seule file** (`courseHubGenerate`
+→ `courseHubPump` → `courseImportRunAllSteps`), jamais deux travaux WebLLM à la fois.
+Ne jamais ajouter un second bouton qui lance une génération hors de cette file.
+
 ## Il n'y a pas d'objet « cours » séparé du chapitre
 
 **Le chapitre EST le cours.** `state.userChapters` porte directement

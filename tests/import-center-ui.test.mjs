@@ -533,8 +533,9 @@ await scenario("16. Non-régression du pipeline d'import : détection, confirmat
   check("la détection a produit un titre et des notions (mode simplifié, sans IA)", d && d.title && d.title.length > 0, d);
   await page.evaluate(() => { const f = state.courseImport.files[0]; f.detected.newSubjectName = "Économie"; f.detected.subjectId = null; });
   await page.evaluate(() => courseImportSaveWithoutAI(0));
-  await page.waitForFunction(() => state.courseImport.files[0].status === "done", null, { timeout: 20000 });
-  const r = await page.evaluate(() => { const f = state.courseImport.files[0]; const ch = findAnyChapter(f.resultChapterId); return { has: !!ch, orig: ch && ch.originalText && ch.originalText.length > 100, file: ch && ch.sourceFileName, pdf: ch && ch.hasOriginalFile }; });
+  /* Depuis le Hub de révision : un seul fichier importé → on arrive SUR la page du cours. */
+  await page.waitForFunction(() => state.library.view === "chapterDetail" && !!document.getElementById("course-hub"), null, { timeout: 20000 });
+  const r = await page.evaluate(() => { const ch = findAnyChapter(state.library.chapterId); return { has: !!ch, orig: ch && ch.originalText && ch.originalText.length > 100, file: ch && ch.sourceFileName, pdf: ch && ch.hasOriginalFile }; });
   eq("un chapitre a été créé avec le texte source et le PDF d'origine", [r.has, r.orig, r.file, r.pdf], [true, true, "Economie-des-marches.pdf", true]);
   check("aucune erreur JavaScript", page.errors.length === 0, page.errors);
   await ctx.close();

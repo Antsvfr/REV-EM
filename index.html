@@ -1916,6 +1916,61 @@
     .ic-spinner{ animation: ic-spin .7s linear infinite; }
     @keyframes ic-spin{ to{ transform: rotate(360deg); } }
   }
+  /* ── HUB DE RÉVISION D'UN COURS (voir COURSE_HUB.md) ─────────────────────
+     Cinq accès, jamais désactivés. Très léger : un filet, une icône monochrome,
+     un état en une ligne — pas d'ombre lourde, le rouge reste rare. */
+  .hub{ margin: 0 0 var(--space-lg); }
+  .hub-head{ display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: var(--space-md); }
+  .hub-title{ font-family: var(--font-display); font-size: var(--text-h2); line-height: var(--leading-h2); font-weight: var(--weight-medium); margin:0; color: var(--text-primary); }
+  .hub-sub{ margin:2px 0 0; font-size: var(--text-small); line-height: var(--leading-small); color: var(--text-secondary); }
+  .hub-grid{ display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px; }
+  .hub-card{
+    appearance:none; -webkit-appearance:none; font:inherit; color:inherit; text-align:left; cursor:pointer;
+    position:relative; display:grid; grid-template-columns: 40px minmax(0,1fr) 16px; grid-template-areas: "icon body go" "state state state";
+    gap:10px 12px; align-items:center; min-height:104px; padding:16px;
+    background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-subtle);
+    transition: border-color var(--motion-state) var(--ease-enter), background var(--motion-state) var(--ease-enter);
+  }
+  .hub-card:hover{ border-color: var(--border-strong); background: var(--surface-sunken); }
+  .hub-card:hover .hub-card-go{ color: var(--accent); transform: translateX(2px); }
+  .hub-card--wide{ grid-column: 1 / -1; min-height:0; grid-template-columns: 40px minmax(0,1fr) auto 16px; grid-template-areas: "icon body state go"; }
+  .hub-card-icon{ grid-area: icon; display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; border-radius:50%; background: var(--accent-wash); color: var(--accent); }
+  .hub-card-icon svg{ width:20px; height:20px; }
+  .hub-card-body{ grid-area: body; display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .hub-card-title{ font-size: var(--text-h3); line-height: var(--leading-h3); font-weight: var(--weight-semibold); color: var(--text-primary); }
+  .hub-card-sub{ font-size: var(--text-metadata); line-height: var(--leading-meta); color: var(--text-secondary); }
+  .hub-card-state{ grid-area: state; display:inline-flex; align-items:center; gap:8px; font-size: var(--text-metadata); line-height: var(--leading-meta); color: var(--text-secondary); }
+  .hub-card-go{ grid-area: go; display:inline-flex; color: var(--text-muted); transition: color var(--motion-micro) var(--ease-enter), transform var(--motion-state) var(--ease-enter); }
+  .hub-card-go svg{ width:16px; height:16px; }
+  .hub-dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; border:1.5px solid var(--border-strong); background: transparent; }
+  .hub-card.st-ready .hub-dot{ background: var(--success); border-color: var(--success); }
+  .hub-card.st-error .hub-dot{ background: var(--error); border-color: var(--error); }
+  .hub-card.st-error .hub-card-state{ color: var(--error); }
+  .hub-spin{ display:inline-block; width:12px; height:12px; flex-shrink:0; border-radius:50%; border:2px solid var(--border-strong); border-top-color: var(--accent); }
+  .hub-spin--lg{ width:24px; height:24px; border-width:3px; }
+  @media (prefers-reduced-motion: no-preference){
+    .hub-spin{ animation: ds-spin 0.7s linear infinite; }
+  }
+  .hub-crumb{ margin-top:0; }
+  .hub-view-head{ margin-bottom: var(--space-md); }
+  .hub-view-state{ display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; padding: var(--space-xl) var(--space-lg); }
+  .hub-view-title{ margin:0; font-size: var(--text-h3); font-weight: var(--weight-semibold); color: var(--text-primary); }
+  .hub-view-note{ margin:0; max-width:46ch; font-size: var(--text-small); line-height: var(--leading-small); color: var(--text-secondary); }
+  .hub-view-alert{ max-width:52ch; text-align:left; }
+  .hub-view-actions{ display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:8px 12px; margin-top:6px; }
+  .hub-view-ready{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .hub-view-count{ margin:0; font-size: var(--text-h3); font-weight: var(--weight-medium); }
+  .hub-all[disabled]{ opacity:.6; cursor:default; }
+  @media (max-width: 900px){
+    .hub-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+  }
+  @media (max-width: 560px){
+    .hub-grid{ grid-template-columns: minmax(0,1fr); }
+    .hub-card, .hub-card--wide{ min-height:64px; grid-template-columns: 40px minmax(0,1fr) 16px; grid-template-areas: "icon body go" "icon state go"; row-gap:2px; }
+    .hub-view-state{ padding: var(--space-lg) var(--space-md); }
+    .hub-view-actions .btn{ width:100%; }
+  }
+
   @media (max-width: 640px){
     .modal--import{ padding: var(--space-md); }
     .ic-drop{ min-height:200px; padding: var(--space-lg) var(--space-md); }
@@ -5211,6 +5266,9 @@
 <!-- Logique PURE de l'Import Center (validation du fichier, machine d'états, ImportResult).
      Ni DOM, ni state, ni PDF.js. Voir IMPORT_CENTER.md. -->
 <script src="import-center.js"></script>
+<!-- Logique PURE du Hub de révision d'un cours (états des ressources, file séquentielle,
+     référence stable courseId/chapterId/subjectId). Ni DOM, ni state, ni WebLLM. Voir COURSE_HUB.md. -->
+<script src="course-hub.js"></script>
 
 <script>
 /* ============================================================
@@ -6303,9 +6361,10 @@ let state = {
   userSubjects: [],   // [{id,name,icon,color,semesterId,description,builtin:false}]
   userChapters: [],   // [{id,subjectId,num,title,desc,content,summary,aiQuiz:[],aiFlashcards:[]}]
   library: {
-    view: "subjects",      // subjects | subjectDetail | chapterDetail | subjectForm | chapterForm
+    view: "subjects",      // subjects | subjectDetail | chapterDetail | chapterResource | subjectForm | chapterForm
     subjectId: null,
     chapterId: null,
+    resource: null,           // vue « chapterResource » : fiche | summary | quiz | flashcards
     editingSubjectId: null,   // non-null = édition plutôt que création
     editingChapterId: null,
     search: "",
@@ -6606,6 +6665,11 @@ const DASH_ICONS = {
   check:    '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   x:        '<path d="M6 6l12 12M18 6 6 18"/>',
   alert:    '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.2"/>',
+  lines:    '<path d="M5 6.5h14M5 11h14M5 15.5h9"/>',
+  quizcheck:'<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8.5 12.3 2.4 2.4 4.6-4.9"/>',
+  cards:    '<rect x="3.5" y="8" width="13" height="11" rx="2"/><path d="M7.5 8V6.5A2 2 0 0 1 9.5 4.5H18A2 2 0 0 1 20 6.5V14a2 2 0 0 1-2 2h-1.5"/>',
+  chat:     '<path d="M5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4 3.5V16h-.5A1.5 1.5 0 0 1 4 14.5v-9A1.5 1.5 0 0 1 5.5 4z"/>',
+  arrow:    '<path d="M5 12h14M13 6l6 6-6 6"/>',
 };
 
 /* `name` vient toujours du code, jamais d'une donnée utilisateur : une clé
@@ -7497,8 +7561,13 @@ function resetUserStateInMemory(){
   });
   Object.assign(state.library, {
     view: "subjects", subjectId: null, chapterId: null,
-    editingSubjectId: null, editingChapterId: null, search: "",
+    editingSubjectId: null, editingChapterId: null, search: "", resource: null,
   });
+  /* Hub de révision : la file de générations du compte précédent est ABANDONNÉE (la boucle
+     de courseHubPump s'arrête dès que state.courseGen change) — rien n'est jamais écrit dans
+     les chapitres du compte suivant. */
+  state.courseGen = courseHubNewGen();
+  state.libGenerateBusy = null; state.libToolsBusy = null; state.aiCourseContext = null;
   Object.assign(state.catalog, { query: "", subjectId: "all", semesterId: "all" });
   Object.assign(state.studyWizard, { step: 1, goal: null, deadlineEventId: null, subjectIds: [], chapterIds: [] });
   Object.assign(state.courseImport, { step: "pick", busy: false, files: [], activeIndex: 0, pasteText: "", genSignal: null });
@@ -8220,7 +8289,7 @@ function render(){
       attachFlashPickerEvents();
     } else if(state.flashScreen === "play"){
       content.className = "quizwrap";
-      content.innerHTML = renderFlashPlay();
+      content.innerHTML = courseCrumbHtml(state.flashDeck && state.flashDeck.scope, "flashcards") + renderFlashPlay();
       attachFlashPlayEvents();
     } else {
       content.className = "quizwrap";
@@ -8237,7 +8306,7 @@ function render(){
     attachPickerEvents();
   } else if(state.screen === "quiz"){
     content.className = "quizwrap";
-    content.innerHTML = renderQuiz();
+    content.innerHTML = courseCrumbHtml(state.playing && state.playing.scope, "quiz") + renderQuiz();
     attachQuizEvents();
   } else if(state.screen === "results"){
     content.className = "quizwrap";
@@ -9358,6 +9427,7 @@ function renderLibrary(){
   if(lib.view === "subjectForm") return renderSubjectForm();
   if(lib.view === "chapterForm") return renderChapterForm();
   if(lib.view === "chapterDetail") return renderChapterDetail();
+  if(lib.view === "chapterResource") return renderChapterResource();
   if(lib.view === "subjectDetail") return renderSubjectDetail();
   if(lib.view === "import") return renderCourseImportWizard();
   return renderSubjectsList();
@@ -9565,7 +9635,8 @@ function renderChapterDetail(){
   if(ch.desc) html += `<p class="ai-intro">${escapeHtml(ch.desc)}</p>`;
 
   if(isUser){
-    // Chapitre créé par l'utilisateur (ou importé automatiquement) : contenu libre + actions IA.
+    // Chapitre créé par l'utilisateur (ou importé) : le HUB DE RÉVISION en tête (voir 7ter-ter),
+    // puis le contenu complémentaire (fiche, résumé, outils, éditeurs).
     html += `<div class="actions" style="margin:12px 0 16px;justify-content:flex-start;align-items:center;">
       <button class="btn outline small" id="lib-edit-chapter-btn">Modifier le chapitre</button>
       <button class="btn-text" id="lib-delete-chapter-btn">Supprimer le chapitre</button>
@@ -9583,45 +9654,39 @@ function renderChapterDetail(){
       html += `<div class="import-notion-tags" style="margin-bottom:16px;">${ch.keyNotions.map(n=>`<span class="import-notion-tag">${escapeHtml(n)}</span>`).join("")}</div>`;
     }
 
-    if(ch.generationPending){
-      const busy = state.libGenerateBusy === ch.id;
-      html += `<div class="ai-notice" style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-        <span>Ce cours est enregistré${ch.heuristicMode ? " (mode simplifié)" : ""}. La fiche complète, le résumé, le quiz et les flashcards seront prêts dès que l'assistant IA sera disponible.</span>
-        <button class="btn red small" id="lib-generate-ai-btn" ${busy || aiEngineBusy() ? "disabled" : ""}>${busy ? "Génération…" : "Générer avec l'IA"}</button>
-      </div>`;
-    }
+    // LE HUB : cinq accès toujours cliquables (Fiche, Résumé, Quiz, Flashcards, Questions).
+    html += renderCourseHub(ch);
 
-    if(!ch.content || !ch.content.trim()){
-      html += `<div class="empty-state">Ce chapitre n'a pas encore de contenu.<br>Clique sur « Modifier le chapitre » pour coller ou écrire ton cours, ou importe un fichier depuis « Mes matières ».</div>`;
+    const hasContent = !!(ch.content && ch.content.trim());
+    const srcKind = window.RevemHub ? RevemHub.sourceKind(ch) : "none";
+    const canGenerate = !!chapterSourceText(ch).trim();
+
+    if(!hasContent){
+      // « Sans contenu » ne se dit QUE s'il n'y a vraiment aucune source : un PDF importé
+      // (ou un texte d'origine) est bien un cours, même si la fiche n'est pas encore générée.
+      const msg = srcKind === "file" ? escapeHtml(t("hub.no_content_file")) + "<br>" + escapeHtml(t("hub.no_content_file_hint"))
+                : srcKind === "text" ? escapeHtml(t("hub.no_content_text"))
+                : escapeHtml(t("hub.no_content"));
+      html += `<div class="empty-state" id="hub-no-content" data-source="${srcKind}">${msg}</div>`;
     } else {
       html += `<div class="card" style="margin-bottom:24px;">
         <div class="section-title">Fiche de cours</div>
         <div class="fiche-content">${renderFicheContent(ch.content)}</div>
       </div>`;
-
       if(ch.summary){
         html += `<div class="card" style="margin-bottom:24px;">
           <div class="section-title">Résumé</div>
-          <div class="ai-result-body" style="white-space:pre-wrap;">${escapeHtml(ch.summary)}</div>
+          ${renderSummaryContent(ch.summary)}
         </div>`;
       }
+    }
 
+    if(hasContent || canGenerate){
       const aiReadyNow = state.aiStatus === "ready";
       const hasQuiz = !!(ch.aiQuiz && ch.aiQuiz.length);
       const hasCards = !!(ch.aiFlashcards && ch.aiFlashcards.length);
       const hasReviewQ = !!(ch.aiReviewQuestions && ch.aiReviewQuestions.length);
       const toolsBusy = !!state.libToolsBusy;
-
-      // Une seule action dominante : réviser ce qui existe déjà, ou le créer
-      // directement en un clic quand rien n'a encore été généré.
-      let primaryId = "lib-primary-quiz", primaryLabel = state.libToolsBusy==="quiz" ? "Préparation…" : "Réviser ce chapitre";
-      if(hasQuiz){ primaryId = "lib-play-quiz"; primaryLabel = "Réviser (" + ch.aiQuiz.length + " question" + (ch.aiQuiz.length>1?"s":"") + ")"; }
-      else if(hasCards){ primaryId = "lib-play-flash"; primaryLabel = "Réviser (" + ch.aiFlashcards.length + " flashcard" + (ch.aiFlashcards.length>1?"s":"") + ")"; }
-
-      html += `<div class="lib-revise-row">
-        <button class="btn red" id="${primaryId}" ${(primaryId==="lib-primary-quiz" && toolsBusy) ? "disabled" : ""}>${primaryLabel}</button>
-        ${(hasQuiz && hasCards) ? `<button class="btn outline" id="lib-play-flash">Flashcards (${ch.aiFlashcards.length})</button>` : ""}
-      </div>`;
 
       html += `<details class="ai-extra lib-tools" style="margin-top:16px;" ${state.libToolsOpen ? "open" : ""}>
         <summary>Outils IA</summary>
@@ -9630,11 +9695,14 @@ function renderChapterDetail(){
           <button class="ai-action" id="lib-ai-drill" ${(!aiReadyNow || toolsBusy)?"disabled":""}><span class="t">Me faire réviser</span><span class="d">${aiReadyNow ? "Interrogation orale par l'IA" : "Nécessite l'assistant IA"}</span></button>
           <button class="ai-action" id="lib-ai-quiz" ${toolsBusy?"disabled":""}><span class="t">${hasQuiz ? "Régénérer le quiz" : "Générer un quiz"}</span><span class="d">${state.libToolsBusy==="quiz" ? "Génération…" : (hasQuiz ? ch.aiQuiz.length+" question"+(ch.aiQuiz.length>1?"s":"")+" actuelle"+(ch.aiQuiz.length>1?"s":"") : (aiReadyNow ? "QCM inédits" : "Mode simplifié si possible"))}</span></button>
           <button class="ai-action" id="lib-ai-cards" ${toolsBusy?"disabled":""}><span class="t">${hasCards ? "Régénérer les flashcards" : "Générer des flashcards"}</span><span class="d">${state.libToolsBusy==="flashcards" ? "Génération…" : (hasCards ? ch.aiFlashcards.length+" carte"+(ch.aiFlashcards.length>1?"s":"")+" actuelle"+(ch.aiFlashcards.length>1?"s":"") : (aiReadyNow ? "Cartes recto/verso" : "Mode simplifié si possible"))}</span></button>
-          <button class="ai-action" id="lib-regen-fiche" ${toolsBusy?"disabled":""}><span class="t">Régénérer la fiche</span><span class="d">${state.libToolsBusy==="fiche" ? "Génération…" : "Reprend le texte source"}</span></button>
+          <button class="ai-action" id="lib-regen-fiche" ${toolsBusy?"disabled":""}><span class="t">${hasContent ? "Régénérer la fiche" : "Générer la fiche"}</span><span class="d">${state.libToolsBusy==="fiche" ? "Génération…" : "Reprend le texte source"}</span></button>
           ${hasReviewQ ? `<button class="ai-action" id="lib-regen-reviewq" ${toolsBusy?"disabled":""}><span class="t">Régénérer les questions</span><span class="d">${state.libToolsBusy==="reviewQuestions" ? "Génération…" : ch.aiReviewQuestions.length+" question"+(ch.aiReviewQuestions.length>1?"s":"")+" actuelle"+(ch.aiReviewQuestions.length>1?"s":"")}</span></button>` : ""}
         </div>
       </details>`;
+    }
 
+    {
+      const hasReviewQ = !!(ch.aiReviewQuestions && ch.aiReviewQuestions.length);
       if(hasReviewQ){
         html += `<div class="card" style="margin-top:24px;">
           <div class="section-title">Questions de révision (${ch.aiReviewQuestions.length})</div>
@@ -9882,14 +9950,10 @@ function attachLibraryEvents(){
       if(drillBtn) drillBtn.addEventListener("click", ()=> libRunUserChapterAI(ch, "drill"));
       const quizBtn = document.getElementById("lib-ai-quiz");
       if(quizBtn) quizBtn.addEventListener("click", ()=> libGenerateUserChapterQuiz(ch));
-      const primaryQuizBtn = document.getElementById("lib-primary-quiz");
-      if(primaryQuizBtn) primaryQuizBtn.addEventListener("click", ()=> libGenerateUserChapterQuiz(ch));
       const cardsBtn = document.getElementById("lib-ai-cards");
       if(cardsBtn) cardsBtn.addEventListener("click", ()=> libGenerateUserChapterCards(ch));
-      const playQuizBtn = document.getElementById("lib-play-quiz");
-      if(playQuizBtn) playQuizBtn.addEventListener("click", ()=> startQuiz("chapter:"+ch.id, ch.title, null, ch.aiQuiz.slice()));
-      const playFlashBtn = document.getElementById("lib-play-flash");
-      if(playFlashBtn) playFlashBtn.addEventListener("click", ()=> startFlashDeck(ch.id, ch.title, ch.aiFlashcards.slice()));
+      /* Hub de révision : les cinq accès sont de vrais boutons, TOUJOURS cliquables. */
+      document.querySelectorAll("[data-hub-open]").forEach(b=> b.addEventListener("click", ()=> courseHubOpen(ch, b.dataset.hubOpen)));
       const toolsDetails = document.querySelector(".lib-tools");
       if(toolsDetails) toolsDetails.addEventListener("toggle", ()=>{ state.libToolsOpen = toolsDetails.open; });
 
@@ -10070,6 +10134,7 @@ function attachLibraryEvents(){
   }
 
   if(lib.view === "import") attachCourseImportEvents();
+  if(lib.view === "chapterResource") attachChapterResourceEvents();
 }
 
 /* Convertit le contenu d'une fiche (JSON structuré, HTML ou texte/Markdown
@@ -10161,7 +10226,7 @@ async function libRunUserChapterFree(ch){
 /* "Résumer ce chapitre" : utilise l'IA si prête, sinon un résumé heuristique
    (première phrase de chaque partie du texte) — jamais bloqué par WebGPU. */
 async function libGenerateUserChapterSummary(ch){
-  if(!ch.content || !ch.content.trim()){ showToast("Ajoute du contenu à ce chapitre avant de générer un résumé."); return; }
+  if(!chapterSourceText(ch).trim()){ showToast("Ajoute du contenu à ce chapitre avant de générer un résumé."); return; }
   if(state.aiStatus !== "ready"){
     const summary = heuristicSummary(chapterSourceText(ch));
     if(!summary){ showToast("Pas assez de texte structuré pour résumer ce chapitre."); return; }
@@ -10186,7 +10251,7 @@ async function libGenerateUserChapterSummary(ch){
 }
 
 async function libGenerateUserChapterQuiz(ch){
-  if(!ch.content || !ch.content.trim()){ showToast("Ajoute du contenu à ce chapitre avant de générer un quiz."); return; }
+  if(!chapterSourceText(ch).trim()){ showToast("Ajoute du contenu à ce chapitre avant de générer un quiz."); return; }
   if(state.aiStatus !== "ready"){
     const h = buildHeuristicCourseMaterials(chapterSourceText(ch));
     if(h.quiz.length === 0){ showToast("Pas assez de définitions claires pour générer un quiz fiable."); return; }
@@ -10224,7 +10289,7 @@ async function libGenerateUserChapterQuiz(ch){
 }
 
 async function libGenerateUserChapterCards(ch){
-  if(!ch.content || !ch.content.trim()){ showToast("Ajoute du contenu à ce chapitre avant de générer des flashcards."); return; }
+  if(!chapterSourceText(ch).trim()){ showToast("Ajoute du contenu à ce chapitre avant de générer des flashcards."); return; }
   if(state.aiStatus !== "ready"){
     const h = buildHeuristicCourseMaterials(chapterSourceText(ch));
     if(h.flashcards.length === 0){ showToast("Aucune définition claire trouvée pour créer des flashcards."); return; }
@@ -11466,38 +11531,320 @@ async function courseImportSaveWithoutAI(index){
   courseImportFinishAfterGeneration(index);
 }
 
-/* Génère (ou complète) les supports IA d'un cours déjà enregistré — depuis le
-   bandeau "Génération IA en attente" de la fiche du chapitre (mode simplifié
-   à mettre à niveau, ou génération normale interrompue/partiellement en
-   échec). Ne régénère que ce qui manque réellement (coursePendingStepKeys),
-   sauf en mode simplifié où tout est refait par l'IA (voir plus haut). Ne
-   réécrase jamais le texte original ni les métadonnées déjà en place. */
+/* ============================================================
+   7ter-ter. HUB DE RÉVISION D'UN COURS
+   ------------------------------------------------------------
+   La page d'un cours importé expose CINQ accès — Fiche, Résumé, Quiz,
+   Flashcards, Questions — TOUJOURS cliquables, même avant que le moindre
+   contenu existe. Chaque accès est un RACCOURCI vers ce qui existe déjà :
+     Fiche / Résumé  → une vue du cours (fil d'Ariane, contenu ou « à générer »)
+     Quiz / Flashcards prêts → le quiz / les flashcards existants (startQuiz /
+                       startFlashDeck) ; sinon la vue du cours qui dit où on en est
+     Questions       → l'assistant, avec CE cours pour contexte (libRunUserChapterFree)
+   Aucun second quiz, aucune seconde fiche, aucun nouveau modèle de données :
+   l'état READY se déduit des champs déjà enregistrés dans le chapitre
+   (content, summary, aiQuiz, aiFlashcards) ; les états QUEUED / GENERATING /
+   ERROR n'existent que pendant la session (state.courseGen).
+
+   Logique pure (états, file séquentielle, référence stable) : course-hub.js.
+   Génération : le pipeline EXISTANT (courseImportRunAllSteps), une ressource à la
+   fois — jamais deux travaux WebLLM en même temps.
+   courseId === chapterId : le chapitre EST le cours (COURSE_PIPELINE_AUDIT.md).
+
+   PRÊT POUR L'AUTOMATISATION : courseHubGenerate(chapterId, keys) est LE point
+   d'entrée — l'automatisation future (après l'import) n'aura qu'à l'appeler ;
+   les cartes se mettent à jour d'elles-mêmes. Voir COURSE_HUB.md.
+   ============================================================ */
+const HUB = window.RevemHub;
+/* Une file NEUVE (état par compte : voir la réinitialisation au changement de compte).
+   `upgrade` = cours dont le mode simplifié est à lever (« Générer tout »). Déclarée en
+   `function` (hissée) car l'état initial l'appelle avant cette section. */
+function courseHubNewGen(){
+  if(!window.RevemHub) return null;
+  const g = window.RevemHub.newGen();
+  g.upgrade = new Set();
+  return g;
+}
+
+/* Les erreurs de génération classées (classifyGenerationError) → un code du hub. */
+function courseHubErrorCode(classified){
+  if(!classified) return "GENERATION_FAILED";
+  if(classified.kind === "memory") return "OUT_OF_MEMORY";
+  if(classified.kind === "timeout") return "TIMEOUT";
+  if(classified.kind === "webgpu") return "DEVICE_LOST";
+  return "GENERATION_FAILED";
+}
+
+/* LE point d'entrée des générations d'un cours. Demande UNE ou plusieurs
+   ressources ; elles passent par une file SÉQUENTIELLE. Un double clic, ou une
+   ressource déjà en file/en cours, n'ajoute rien. */
+async function courseHubGenerate(chapterId, keys, opts){
+  opts = opts || {};
+  const ch = findAnyChapter(chapterId);
+  if(!HUB || !ch || !isUserChapter(ch.id)) return { started: false, reason: "no-course" };
+  const gen = state.courseGen;
+  const wanted = HUB.keysForGenerateAll(keys, gen, chapterId);
+  if(!wanted.length) return { started: false, reason: "nothing" };
+  if(!gen.running && aiEngineBusy()){ showToast(t("hub.busy")); return { started: false, reason: "busy" }; }
+  if(!chapterSourceText(ch).trim()){
+    wanted.forEach(k => HUB.recordError(gen, chapterId, k, { code: "NO_SOURCE" }));
+    render();
+    return { started: false, reason: "no-source" };
+  }
+  if(opts.upgrade) gen.upgrade.add(chapterId);
+  HUB.enqueue(gen, chapterId, wanted);
+  render();                                   // les cartes passent aussitôt en « En attente »
+  if(!gen.running) await courseHubPump(gen);
+  return { started: true, keys: wanted };
+}
+
+/* Exécute la file, un travail à la fois. S'arrête si le compte change
+   (state.courseGen remplacé) : rien n'est alors écrit dans le mauvais compte. */
+async function courseHubPump(gen){
+  if(gen.running) return;
+  gen.running = true;
+  try{
+    for(;;){
+      if(state.courseGen !== gen) return;
+      const head = gen.queue[0];
+      if(!head) break;
+      if(state.aiStatus !== "ready"){
+        try{ await ensureImportAIReady(); }
+        catch(e){
+          /* L'IA n'est pas disponible : tout ce qui attendait pour ce cours échoue
+             PROPREMENT (message clair + « Réessayer »), rien ne reste « en préparation ». */
+          HUB.failQueuedFor(gen, head.chapterId, { code: state.aiStatus === "loading" ? "AI_LOADING" : "AI_UNAVAILABLE", message: (e && e.message) || "" });
+          render();
+          continue;
+        }
+      }
+      if(state.courseGen !== gen) return;
+      const task = HUB.takeNext(gen);
+      if(!task) break;
+      const ch = findAnyChapter(task.chapterId);
+      if(!ch){ HUB.complete(gen, task, { code: "GENERATION_FAILED" }); continue; }
+      if(gen.upgrade.has(ch.id)){ ch.heuristicMode = false; }      // on quitte le mode simplifié dès la tentative (comportement historique)
+      state.libGenerateBusy = ch.id;                                    // verrou partagé : aiEngineBusy() est vrai pendant la génération
+      render();
+      const sourceText = chapterSourceText(ch);
+      const item = {
+        workingText: clip(sourceText, COURSE_GEN_CONTEXT_CHARS),
+        charCount: sourceText.length,
+        detected: { title: ch.title, chapterTitle: ch.desc || ch.title, notions: ch.keyNotions || [] },
+        generated: {}, failedSteps: [], genStepIndex: -1, resultChapterId: ch.id,
+      };
+      let err = null;
+      try{ await courseImportRunAllSteps(item, null, [task.key]); }
+      catch(e){ err = { code: "GENERATION_FAILED", message: (e && e.message) || "" }; }
+      if(state.courseGen !== gen) return;
+      if(!err && item.failedSteps.indexOf(task.key) >= 0) err = { code: courseHubErrorCode(item.lastStepError), message: (item.lastStepError && item.lastStepError.message) || "" };
+      HUB.complete(gen, task, err);
+      if(!HUB.busyFor(gen, ch.id)) gen.upgrade.delete(ch.id);
+      state.libGenerateBusy = null;
+      render();
+    }
+  } finally{
+    if(state.courseGen === gen){ gen.running = false; state.libGenerateBusy = null; render(); }
+  }
+}
+
+/* API historique conservée : « Générer avec l'IA » (bandeau, écran de résultat
+   d'import) génère ce qui manque réellement, via la MÊME file. */
 async function libGenerateChapterAI(chapterId){
   const ch = findAnyChapter(chapterId);
-  if(!ch || !isUserChapter(ch.id) || aiEngineBusy()) return;
+  if(!ch || !isUserChapter(ch.id)) return;
   const pendingKeys = coursePendingStepKeys(ch);
-  if(!pendingKeys.length) return;   // déjà complet : rien à générer
-  state.libGenerateError = "";
-  try{
-    await ensureImportAIReady();
-  }catch(e){
-    showToast("Assistant IA indisponible pour le moment.");
-    return;
+  if(!pendingKeys.length) return;               // déjà complet : rien à générer
+  await courseHubGenerate(chapterId, pendingKeys, { upgrade: !!ch.heuristicMode });
+}
+
+/* ── ouverture des cinq accès ── */
+function courseHubPlay(ch, key){
+  if(key === "quiz" && ch.aiQuiz && ch.aiQuiz.length) startQuiz("chapter:" + ch.id, ch.title, null, ch.aiQuiz.slice());
+  else if(key === "flashcards" && ch.aiFlashcards && ch.aiFlashcards.length) startFlashDeck(ch.id, ch.title, ch.aiFlashcards.slice());
+}
+/* « Questions » : l'assistant s'ouvre avec CE cours pour contexte. La référence
+   stable (courseId / chapterId / subjectId) est posée pour que le futur RAG s'y
+   branche ; aujourd'hui le contexte est le texte du cours (libChapterContext). */
+function courseHubAsk(ch){
+  state.aiCourseContext = HUB.courseRef(ch);
+  libRunUserChapterFree(ch);
+}
+function courseHubOpen(ch, key){
+  if(!HUB || !ch) return;
+  if(key === "questions") return courseHubAsk(ch);
+  const st = HUB.resourceState(ch, state.courseGen, key);
+  if(st && st.state === "READY" && (key === "quiz" || key === "flashcards")) return courseHubPlay(ch, key);
+  libGoto("chapterResource", { chapterId: ch.id, resource: key });
+}
+
+/* ── la section « Outils de révision » ── */
+function courseHubCardHtml(ch, r, st){
+  const lab = HUB.statusLabel(st);
+  const title = t("hub." + r.key + ".title"), sub = t("hub." + r.key + ".sub");
+  const stateText = t(lab.key, lab.vars);
+  const ready = st.state === "READY" && r.key !== "questions";
+  const busy = st.state === "GENERATING" || st.state === "QUEUED";
+  const id = (ready && r.key === "quiz") ? ` id="lib-play-quiz"` : (ready && r.key === "flashcards") ? ` id="lib-play-flash"` : "";
+  return `<button type="button" class="hub-card st-${st.state.toLowerCase()}${r.key === "questions" ? " hub-card--wide" : ""}"${id} data-hub-open="${r.key}" data-hub-state="${st.state}" ${busy ? 'aria-busy="true"' : ""} aria-label="${escapeHtml(title + " — " + sub + ". " + stateText)}">
+    <span class="hub-card-icon">${dashIcon(r.icon)}</span>
+    <span class="hub-card-body">
+      <span class="hub-card-title">${escapeHtml(title)}</span>
+      <span class="hub-card-sub">${escapeHtml(sub)}</span>
+    </span>
+    <span class="hub-card-state">${busy ? `<i class="hub-spin" aria-hidden="true"></i>` : `<i class="hub-dot" aria-hidden="true"></i>`}${escapeHtml(stateText)}</span>
+    <span class="hub-card-go" aria-hidden="true">${dashIcon("arrow")}</span>
+  </button>`;
+}
+function renderCourseHub(ch){
+  const gen = state.courseGen;
+  const states = HUB.allStates(ch, gen);
+  const canAll = HUB.keysForGenerateAll(coursePendingStepKeys(ch), gen, ch.id).length > 0;
+  const working = HUB.busyFor(gen, ch.id);
+  return `<section class="hub" id="course-hub" aria-labelledby="hub-title" data-course-id="${escapeHtml(ch.id)}" data-subject-id="${escapeHtml(ch.subjectId || "")}">
+    <div class="hub-head">
+      <div>
+        <h2 class="hub-title" id="hub-title">${escapeHtml(t("hub.title"))}</h2>
+        <p class="hub-sub">${escapeHtml(t("hub.sub"))}</p>
+      </div>
+      ${(canAll || working) ? `<button type="button" class="btn-text hub-all" id="lib-generate-ai-btn" ${working ? "disabled" : ""}>${escapeHtml(t(working ? "hub.generate_all_busy" : "hub.generate_all"))}</button>` : ""}
+    </div>
+    <div class="hub-grid">
+      ${HUB.RESOURCES.map((r, i) => courseHubCardHtml(ch, r, states[i])).join("")}
+    </div>
+  </section>`;
+}
+
+/* ── le contenu d'un résumé : texte de l'IA (échappé) OU HTML du mode simplifié ── */
+function renderSummaryContent(raw){
+  const s = String(raw || "").trim();
+  /* Le résumé du mode simplifié (heuristicSummary) est un HTML fabriqué par le code, déjà
+     échappé : reconnu à sa signature exacte. Tout autre texte (IA, saisie) est ÉCHAPPÉ. */
+  const own = /^<p class="ai-hint"/.test(s) && !/<script|\son\w+\s*=|javascript:/i.test(s);
+  if(own) return `<div class="ai-result-body">${s}</div>`;
+  return `<div class="ai-result-body" style="white-space:pre-wrap;">${escapeHtml(s)}</div>`;
+}
+
+/* ── la vue d'une ressource du cours (Fiche, Résumé, Quiz, Flashcards) ── */
+function renderChapterResource(){
+  const lib = state.library;
+  const ch = findAnyChapter(lib.chapterId);
+  const key = lib.resource;
+  const r = HUB && HUB.meta(key);
+  if(!ch || !isUserChapter(ch.id) || !r || !r.generable){ libGoto("chapterDetail", { chapterId: lib.chapterId }); return renderChapterDetail(); }
+  const s = subjectOfChapter(ch);
+  const crumb = libBreadcrumb([
+    { label: "Mes matières", view: "subjects" },
+    { label: s ? s.name : "Matière", view: "subjectDetail", extra: { subjectId: ch.subjectId } },
+    { label: ch.title, view: "chapterDetail", extra: { chapterId: ch.id } },
+    { label: t("hub." + key + ".title") },
+  ]);
+  const st = HUB.resourceState(ch, state.courseGen, key);
+  const lab = HUB.statusLabel(st);
+  const aiReady = state.aiStatus === "ready";
+  const canSimple = key === "quiz" || key === "flashcards" || key === "summary";
+  let html = crumb.html;
+  html += `<div class="hub-view-head"><h1 class="page-title tight">${escapeHtml(t("hub." + key + ".title"))}</h1>
+    <p class="ai-intro" style="margin-top:4px;">${escapeHtml(ch.title)}</p></div>`;
+
+  if(st.state === "READY"){
+    if(key === "fiche") html += `<div class="card" style="margin-bottom:16px;"><div class="fiche-content">${renderFicheContent(ch.content)}</div></div>`;
+    else if(key === "summary") html += `<div class="card" style="margin-bottom:16px;">${renderSummaryContent(ch.summary)}</div>`;
+    else html += `<div class="card hub-view-ready"><p class="hub-view-count">${escapeHtml(t(lab.key, lab.vars))}</p>
+        <button type="button" class="btn red" data-hub-start="${key}">${escapeHtml(t("hub.view.start." + key))}</button></div>`;
+    html += `<div class="actions" style="justify-content:flex-start;margin-top:8px;">
+      <button type="button" class="btn-text" data-hub-regen="${key}">${escapeHtml(t("hub.view.regen"))}</button>
+      <button type="button" class="btn-text" data-hub-back>${escapeHtml(t("hub.view.back"))}</button></div>`;
+  } else if(st.state === "GENERATING" || st.state === "QUEUED"){
+    html += `<div class="card hub-view-state" role="status" aria-live="polite"><i class="hub-spin hub-spin--lg" aria-hidden="true"></i>
+      <p class="hub-view-title">${escapeHtml(t(st.state === "GENERATING" ? "hub.view.working" : "hub.view.queued"))}</p>
+      <p class="hub-view-note">${escapeHtml(t("hub.view.keep_going"))}</p></div>
+      <div class="actions" style="justify-content:flex-start;margin-top:8px;"><button type="button" class="btn-text" data-hub-back>${escapeHtml(t("hub.view.back"))}</button></div>`;
+  } else {
+    const isErr = st.state === "ERROR";
+    const code = isErr ? st.error.code : null;
+    const noSource = !chapterSourceText(ch).trim() || code === "NO_SOURCE";
+    html += `<div class="card hub-view-state hub-view-empty">
+      <p class="hub-view-title">${escapeHtml(t("hub.view.empty." + key))}</p>
+      ${isErr ? `<div class="ic-alert hub-view-alert" role="alert"><span class="ic-alert-icon">${dashIcon("alert")}</span><p>${escapeHtml(t("hub.err." + code))}</p></div>` : ""}
+      ${(!isErr && !aiReady && !noSource) ? `<p class="hub-view-note">${escapeHtml(t("hub.view.ai_hint"))}</p>` : ""}
+      ${noSource ? `<p class="hub-view-note">${escapeHtml(t("hub.err.NO_SOURCE"))}</p>` : ""}
+      <div class="hub-view-actions">
+        ${noSource ? `<button type="button" class="btn red" data-hub-edit>${escapeHtml(t("hub.view.edit"))}</button>`
+                   : `<button type="button" class="btn red" data-hub-generate="${key}">${escapeHtml(t(isErr ? "hub.view.retry" : "hub.view.gen." + key))}</button>`}
+        ${(!noSource && canSimple && !aiReady) ? `<button type="button" class="btn-text" data-hub-simple="${key}">${escapeHtml(t("hub.view.simple"))}</button>` : ""}
+        <button type="button" class="btn-text" data-hub-back>${escapeHtml(t("hub.view.back"))}</button>
+      </div>
+    </div>`;
   }
-  state.libGenerateBusy = chapterId;
-  render();
-  const sourceText = chapterSourceText(ch);
-  const item = {
-    workingText: clip(sourceText, COURSE_GEN_CONTEXT_CHARS),
-    charCount: sourceText.length,
-    detected: { title: ch.title, chapterTitle: ch.desc || ch.title, notions: ch.keyNotions || [] },
-    generated: {}, failedSteps: [], genStepIndex: -1,
-    resultChapterId: ch.id,
-  };
-  ch.heuristicMode = false; // on quitte le mode simplifié dès la tentative, qu'elle réussisse ou non
-  await courseImportRunAllSteps(item, null, pendingKeys);
-  state.libGenerateBusy = null;
-  render();
+  return html;
+}
+
+/* Les événements de la vue d'une ressource (délégués une fois par rendu sur des
+   boutons réels). */
+function attachChapterResourceEvents(){
+  const lib = state.library;
+  const ch = findAnyChapter(lib.chapterId);
+  if(!ch) return;
+  const parts = [
+    { label: "Mes matières", view: "subjects" },
+    { label: "", view: "subjectDetail", extra: { subjectId: ch.subjectId } },
+    { label: "", view: "chapterDetail", extra: { chapterId: ch.id } },
+  ];
+  document.querySelectorAll("[data-crumb]").forEach(btn => btn.addEventListener("click", () => { const p = parts[parseInt(btn.dataset.crumb)]; libGoto(p.view, p.extra); }));
+  document.querySelectorAll("[data-hub-back]").forEach(b => b.addEventListener("click", () => libGoto("chapterDetail", { chapterId: ch.id })));
+  document.querySelectorAll("[data-hub-generate]").forEach(b => b.addEventListener("click", () => courseHubGenerate(ch.id, [b.dataset.hubGenerate])));
+  document.querySelectorAll("[data-hub-start]").forEach(b => b.addEventListener("click", () => courseHubPlay(ch, b.dataset.hubStart)));
+  document.querySelectorAll("[data-hub-regen]").forEach(b => b.addEventListener("click", () => libRegeneratePart(ch, b.dataset.hubRegen)));
+  document.querySelectorAll("[data-hub-edit]").forEach(b => b.addEventListener("click", () => libGoto("chapterForm", { editingChapterId: ch.id })));
+  document.querySelectorAll("[data-hub-simple]").forEach(b => b.addEventListener("click", () => {
+    const k = b.dataset.hubSimple;
+    if(k === "quiz") libGenerateUserChapterQuiz(ch);
+    else if(k === "flashcards") libGenerateUserChapterCards(ch);
+    else if(k === "summary") libGenerateUserChapterSummary(ch);
+  }));
+}
+
+/* ── fil d'Ariane des écrans de quiz / flashcards d'un chapitre : jamais de
+   cul-de-sac (Mes matières › Matière › Chapitre › Quiz). Absent pendant une
+   session guidée (elle a sa propre navigation). ── */
+function courseCrumbHtml(scope, kind){
+  if(state.smartSession || state.planningSession) return "";
+  const id = chapterIdFromQuizScope(scope) || (findAnyChapter(scope) ? scope : null);
+  const ch = id ? findAnyChapter(id) : null;
+  if(!ch || !isUserChapter(ch.id)) return "";      // seuls les cours importés/créés ont un hub
+  const s = subjectOfChapter(ch);
+  const btn = (goto, label, extra) => `<button type="button" data-hub-goto="${goto}" ${extra || ""}>${escapeHtml(label)}</button>`;
+  return `<nav class="breadcrumb hub-crumb" aria-label="${escapeHtml(t("hub.crumb_aria"))}">
+    ${btn("subjects", "Mes matières")}<span class="sep">›</span>
+    ${s ? btn("subject", s.name, `data-subject-id="${escapeHtml(ch.subjectId)}"`) + '<span class="sep">›</span>' : ""}
+    ${btn("chapter", ch.title, `data-chapter-id="${escapeHtml(ch.id)}"`)}<span class="sep">›</span>
+    <span class="current">${escapeHtml(t("hub." + kind + ".title"))}</span>
+  </nav>`;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("[data-hub-goto]");
+  if(!b) return;
+  const kind = b.getAttribute("data-hub-goto");
+  if(kind === "subjects") libGoto("subjects");
+  else if(kind === "subject") libGoto("subjectDetail", { subjectId: b.getAttribute("data-subject-id") });
+  else if(kind === "chapter") libGoto("chapterDetail", { chapterId: b.getAttribute("data-chapter-id") });
+  switchTab("library");
+});
+
+/* Après un import réussi d'UN cours : on ne laisse pas l'utilisateur sur une page
+   passive, on l'amène sur le cours, outils de révision visibles. Les étapes qui
+   ont échoué pendant l'import s'affichent sur leur carte (jamais masquées). */
+function courseHubOpenAfterImport(item){
+  courseImportStopTimer();
+  const chapterId = item.resultChapterId;
+  if(HUB && !item.heuristicMode && item.failedSteps){
+    item.failedSteps.forEach(k => HUB.recordError(state.courseGen, chapterId, k, { code: courseHubErrorCode(item.lastStepError) }));
+  }
+  state.courseImport = freshCourseImportState();
+  libGoto("chapterDetail", { chapterId });
+  switchTab("library");
+  showToast(t("hub.import_done"));
 }
 
 /* Fait avancer la file d'import une fois un fichier traité (généré ou non) :
@@ -11510,6 +11857,10 @@ function courseImportFinishAfterGeneration(index){
   item.status = "done";
   const next = ci.files.findIndex((f,i) => i > index && f.status === "pending");
   if(next !== -1){ ci.step = "detect"; courseImportProcessFile(next); return; }
+  /* Un seul cours importé : on ne laisse pas l'utilisateur sur une page passive, on l'amène
+     SUR le cours, ses outils de révision visibles (hub). Plusieurs fichiers : le récapitulatif
+     reste (il propose « Ouvrir » pour chacun). */
+  if(ci.files.length === 1 && item.resultChapterId && findAnyChapter(item.resultChapterId)){ courseHubOpenAfterImport(item); return; }
   ci.step = "result";
   render();
 }
@@ -15674,6 +16025,10 @@ Object.assign(state, {
   libGenerateError: "",
   libToolsBusy: null,
   libToolsOpen: false,
+  // Hub de révision : file séquentielle des générations d'un cours (runtime seulement —
+  // jamais persistée). courseGen.upgrade = cours dont le mode simplifié est à lever.
+  courseGen: courseHubNewGen(),
+  aiCourseContext: null,        // { courseId, chapterId, subjectId } du cours ouvert dans l'assistant
   aiDiagPanelOpen: false,
   aiRetryChecking: false,
   aiFullTestResult: "",
