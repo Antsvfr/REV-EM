@@ -101,7 +101,7 @@ try {
     const g = await gens(page);
     eq("un seul appel au moteur", g.length, 1);
     eq("messages : system puis la question", [g[0].messages.map(m => m.role), g[0].messages[1].content.indexOf("Qu'est-ce que l'EBITDA ?")], [["system", "user"], 0]);
-    check("le prompt est compact (< 300 jetons ≈ 960 car.)", g[0].messages.reduce((n, m) => n + m.content.length, 0) < 960, g[0].messages.reduce((n, m) => n + m.content.length, 0));
+    check("le prompt est compact (< 345 jetons ≈ 1 100 car. : l’instruction de langue ajoute ≈ 30 jetons)", g[0].messages.reduce((n, m) => n + m.content.length, 0) < 1100, g[0].messages.reduce((n, m) => n + m.content.length, 0));
     check("aucune donnée de maîtrise injectée pour une question générale", !/NIVEAU RÉEL|maîtrise|Par chapitre/.test(JSON.stringify(g[0].messages)));
     eq("définition : température basse, top_p fourni, réponse courte", [g[0].temperature, g[0].topP, g[0].maxTokens <= 260], [0.3, 0.9, true]);
     check("consigne de langue : réponse en français", /Answer in French/.test(g[0].messages[0].content));
@@ -390,7 +390,7 @@ try {
   /* 15. Responsive + clavier + a11y */
   await scenario("15. mobile 375 px : pas de débordement ; clavier et accessibilité", async () => {
     const { ctx, page } = await open({ width: 375, height: 800 });
-    await script(page, [{ text: "L'EBITDA est un indicateur. ".repeat(8) }]);
+    await script(page, [{ text: Array.from({ length: 8 }, (_, i) => "L'EBITDA est un indicateur numéro " + i + ". ").join("") }]);
     await ask(page, "Qu'est-ce que l'EBITDA ?");
     eq("aucun défilement horizontal", await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth <= 0), true);
     check("boutons d'action ≥ 36 px de haut (cibles tactiles)", await page.$$eval(".ai-msg-actions .btn-text, .ai-suggestion-chip", e => e.every(b => b.getBoundingClientRect().height >= 32)));

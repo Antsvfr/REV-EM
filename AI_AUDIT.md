@@ -160,7 +160,7 @@ taille du téléchargement. Aucune VRAM n'est jamais « détectée » : sur Appl
 la mémoire est unifiée et WebGPU ne l'expose pas. Le DeepSeek-R1-Distill-Qwen-7B
 **est** compatible avec 0.2.85 (id présent), donc aucun modèle de remplacement n'a
 été nécessaire ; son raisonnement `<think>…</think>` est masqué à l'affichage et
-avant l'analyse JSON (`stripReasoning`).
+avant l'analyse JSON (filtre `RevemOutput` d'`output-processor.js`, qui gère aussi la balise ouvrante absente : voir `AI_OUTPUT.md`).
 
 Les identifiants ne sont **jamais construits à la main** au moment du chargement :
 `ai-host.js` choisit la variante d'après l'adaptateur puis **vérifie** qu'elle existe

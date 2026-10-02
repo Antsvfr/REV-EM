@@ -403,16 +403,8 @@
     return s.slice(0, head) + "\n[…partie centrale omise…]\n" + s.slice(s.length - Math.max(0, tail));
   }
 
-  /* DeepSeek-R1 écrit son raisonnement entre <think>…</think> : ce n'est ni à
-     afficher tel quel ni à donner au parseur JSON. Tolère un bloc ouvert (flux
-     en cours) : tout ce qui suit <think> est masqué tant qu'il n'est pas fermé. */
-  function stripReasoning(text){
-    var s = String(text || "");
-    s = s.replace(/<think>[\s\S]*?<\/think>/gi, "");
-    var open = s.search(/<think>/i);
-    if(open >= 0) s = s.slice(0, open);
-    return s.replace(/^\s+/, "");
-  }
+  /* (Le filtre du raisonnement <think> de DeepSeek-R1 n'est plus ici : il vit dans output-processor.js — `RevemOutput` —, qui gère
+     aussi la balise ouvrante manquante, les balises coupées entre deux chunks et l'affichage en flux. Voir AI_OUTPUT.md.) */
 
   /* ── 8. DIAGNOSTIC COPIABLE (aucun secret) ──────────────────────────────── */
   function redact(str){
@@ -503,7 +495,7 @@
     nextFallback: nextFallback, migrateLegacyChoice: migrateLegacyChoice, UNSTABLE_AFTER: UNSTABLE_AFTER,
     tierStatus: tierStatus,
     estimateTokens: estimateTokens, promptBudgetTokens: promptBudgetTokens, maxTokensFor: maxTokensFor,
-    compactHistory: compactHistory, clipMiddle: clipMiddle, stripReasoning: stripReasoning,
+    compactHistory: compactHistory, clipMiddle: clipMiddle,
     redact: redact, buildDiagnosticReport: buildDiagnosticReport,
     resetAiStorage: resetAiStorage,
     _clone: clone,

@@ -153,8 +153,8 @@ de les mettre dans le premier message utilisateur — c'est ce qui est fait.
 Réutilise `state.aiTier` et le ModelManager existants : **aucun** second sélecteur, **aucun**
 second moteur, **aucun** chargement déclenché par une question. Réponse maximale par palier et
 profondeur (`MAX_TOKENS`) : Rapide 200 / 420 / 700 ; Avancé 260 / 600 / 1 000 ; Expert
-900 / 1 300 / 1 700 (le raisonnement `<think>` consomme des jetons avant la réponse, masqué par
-`stripReasoning`). Question complexe en Rapide → **suggestion discrète** « pourrait bénéficier
+1 000 / 1 600 / 2 200 depuis `AI_OUTPUT.md` (le raisonnement `<think>` consomme des jetons avant la réponse, masqué par
+`RevemOutput`). Question complexe en Rapide → **suggestion discrète** « pourrait bénéficier
 du mode Avancé » (jamais de changement automatique) ; Avancé + question très difficile en
 maths/stats/finance → suggestion « Expert ».
 

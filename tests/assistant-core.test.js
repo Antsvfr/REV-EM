@@ -199,7 +199,7 @@ const PREV = { hasAnswer: true };
   check("« donne-moi un exemple » : le sujet (VAN) est rappelé", /Topic: VAN/.test(g.messages[g.messages.length - 1].content));
   const standalone = A.buildGeneralPrompt({ question: "Qu'est-ce que l'EBITDA ?", analysis: an("Qu'est-ce que l'EBITDA ?", PREV), history, tier: "avance" });
   eq("question indépendante : AUCUN historique (system + question)", standalone.messages.length, 2);
-  check("question indépendante : plus courte que l'ancien premier message (352 jetons mesurés avant)", standalone.meta.promptTokens < 300, standalone.meta.promptTokens);
+  check("question indépendante : plus courte que l'ancien premier message (352 jetons mesurés avant)", standalone.meta.promptTokens < 352, standalone.meta.promptTokens);   // l'instruction de langue (qualité du français) ajoute ≈ 30 jetons : toujours plus court qu'avant
   // calcul : le bloc vérifié est dans le prompt, température basse
   const calcQ = "1 000 € placés à 5 % par an pendant 4 ans : combien obtient-on ?";
   const calc = A.localCalculation(calcQ, "fr");

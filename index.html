@@ -5276,6 +5276,9 @@
      Les DONNÉES sont des fichiers JSON versionnés (ai-knowledge/), chargés à la demande. Ni DOM, ni state, ni WebLLM, ni réseau.
      Voir AI_KNOWLEDGE.md et ai-knowledge/README.md. -->
 <script src="knowledge-engine.js"></script>
+<!-- AI OUTPUT PROCESSOR, logique PURE : du texte BRUT de WebLLM à la réponse propre (filtre du raisonnement <think> en flux, balises
+     orphelines, jetons spéciaux, boucles, doublons évidents, typographie, validation). Ni DOM, ni state. Voir AI_OUTPUT.md. -->
+<script src="output-processor.js"></script>
 <!-- Logique PURE des questions libres (mode Général) : analyse, stratégie, contexte, prompt, calcul local, états, erreurs.
      Ni DOM, ni state, ni WebLLM. Voir AI_CHAT.md. -->
 <script src="assistant-core.js"></script>
@@ -15398,7 +15401,7 @@ let aiTransportPromise = null;
 let aiForceMain = false;             // vrai seulement après PREUVE que le worker n'a pas WebGPU
 let aiReqSeq = 0;
 let aiInit = null;                   // { id, resolve } — le chargement en cours
-let aiGen = null;                    // { id, text, resolve, reject, onText, poll } — la génération en cours
+let aiGen = null;                    // { id, asm (assembleur de sortie : le texte BRUT y vit), resolve, reject, onText, poll } — la génération en cours
 const aiPending = new Map();         // id → { resolve, timer } pour GET_STATUS / RESET_AI_CACHE
 let aiAutoRestoreDone = false;
 let aiProgressRaf = 0;
@@ -15504,8 +15507,11 @@ function aiOnHostMessage(m){
       break;
     case "GENERATION_TOKEN":
       if(aiGen && aiGen.id === m.id){
-        aiGen.text += m.delta;
-        if(aiGen.onText) aiGen.onText({ text: AIE.stripReasoning(aiGen.text) });
+        /* Un DELTA (WebLLM : choices[0].delta.content) est confié à l'assembleur : filtre du raisonnement, balises coupées entre deux
+           chunks, jetons spéciaux. Le texte BRUT n'est jamais affiché. */
+        const r = aiGen.asm.push(m.delta);
+        if(r.changed && aiGen.onText) aiGen.onText({ text: aiGen.asm.visible(), phase: aiGen.asm.state() });
+        if(r.loop && !aiGen.loopAborted){ aiGen.loopAborted = true; aiLog("Boucle de génération détectée", "arrêt de la génération"); aiAbortGeneration(); }
       }
       break;
     case "GENERATION_COMPLETE":
@@ -15513,7 +15519,8 @@ function aiOnHostMessage(m){
         const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll);
         state.aiPerf = { ttftMs: m.ttftMs, totalMs: m.totalMs, chars: m.chars, tier: m.tier, finishReason: m.finishReason || null, at: Date.now() };
         aiLog("Génération terminée", "premier jeton " + Math.round(m.ttftMs || 0) + " ms · total " + m.totalMs + " ms");
-        g.resolve({ text: AIE.stripReasoning(g.text), raw: g.text, aborted: !!m.aborted, ttftMs: m.ttftMs, totalMs: m.totalMs, finishReason: m.finishReason || null });
+        const proc = g.asm.finish({ finishReason: m.finishReason || null, aborted: !!m.aborted, loopAborted: !!g.loopAborted });
+        g.resolve({ text: proc.text, raw: proc.raw, proc, loopAborted: !!g.loopAborted, aborted: !!m.aborted, ttftMs: m.ttftMs, totalMs: m.totalMs, finishReason: m.finishReason || null });
       }
       break;
     case "GENERATION_ERROR":
@@ -16074,7 +16081,9 @@ function aiHostGenerate(turns, { task, temperature, topP, maxTokens: maxTokensOp
     const compact = AIE.compactHistory(turns.map(t0 => ({ role: t0.role, content: t0.content })), budgetTokens ? { budgetTokens } : { maxNewTokens: maxTokens });
     if(compact.dropped) aiLog("Historique compacté", compact.dropped + " échange(s) omis");
     const id = "gen-" + (++aiReqSeq);
-    const g = aiGen = { id, text: "", resolve, reject, onText };
+    /* « chat » : pipeline complet (typographie, boucles, doublons) ; les autres tâches (cours, JSON…) : filtre du raisonnement et des balises SEULEMENT. */
+    const tk = AIE.TIERS[state.aiTier];
+    const g = aiGen = { id, asm: RevemOutput.createAssembler({ reasoning: !!(tk && tk.reasoning), mode: (task || "chat") === "chat" ? "text" : "light" }), loopAborted: false, resolve, reject, onText };
     if(signal) g.poll = setInterval(() => { if(signal.cancelled) aiAbortGeneration(); }, 150);
     aiLog("Génération commencée", "≈" + compact.tokens + " jetons de prompt");
     aiTransport.send({ type: "GENERATE", id, messages: compact.turns, temperature: typeof temperature === "number" ? temperature : 0.6, topP: typeof topP === "number" ? topP : undefined, maxTokens });
@@ -16088,7 +16097,7 @@ async function webllmChat(turns, { onText, signal, task, temperature, topP, maxT
   if(!aiEngineReady()) throw new Error("Le modèle n'est pas chargé.");
   const res = await aiHostGenerate(turns, { task: task || "chat", temperature: temperature, topP, maxTokens, budgetTokens, onText, signal });
   aiLog("Réponse reçue", res.text.length + " caractères");
-  return { text: res.text, aborted: !!res.aborted, finishReason: res.finishReason || null, ttftMs: res.ttftMs, totalMs: res.totalMs };
+  return { text: res.text, proc: res.proc, loopAborted: !!res.loopAborted, aborted: !!res.aborted, finishReason: res.finishReason || null, ttftMs: res.ttftMs, totalMs: res.totalMs };
 }
 
 async function webllmJsonChat(turns, { signal } = {}){
@@ -16724,7 +16733,7 @@ function knowledgeEnsure(){
 }
 const aiWithTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
 
-function aiChatFresh(){ return { phase: "IDLE", topic: "", domain: "", lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
+function aiChatFresh(){ return { phase: "IDLE", topic: "", domain: "", qualityNote: null, lastOutput: null, lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
 /* La conversation en cours est-elle une conversation « Mode Général » ? (le premier message la marque ;
    tout autre mode crée un fil sans cette marque : aucune réinitialisation à faire ailleurs.) */
 function aiIsGeneral(){ const th = state.aiThread; return !!(RAssist && th.length && th[0].meta && th[0].meta.general); }
@@ -16738,6 +16747,7 @@ const AI_CHAT_ERR_KEYS = {
   BUSY: "assistant.err.BUSY", UNKNOWN_ERROR: "assistant.err.UNKNOWN_ERROR", DEVICE_LOST: "ai.err.DEVICE_LOST", OUT_OF_MEMORY: "ai.err.OUT_OF_MEMORY_OR_RESOURCE_LIMIT",
   GENERATION_FAILED: "ai.err.GENERATION_FAILED", WORKER_FAILED: "ai.err.WORKER_FAILED", ENGINE_INIT_FAILED: "ai.err.ENGINE_INIT_FAILED",
   WEBGPU_UNAVAILABLE: "ai.err.WEBGPU_UNAVAILABLE", MODEL_DOWNLOAD_FAILED: "ai.err.MODEL_DOWNLOAD_FAILED",
+  REASONING_TRUNCATED: "assistant.err.REASONING_TRUNCATED", OUTPUT_LOOP: "assistant.err.OUTPUT_LOOP",
 };
 /* Un message SIMPLE pour l'utilisateur ; les détails techniques restent dans le diagnostic (jamais le texte brut de l'erreur). */
 function aiChatErrorText(code){ const k = AI_CHAT_ERR_KEYS[code]; return k ? t(k) : t("assistant.err.UNKNOWN_ERROR"); }
@@ -16750,6 +16760,12 @@ function aiGeneralPrevious(history){
 }
 /* Affichage du flux : au plus une mise à jour du DOM par image (rAF), jamais une par jeton. */
 let aiPaintRaf = 0, aiPaintText = "";
+/* Nouvelle tentative : le tampon d'AFFICHAGE de la tentative précédente est abandonné (jamais « ancien partiel + nouvelle réponse »). */
+function aiPaintReset(){
+  aiPaintText = ""; if(aiPaintRaf){ cancelAnimationFrame(aiPaintRaf); aiPaintRaf = 0; }
+  const el = document.getElementById("ai-stream");
+  if(el) el.innerHTML = `<span class="ai-loading" style="padding:0;"><span class="ai-spinner"></span>${escapeHtml(t("assistant.thinking"))}</span>`;
+}
 function aiGeneralPaint(text){
   aiPaintText = text;
   if(aiPaintRaf) return;
@@ -16790,6 +16806,8 @@ async function aiGeneralAsk(text, opts){
   const question = userMsg ? userMsg.content : q;
   const uiLang = (window.LyonI18n && LyonI18n.getLang) ? LyonI18n.getLang() : "fr";
   const analysis = RAssist.analyzeQuestion(question, { previous: aiGeneralPrevious(history), lang: chat.lang || uiLang, forced: opts.forced });
+  // contenu étranger demandé par l'élève (« que signifie 衡量 ? », traduction…) : jamais signalé comme une contamination
+  const allowForeign = RevemOutput.foreignAllowed(question, history.filter(m => m.role === "user").map(m => m.content));
   // une suite (« donne-moi un exemple », « et si… ») reste dans le domaine de la conversation : mêmes consignes de domaine, mêmes connaissances
   if(analysis.needsHistory && analysis.domain === "general" && chat.domain) analysis.domain = chat.domain;
   const local = RAssist.localAnswer(analysis);
@@ -16876,7 +16894,7 @@ async function aiGeneralAsk(text, opts){
     }catch(e){
       err = e;
       const cls = RAssist.classifyChatError(e);
-      if(cls.shrinkContext && attempt === 0 && !signal.cancelled){ windowTokens = Math.floor(windowTokens * 0.65); prompt = build(); diag.retriedSmaller = true; continue; }
+      if(cls.shrinkContext && attempt === 0 && !signal.cancelled){ windowTokens = Math.floor(windowTokens * 0.65); prompt = build(); diag.retriedSmaller = true; aiPaintReset(); continue; }
       break;
     }
   }
@@ -16894,18 +16912,28 @@ async function aiGeneralAsk(text, opts){
   if(res) Object.assign(diag, { ttftMs: res.ttftMs === undefined ? null : Math.round(res.ttftMs || 0), genMs: res.totalMs === undefined ? null : Math.round(res.totalMs || 0), finishReason: res.finishReason || null });
 
   const answer = res ? RAssist.cleanAnswer(res.text) : "";
-  if(signal.cancelled || (res && res.aborted)){
+  /* CONTRÔLE QUALITÉ DÉTERMINISTE (jamais un second appel au modèle) : il DÉTECTE, il ne réécrit pas le sens. */
+  const proc = res && res.proc;
+  const verdict = proc ? RevemOutput.validate(Object.assign({}, proc, { text: answer }), { lang: analysis.lang, allowForeign, finishReason: res.finishReason, maxTokens: prompt.params.maxTokens, detectLanguage: RAssist.detectLanguageStrict }) : null;
+  if(proc) Object.assign(diag, { preferredLanguage: analysis.lang, langSource: analysis.langSource, allowForeign, outputProcessingMs: proc.processingMs, rawChars: proc.rawChars, cleanChars: answer.length, reasoningChars: proc.reasoningChars,
+                                 orphanThink: proc.flags.orphanClose, tagsRemoved: proc.flags.tagsRemoved, specialTokensRemoved: proc.flags.specialTokensRemoved, duplicatesRemoved: proc.flags.duplicatesRemoved,
+                                 loop: proc.flags.loop, cumulativeChunks: proc.flags.cumulativeChunks, outputIssues: verdict.codes });
+  chat.lastOutput = proc ? { raw: proc.raw, clean: answer } : null;       // en MÉMOIRE seulement (diagnostic) : jamais écrit en stockage, jamais envoyé à Supabase, jamais affiché
+  chat.qualityNote = null;
+  const userAbort = signal.cancelled || (res && res.aborted && !res.loopAborted);
+  if(userAbort){
     if(answer.trim()) thread.push({ role: "assistant", content: answer, meta: { aborted: true, intent: analysis.intent } });
     aiChatPhase("ABORT");
   } else if(err || !answer.trim()){
-    const code = err ? RAssist.classifyChatError(err).code : "EMPTY_RESPONSE";
+    const code = err ? RAssist.classifyChatError(err).code : (proc && proc.flags.loop ? "OUTPUT_LOOP" : (proc && proc.flags.truncatedThinking ? "REASONING_TRUNCATED" : "EMPTY_RESPONSE"));
     diag.errorCode = code; chat.error = { code };
     state.aiError = aiChatErrorText(code);
     aiChatPhase("FAIL");
     aiLog("Réponse impossible", code);
   } else {
-    thread.push({ role: "assistant", content: answer, meta: { intent: analysis.intent, depth: analysis.depth, topic: topic, finishReason: diag.finishReason || null } });
+    thread.push({ role: "assistant", content: answer, meta: { intent: analysis.intent, depth: analysis.depth, topic: topic, finishReason: diag.finishReason || null } });   // la version NETTOYÉE : jamais le brut
     chat.truncated = diag.finishReason === "length";
+    chat.qualityNote = verdict && verdict.codes.indexOf("FOREIGN_SCRIPT") >= 0 ? "foreign" : (verdict && verdict.codes.indexOf("LANG_MISMATCH") >= 0 ? "lang" : null);
     chat.suggestions = (chat.truncated ? ["continue"] : []).concat(RAssist.suggestFollowUps(analysis, thread.slice(0, -1))).slice(0, 3);
     chat.tierHint = RAssist.suggestTier(analysis, tier);
     state.aiHistory.push({ type: "personal", typeLabel: t("assistant.panel_title"), prompt: question, contextLabel: t("assistant.mode_general"), text: answer, date: new Date().toISOString() });
@@ -16960,6 +16988,8 @@ async function revemKnowledgeCompare(question, opts){
   return out;
 }
 window.revemKnowledgeCompare = revemKnowledgeCompare;
+/* DIAGNOSTIC (console) : le texte BRUT et le texte PROPRE de la dernière réponse, pour les comparer. En mémoire seulement. */
+window.revemLastRawOutput = () => (state.aiChat && state.aiChat.lastOutput) || null;
 
 function aiGeneralStop(){ if(state.aiBusy) aiCancelGeneration(); }
 function aiGeneralRegenerate(){ return aiGeneralAsk(null, { regenerate: true }); }
@@ -17001,6 +17031,7 @@ function aiGeneralActionsHtml(){
   if(last && last.role === "assistant" && !(last.meta && last.meta.local)){
     if(last.meta && last.meta.aborted) html += `<div class="ai-bubble-note">${escapeHtml(t("assistant.aborted"))}</div>`;
     if(c.truncated) html += `<div class="ai-bubble-note">${escapeHtml(t("assistant.truncated"))}</div>`;
+    if(c.qualityNote) html += `<div class="ai-bubble-note" role="note">${escapeHtml(t("assistant.note_" + c.qualityNote))}</div>`;
     html += `<div class="ai-msg-actions" role="group" aria-label="${escapeHtml(t("assistant.actions_aria"))}">
       <button type="button" class="btn-text" id="ai-copy-btn">${escapeHtml(t(c.copied ? "assistant.copied" : "assistant.copy"))}</button>
       <button type="button" class="btn-text" id="ai-regen-btn">${escapeHtml(t("assistant.regenerate"))}</button>
@@ -17041,6 +17072,8 @@ function aiChatDiagHtml(){
     <div>knowledgeContext : ${v(d.knowledgeContextTokens, " tokens≈")} · used ${escapeHtml((d.knowledgeUsed || []).join(", ") || "none")}${(d.knowledgeCompacted || []).length ? " (compact: " + escapeHtml(d.knowledgeCompacted.join(", ")) + ")" : ""}${(d.knowledgeDropped || []).length ? " · dropped " + escapeHtml(d.knowledgeDropped.join(", ")) : ""}${(d.knowledgeWithheld || []).length ? " · withheld " + escapeHtml(d.knowledgeWithheld.join(", ")) : ""} · retrievalTime : ${v(d.retrievalMs, " ms")}</div>
     <div>llmCalls : ${d.llmCalls}${d.retriedSmaller ? " (retry with smaller context)" : ""} · localAnswer : ${escapeHtml(v(d.localAnswer))} · localCalc : ${escapeHtml(v(d.localCalc))}</div>
     <div>timePreparing : ${v(d.prepMs, " ms")} · TTFT(engine) : ${v(d.ttftMs, " ms")} · TTFT(page) : ${v(d.ttftPageMs, " ms")} · generationTime : ${v(d.genMs, " ms")}</div>
+    <div>output : raw ${v(d.rawChars)} → clean ${v(d.cleanChars)} chars · reasoningHidden ${v(d.reasoningChars)} · orphanThink ${escapeHtml(v(d.orphanThink))} · tagsRemoved ${v(d.tagsRemoved)} · specialTokens ${v(d.specialTokensRemoved)} · duplicatesRemoved ${v(d.duplicatesRemoved)} · loop ${escapeHtml(v(d.loop))} · cumulativeChunks ${v(d.cumulativeChunks)}</div>
+    <div>language : preferred ${escapeHtml(v(d.preferredLanguage))} (${escapeHtml(v(d.langSource))}) · allowForeign ${escapeHtml(v(d.allowForeign))} · issues : ${escapeHtml((d.outputIssues || []).join(", ") || "none")} · outputProcessingTime : ${v(d.outputProcessingMs, " ms")}</div>
     <div>finishReason : ${escapeHtml(v(d.finishReason))} · errorCode : ${escapeHtml(v(d.errorCode))}</div>
   </div>`;
 }

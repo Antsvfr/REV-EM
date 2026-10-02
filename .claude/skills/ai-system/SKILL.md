@@ -149,3 +149,11 @@ gardent leur flux historique. Pas de lookbehind regex dans le code chargé par l
 `ai-knowledge/index.json` (guide : `ai-knowledge/README.md`), **sans toucher au moteur** ; voir aussi le skill
 `revem-knowledge-quality`. Ne jamais mettre la connaissance REV-EM dans Supabase ni la mêler à « Mes cours ».
 
+**Sortie du modèle (voir `AI_OUTPUT.md`).** Le texte BRUT de WebLLM n'est jamais « prêt à afficher » : tout delta passe par un
+assembleur de `output-processor.js` (`RevemOutput`) dans `aiOnHostMessage` — filtre du raisonnement `<think>` par état (balise
+ouvrante absente, orpheline, coupée entre deux chunks), jetons spéciaux, boucle (arrêt de la génération), doublons évidents,
+typographie, `validate()`. WebLLM 0.2.85 n'a PAS de `reasoning_content` : le raisonnement est dans `delta.content`. L'historique et
+`aiHistory` reçoivent la version NETTOYÉE ; le brut reste en mémoire (`revemLastRawOutput()`), jamais stocké ni synchronisé. Les
+alphabets étrangers sont DÉTECTÉS, jamais supprimés. Pas de second LLM pour « corriger ». Verrou de langue : instruction explicite >
+langue de la question > langue verrouillée > interface (`detectLanguageRequest`, suite « en français » = réécriture).
+

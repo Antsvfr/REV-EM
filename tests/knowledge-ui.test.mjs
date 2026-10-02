@@ -222,7 +222,7 @@ try {
 
   await scenario("10. arrêt pendant la préparation et pendant la génération : propre", async () => {
     const { ctx, page } = await open({ mode: "demo" });
-    await script(page, [{ text: "mot ".repeat(200), startMs: 30 }]);
+    await script(page, [{ text: Array.from({ length: 200 }, (_, i) => "mot" + i + " ").join(""), startMs: 30 }]);
     await page.fill("#assistant-query-input", "Qu'est-ce que la VAN ?"); await page.click("#assistant-query-btn");
     await page.waitForSelector("#ai-stop-btn", { timeout: 4000 });
     await page.waitForTimeout(150);

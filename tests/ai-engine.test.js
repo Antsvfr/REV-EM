@@ -210,9 +210,7 @@ scenario("Prompts : contexte minimal, historique compact");
   const small = [{ role: "user", content: "a" }, { role: "assistant", content: "b" }, { role: "user", content: "c" }];
   eq("un court échange n'est pas modifié", AI.compactHistory(small).turns, small);
   check("limites de jetons par tâche définies", AI.maxTokensFor("json") > AI.maxTokensFor("detect") && AI.maxTokensFor("inconnu") === AI.maxTokensFor("chat"));
-  eq("raisonnement DeepSeek masqué (bloc fermé)", AI.stripReasoning("<think>je réfléchis</think>Voici la réponse"), "Voici la réponse");
-  eq("raisonnement masqué (bloc encore ouvert pendant le flux)", AI.stripReasoning("<think>je réfl"), "");
-  eq("texte sans raisonnement inchangé", AI.stripReasoning("Bonjour"), "Bonjour");
+  check("le filtre du raisonnement a quitté ai-engine.js (désormais RevemOutput, testé dans output-processor.test.js)", AI.stripReasoning === undefined);
 }
 
 scenario("Diagnostic copiable : aucun secret");
