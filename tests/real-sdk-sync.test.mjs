@@ -61,7 +61,38 @@ async function device(mock, label) {
   page.on("console", (m) => { const t = m.text(); if (/REV-EM Sync/.test(t)) logs.push(t); if (/eyJ|access_token|refresh_token|password/i.test(t) && !/PROFILE/.test(t)) errors.push("SECRET DANS LA CONSOLE : " + t.slice(0, 80)); });
   await page.goto(APP);
   await page.waitForTimeout(1100);
+  await clearMigratedSubject(page);
   return { ctx, page, errors, logs, label };
+}
+/* migrateAnalyseMarcheToUserSubject (migration, au premier chargement, de
+   l'ancienne matière intégrée « Analyse de marché » vers une matière réelle
+   dans state.userSubjects/userChapters — voir index.html) se déclenche à
+   CHAQUE loadAllData(), donc à chaque connexion/déconnexion. Cette suite
+   compare des tableaux exacts de matières par compte : on neutralise la
+   fonction (comme toute fonction déclarée au premier niveau d'un script
+   classique, elle est aussi accessible, et réassignable, en
+   window.migrateAnalyseMarcheToUserSubject — même liaison) dès le premier
+   chargement, pour toute la durée de vie de CETTE page — un vrai
+   page.reload() l'exécute à nouveau depuis zéro, donc reloadDevice() la
+   neutralise de nouveau juste après. La synchronisation réelle de
+   « Analyse de marché » elle-même est vérifiée par
+   tests/analyse-marche-migration.test.mjs. */
+async function clearMigratedSubject(page){
+  await page.evaluate(() => {
+    window.migrateAnalyseMarcheToUserSubject = () => {};
+    const beforeS = state.userSubjects.length, beforeC = state.userChapters.length;
+    state.userSubjects = state.userSubjects.filter(s => s.id !== "analyse-marche");
+    state.userChapters = state.userChapters.filter(c => c.subjectId !== "analyse-marche");
+    if(state.userSubjects.length !== beforeS) saveUserSubjects();
+    if(state.userChapters.length !== beforeC) saveUserChapters();
+  });
+}
+async function reloadDevice(d, opts){
+  const { wait, ...reloadOpts } = opts || {};
+  await d.page.reload(reloadOpts);
+  await d.page.waitForTimeout(wait || 1200);
+  await clearMigratedSubject(d.page);
+  await d.page.waitForTimeout(900);
 }
 async function login(d, email, wait) {
   await d.page.evaluate(() => switchTab("myspace"));
@@ -70,12 +101,14 @@ async function login(d, email, wait) {
   await d.page.fill("#account-password", PASSWORD);
   await d.page.click("#account-form button[type=submit]");
   await d.page.waitForTimeout(wait || 2500);
+  await clearMigratedSubject(d.page);
 }
 async function logout(d, wait) {
   await d.page.evaluate(() => switchTab("myspace"));
   await d.page.waitForTimeout(250);
   await d.page.click("#account-signout-btn");
   await d.page.waitForTimeout(wait || 2200);
+  await clearMigratedSubject(d.page);
 }
 const addSubject = (d, id, name) => d.page.evaluate(([id, name]) => {
   state.userSubjects.push({ id, name, semesterId: (SEMESTERS[0] || {}).id, color: "#E31C3D", icon: "", description: "" });
@@ -107,7 +140,17 @@ try {
     await login(A, EMAIL_A); await addSubject(A, "s_a", "TEST CLOUD A"); await A.page.waitForTimeout(2500);
 
     const B = await device(mock, "B");
-    eq("B est réellement vierge", await B.page.evaluate(() => [state.userSubjects.length, Object.keys(localStorage).filter(k => k.includes("user-subjects")).length]), [0, 0]);
+    /* « Vierge » veut dire : rien de l'appareil A, pas une absence totale de
+       clé. Au tout premier chargement, migrateAnalyseMarcheToUserSubject()
+       (voir index.html) a déjà écrit une fois "user-subjects" avant que
+       device() n'ait eu la main pour neutraliser la fonction — c'est elle
+       que la clé contient, jamais le travail de A : on vérifie l'isolation
+       réelle, pas la présence d'une clé que la migration crée pour tout le
+       monde dès le premier chargement, invité compris. */
+    eq("B est réellement vierge", await B.page.evaluate(() => {
+      const keys = Object.keys(localStorage).filter(k => k.includes("user-subjects"));
+      return [state.userSubjects.length, keys.every(k => !localStorage.getItem(k).includes("TEST CLOUD A"))];
+    }), [0, true]);
     await login(B, EMAIL_A);
     eq("même identifiant de compte", await B.page.evaluate(() => LyonAuth.state.user.id), mock.userId(EMAIL_A));
     eq("état REV-EM reconstruit", await subjects(B), ["TEST CLOUD A"]);
@@ -132,7 +175,7 @@ try {
     eq("B a Finance", await subjects(B), ["Finance"]);
     await addSubject(B, "s_mkt", "Marketing"); await B.page.waitForTimeout(2500);
     eq("la base a les deux", baseNames(mock, EMAIL_A), ["Finance", "Marketing"]);
-    await A.page.reload(); await A.page.waitForTimeout(3500);
+    await reloadDevice(A, { wait: 3500 });
     eq("A (après rechargement) a les deux", await subjects(A), ["Finance", "Marketing"]);
     eq("B a toujours les deux", await subjects(B), ["Finance", "Marketing"]);
     await A.ctx.close(); await B.ctx.close();
@@ -159,7 +202,7 @@ try {
   await scenario("5. rechargement (F5) d'un compte connecté : la session et les données reviennent", async () => {
     const mock = newMock(); const A = await device(mock, "A");
     await login(A, EMAIL_A); await addSubject(A, "s_f5", "Avant F5"); await A.page.waitForTimeout(2500);
-    await A.page.reload(); await A.page.waitForTimeout(3500);
+    await reloadDevice(A, { wait: 3500 });
     eq("toujours connecté", await A.page.evaluate(() => LyonAuth.state.status), "signed-in");
     eq("données présentes", await subjects(A), ["Avant F5"]);
     check("indicateur « synchronisé »", /is-synced/.test(await A.page.evaluate(() => document.getElementById("cloud-indicator").className)));
@@ -260,6 +303,14 @@ try {
     await B.page.waitForTimeout(1600);                     // en pleine lecture (17 requêtes à 500 ms)
     check("on est bien EN COURS d'hydratation", await B.page.evaluate(() => syncState.hydrating === true), await B.page.evaluate(() => JSON.stringify(syncState)));
     await B.page.reload();
+    /* Un vrai reload() ré-exécute tout depuis zéro : la neutralisation posée
+       par device() est perdue, et la migration (voir clearMigratedSubject)
+       aurait le temps d'ajouter puis de pousser « Analyse de marché » DURANT
+       ces 4,5 s si on ne la repose pas tout de suite — exactement la course
+       que ce scénario vérifie par ailleurs (pas de corruption pendant une
+       hydratation interrompue). */
+    await B.page.waitForTimeout(300);
+    await clearMigratedSubject(B.page);
     mock.setLatency(0); await B.page.waitForTimeout(4500);
     eq("après le rechargement, les données sont là, une seule fois", await subjects(B), ["Finance"]);
     eq("la base n'a pas été touchée", baseNames(mock, EMAIL_A), ["Finance"]);
@@ -293,21 +344,19 @@ try {
   /* ======================================================================
      12. MATIÈRE INTÉGRÉE
      ====================================================================== */
-  await scenario("12. un chapitre rangé dans la matière intégrée est synchronisé, sans matière fantôme", async () => {
-    const mock = newMock(); const A = await device(mock, "A");
-    await login(A, EMAIL_A);
-    await A.page.evaluate(() => {
-      state.userChapters.push({ id: "ch_int", subjectId: "analyse-marche", num: "06", title: "Cours dans la matière intégrée", desc: "", level: "", content: "fiche", summary: "", aiQuiz: [{ uid: "u", q: "?", opts: ["a", "b"], correct: 0 }], aiFlashcards: [{ front: "f", back: "b" }], aiReviewQuestions: [], keyNotions: [], createdAt: Date.now(), updatedAt: Date.now(), markedReviewed: false, heuristicMode: false, generationPending: false });
-      saveUserChapters();
-    });
-    await A.page.waitForTimeout(2800);
-    eq("le chapitre est en base", mock.rows("chapters", mock.userId(EMAIL_A)).map(r => r.title), ["Cours dans la matière intégrée"]);
-    const B = await device(mock, "B"); await login(B, EMAIL_A);
-    eq("B retrouve le chapitre, rattaché à la matière intégrée", await B.page.evaluate(() => state.userChapters.map(c => [c.title, c.subjectId, c.aiQuiz.length, c.aiFlashcards.length])), [["Cours dans la matière intégrée", "analyse-marche", 1, 1]]);
-    const txt = await ui(B);
-    eq("« Analyse de marché » n'apparaît qu'UNE fois dans Mes matières", (txt.match(/Analyse de marché/g) || []).length, 1);
-    eq("aucune matière utilisateur fantôme", await B.page.evaluate(() => state.userSubjects.length), 0);
-    await A.ctx.close(); await B.ctx.close();
+  /* 12. RETIRÉ — cette matière n'existe plus : « Analyse de marché » était le
+     SEUL sujet builtin:true du produit (SUBJECTS). Depuis sa conversion
+     (migrateAnalyseMarcheToUserSubject, voir index.html), SUBJECTS est vide :
+     plus aucune matière n'est intégrée, donc plus aucun chapitre ne peut
+     emprunter le mécanisme « miroir » (BUILTIN_MIRROR, user-data.js) que ce
+     scénario vérifiait — il n'a simplement plus de sujet réel pour s'exercer
+     dans CE produit. Le mécanisme lui-même reste couvert, intact, au niveau
+     moteur : tests/user-data.test.mjs garde son propre tableau BUILTINS de
+     test (synthétique, indépendant de index.html) précisément pour continuer
+     à l'exercer. Si une matière intégrée réapparaît un jour, réintroduire ce
+     scénario avec son id réel. */
+  await scenario("12. (retiré) un chapitre rangé dans une matière intégrée — mécanisme encore testé au niveau moteur, voir tests/user-data.test.mjs", async () => {
+    console.log("  SKIP — plus aucune matière builtin dans ce produit (voir commentaire ci-dessus)");
   });
 
   /* ======================================================================

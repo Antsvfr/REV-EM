@@ -29,12 +29,22 @@ async function scenario(name, fn) {
 }
 
 /* Le jeu de matières du cahier des charges, créées par la vraie fonction du
-   produit (saveUserSubjects) — pas une seconde liste inventée pour le test. */
+   produit (saveUserSubjects) — pas une seconde liste inventée pour le test.
+   « Analyse de marché » est ajoutée explicitement : avant la conversion de
+   cette matière (voir migrateAnalyseMarcheToUserSubject()), elle vivait dans
+   le tableau SUBJECTS, séparé et toujours présent — ce test vérifiait déjà
+   qu'une matière "déjà là" se mélange correctement aux matières créées par
+   l'utilisateur dans la recherche. Depuis la conversion, elle vit au même
+   endroit que les autres (state.userSubjects) ; ce SEED() remplaçant ce
+   tableau en entier, on la réinjecte ici pour garder ce scénario. */
 const SEED = () => {
   const names = ["Marketing", "Management", "Mathématiques", "Économie", "Finance", "Management commercial"];
   state.userSubjects = names.map((name, i) => ({
     id: "s" + i, name, semesterId: (SEMESTERS[0] || {}).id, color: "#E31C3D",
   }));
+  state.userSubjects.push({
+    id: "analyse-marche", name: "Analyse de marché", semesterId: (SEMESTERS[0] || {}).id, color: "#E31C3D",
+  });
   saveUserSubjects();
   libGoto("subjects");
   switchTab("library");

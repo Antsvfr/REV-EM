@@ -6749,14 +6749,17 @@ function subjectMark(subject){
 
 function findSubject(id){ return allSubjects().find(s => s.id === id) || null; }
 
-/* Chapitres "natifs" (CHAPTERS) rattachés à une matière + chapitres créés par l'utilisateur.
-   Les CHAPTERS "natifs" ne comptent que si la matière est ENCORE intégrée : une matière qui a
-   cessé de l'être (voir migrateAnalyseMarcheToUserSubject()) garde son id, mais ses chapitres
-   d'origine restent dans CHAPTERS pour l'examen/la révision express/la maîtrise globale — ils
-   ne doivent plus apparaître une deuxième fois dans la bibliothèque de cette matière. */
+/* Chapitres "natifs" (CHAPTERS) dont la matière est ENCORE intégrée : une matière qui a cessé
+   de l'être (voir migrateAnalyseMarcheToUserSubject()) garde son id dans CHAPTERS pour l'examen,
+   la révision express et la maîtrise globale (voir globalMetrics()), qui lisent CHAPTERS/QUESTIONS
+   directement et ne passent jamais par cette fonction — mais ses chapitres d'origine ne doivent
+   plus apparaître ailleurs (Bibliothèque, Hub, recherche...), où ils feraient doublon avec leur
+   copie migrée dans state.userChapters. */
+function activeBuiltinChapters(){
+  return CHAPTERS.filter(c => { const s = findSubject(c.subjectId); return s && s.builtin; });
+}
 function chaptersOfSubject(subjectId){
-  const subj = findSubject(subjectId);
-  const builtin = (subj && subj.builtin) ? CHAPTERS.filter(c => c.subjectId === subjectId) : [];
+  const builtin = activeBuiltinChapters().filter(c => c.subjectId === subjectId);
   const user = state.userChapters.filter(c => c.subjectId === subjectId);
   return builtin.concat(user);
 }
@@ -6768,7 +6771,7 @@ function subjectOfChapter(ch){
   if(!ch) return null;
   return findSubject(ch.subjectId);
 }
-function allChaptersFlat(){ return CHAPTERS.concat(state.userChapters); }
+function allChaptersFlat(){ return activeBuiltinChapters().concat(state.userChapters); }
 
 /* Progression d'un chapitre "utilisateur" : basée sur les tentatives de quiz/flashcards
    générés par IA, enregistrées sous la même clé que le reste du site ("chapter:<id>"). */

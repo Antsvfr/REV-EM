@@ -107,7 +107,18 @@ async function open(browser, vp) {
   await page.goto(APP);
   await page.waitForTimeout(900);
   await page.addScriptTag({ content: FAKE_AI });
-  await page.evaluate(() => { state.aiStatus = "ready"; });
+  await page.evaluate(() => {
+    state.aiStatus = "ready";
+    // Ce test vérifie le MÉCANISME d'import sur un compte neuf : il part du
+    // principe qu'aucun chapitre n'existe encore (ses assertions comptent
+    // state.userChapters.length et lisent state.userChapters[0]). Depuis la
+    // conversion de « Analyse de marché » (migrateAnalyseMarcheToUserSubject,
+    // au premier chargement), ce compte neuf a déjà 5 chapitres réels : on
+    // les retire ici, sans toucher au mécanisme de migration lui-même, pour
+    // garder ce scénario "compte vraiment vide" intact.
+    state.userSubjects = []; state.userChapters = [];
+    saveUserSubjects(); saveUserChapters();
+  });
   return { page, errors };
 }
 
