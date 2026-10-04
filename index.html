@@ -3280,7 +3280,7 @@
     display: grid; grid-template-columns: 1.35fr 1fr;
     gap: var(--space-xl); align-items: stretch;
   }
-  .dash-cardrow--pair > .dash-section-block{ margin-top: 0; display: flex; flex-direction: column; }
+  .dash-cardrow--pair > .dash-section-block{ margin-top: 0; display: flex; flex-direction: column; min-width: 0; }
 
   /* ── UN SOUS-BLOC DANS UNE CARTE ─────────────────────────────────────────
      Séparé par de l'espace et un filet haut quand il en suit un autre. Aucun
@@ -5926,18 +5926,36 @@ const WEEKLY_GOAL = 75;
    de fonctionner à l'identique. Les matières/chapitres que TU crées
    toi-même vivent dans state.userSubjects / state.userChapters,
    persistés séparément.
-   ============================================================ */
+
+   « Analyse de marché » a été la SEULE matière intégrée (builtin:true) du
+   site. Elle ne l'est plus : migrateAnalyseMarcheToUserSubject() (§5bis)
+   la convertit, au premier chargement, en une matière normale dans
+   state.userSubjects, avec ses 5 chapitres copiés dans state.userChapters
+   (fiche, quiz et flashcards réels, via RevemBank — plus de badge « Intégré »,
+   plus de moteur de quiz à part : Bibliothèque, Hub, Importer, Réviser,
+   Quiz/Quiz Flash/Flashcards par session, Questions, IA, tout fonctionne
+   désormais comme pour n'importe quelle matière créée/importée). SUBJECTS
+   reste donc vide : aucune matière n'est plus "intégrée" aujourd'hui.
+
+   CHAPTERS/QUESTIONS/FICHES/FLASHCARDS (ci-dessous) restent VOLONTAIREMENT
+   inchangés : eux seuls alimentent encore le mode Examen, la "Révision
+   express", les onglets Quiz/Flashcards "par niveau" et le score de
+   maîtrise globale du tableau de bord — aucun de ces mécanismes n'a
+   d'équivalent pour une matière utilisateur, les vider casserait l'examen
+   pour tout le site. Ce sont donc deux copies indépendantes du même
+   contenu d'origine : l'ancienne (gelée, lecture seule, pour ces écrans-là)
+   et la nouvelle (réelle, modifiable, pour la Bibliothèque). Voir le
+   rapport de migration pour le détail de ce choix. */
 const SEMESTERS = [
   { id:"semestre-1", name:"Semestre 1" },
   { id:"semestre-2", name:"Semestre 2" },
 ];
 
-// Matière intégrée (le contenu déjà présent sur le site).
-const SUBJECTS = [
-  { id:"analyse-marche", name:"Analyse de marché", icon:"", color:"#E31C3D",
-    semesterId:"semestre-1", builtin:true,
-    description:"Cours intégré au site : fondamentaux, recherche qualitative et enquête." },
-];
+/* Plus aucune matière intégrée (voir ci-dessus) : ce tableau reste défini,
+   vide, pour que tout code qui le lit (allSubjects(), diagnostic de sync…)
+   continue de fonctionner sans cas particulier si une matière intégrée
+   devait réapparaître un jour. */
+const SUBJECTS = [];
 
 const SUBJECT_COLORS = ["#E31C3D","#2C5FA8","#1B7A54","#B4740E","#7A4FB4","#0E8A8A","#C24E8A","#4A5568"];
 
@@ -6731,9 +6749,14 @@ function subjectMark(subject){
 
 function findSubject(id){ return allSubjects().find(s => s.id === id) || null; }
 
-/* Chapitres "natifs" (CHAPTERS) rattachés à une matière + chapitres créés par l'utilisateur. */
+/* Chapitres "natifs" (CHAPTERS) rattachés à une matière + chapitres créés par l'utilisateur.
+   Les CHAPTERS "natifs" ne comptent que si la matière est ENCORE intégrée : une matière qui a
+   cessé de l'être (voir migrateAnalyseMarcheToUserSubject()) garde son id, mais ses chapitres
+   d'origine restent dans CHAPTERS pour l'examen/la révision express/la maîtrise globale — ils
+   ne doivent plus apparaître une deuxième fois dans la bibliothèque de cette matière. */
 function chaptersOfSubject(subjectId){
-  const builtin = CHAPTERS.filter(c => c.subjectId === subjectId);
+  const subj = findSubject(subjectId);
+  const builtin = (subj && subj.builtin) ? CHAPTERS.filter(c => c.subjectId === subjectId) : [];
   const user = state.userChapters.filter(c => c.subjectId === subjectId);
   return builtin.concat(user);
 }
@@ -7537,6 +7560,7 @@ async function loadAllData(){
   const savedModelChoice = lsGet(KEY_AIMODEL);
   state.aiModelChoice = (savedModelChoice === "small" || savedModelChoice === "large") ? savedModelChoice : "auto";
   migrateLegacyWrongQuestions();
+  migrateAnalyseMarcheToUserSubject();
   evaluateBadges(); // rattrape les badges déjà mérités par l'historique existant
 }
 
@@ -7735,6 +7759,74 @@ function saveFlashProgress(scope, pct){
     state.flashProgress[scope] = { best: prev.best, attempts: prev.attempts+1 };
   }
   lsSet(KEY_FLASH, state.flashProgress);
+}
+
+/* ============================================================
+   5ter. CONVERSION DE L'ANCIENNE MATIÈRE INTÉGRÉE « ANALYSE DE MARCHÉ »
+   ------------------------------------------------------------
+   Migration UNIQUE et IDEMPOTENTE (sûre à rappeler à chaque chargement,
+   sur chaque compte/appareil) : si state.userSubjects ne contient pas
+   encore "analyse-marche", crée la matière réelle + ses 5 chapitres,
+   convertis depuis les données d'origine (CHAPTERS/QUESTIONS/FICHES/
+   FLASHCARDS, inchangées par ailleurs — voir le commentaire de SUBJECTS,
+   §1bis) vers la structure standard d'un chapitre utilisateur.
+
+   Les questions et flashcards passent par les normalisateurs de
+   revision-bank.js (RevemBank) — les mêmes qui transforment une sortie IA
+   en banque de quiz/flashcards : le résultat est donc STRUCTURELLEMENT
+   IDENTIQUE à celui d'un cours importé normal. Volontairement, on
+   n'applique PAS le filtre de qualité réservé au contenu généré par IA
+   (RevemBank.validateQuestion, "bonne-reponse-trop-longue" etc.) : il
+   rejetterait à tort 13 des 85 questions d'origine (des réponses longues
+   mais correctes, pas une dérive d'IA) — contraire à l'exigence « aucune
+   question perdue ». Ce contenu est déjà écrit par une personne, pas par
+   un modèle : il n'a pas besoin de ce garde-fou. */
+const ANALYSE_MARCHE_LEGACY_ID = "analyse-marche";
+/* Identifiants FIXES (jamais issus de genLibId) : stables, uniques, pour
+   que cette fonction redevienne un no-op dès sa première exécution. */
+const ANALYSE_MARCHE_CHAPTER_IDS = { ch1:"am1", ch2:"am2", ch3:"am3", ch4:"am4", ch5:"am5" };
+
+function migrateAnalyseMarcheToUserSubject(){
+  if(state.userSubjects.some(s => s.id === ANALYSE_MARCHE_LEGACY_ID)) return;    // déjà fait sur ce compte/appareil
+  const RB = window.RevemBank;
+  if(!RB) return;    // revision-bank.js pas encore chargé : rien n'est perdu, on réessaiera au prochain chargement
+  const legacyChapters = CHAPTERS.filter(c => c.subjectId === ANALYSE_MARCHE_LEGACY_ID);
+  if(!legacyChapters.length) return;    // plus rien à convertir (déjà fait, ou plus de matière intégrée du tout)
+
+  const newChapters = legacyChapters.map(old => {
+    const id = ANALYSE_MARCHE_CHAPTER_IDS[old.id] || genLibId("chap");
+    const ctx = { chapterId: id, courseId: id, subjectId: ANALYSE_MARCHE_LEGACY_ID };
+
+    // Quiz : chaque question d'origine (QUESTIONS, par thème du chapitre) → forme de banque standard.
+    const rawQuiz = QUESTIONS.filter(q => (old.themes||[]).includes(q.theme))
+      .map(q => ({ q: q.q, opts: q.opts, correct: q.correct, exp: q.exp }));
+    const quiz = RB.dedupe(rawQuiz.map(q => RB.normalizeQuestion(q, ctx)).filter(Boolean), []);
+
+    // Flashcards : FLASHCARDS[old.id] + les cartes IA déjà ajoutées sur ce chapitre intégré
+    // (state.aiCards[old.id] — voir deckCards()) : aucune des deux ne doit disparaître.
+    // parseCardBatch ne rejette que sur un défaut structurel réel (ici : aucun).
+    const rawCards = (FLASHCARDS[old.id] || []).concat((state.aiCards && state.aiCards[old.id]) || [])
+      .map(c => ({ front: c.front, back: c.back }));
+    const cards = RB.parseCardBatch(rawCards, ctx, []).items;
+
+    return {
+      id, subjectId: ANALYSE_MARCHE_LEGACY_ID,
+      num: old.num, title: old.title, desc: old.desc, level: old.level,
+      content: FICHES[old.id] || "",               // même HTML, rendu à l'identique par renderFicheContent()
+      originalText: stripHtml(FICHES[old.id] || ""),
+      summary: "", aiQuiz: quiz, aiFlashcards: cards, aiReviewQuestions: [],
+    };
+  });
+
+  state.userSubjects.push({
+    id: ANALYSE_MARCHE_LEGACY_ID, name: "Analyse de marché", icon: "", color: "#E31C3D",
+    semesterId: "semestre-1", builtin: false,
+    description: "Fondamentaux de l'étude de marché, recherche qualitative et enquête.",
+  });
+  state.userChapters.push.apply(state.userChapters, newChapters);
+  saveUserSubjects();
+  saveUserChapters();
+  logRecentAdd("Analyse de marché — matière convertie");
 }
 
 /* Récupération des anciennes erreurs (dashboard-stats.wrongQuestions)
