@@ -46,6 +46,18 @@ console.log("\n── 1. référence : le Fast Engine renonce, SymPy calcule, le
   r = await solve("limite de 1/x quand x tend vers 0"); check("1/x en 0 : n'existe pas (+∞ à droite, −∞ à gauche)", /droite = \+∞/.test(txt(r)) && /gauche = -∞/.test(txt(r)), txt(r));
   r = await solve("dérivée de |x|"); eq("(|x|)′ = sign(x)", txt(r), "sign(x)");
   r = await solve("dérivée seconde de x^4"); check("dérivée seconde de x⁴ = 12x²", txt(r) === "12*x^2" || txt(r) === "12x^2", txt(r));
+  r = await solve("résous ln(x)+ln(x-1)=ln(6)"); eq("ln x + ln(x−1) = ln 6 : la racine PARASITE −2 est écartée → x = 3 seul", [txt(r), r.status, r.notes.indexOf("extraneous-removed") >= 0], ["x = 3", ST.VERIFIED_NUMERICALLY, true]);
+  r = await solve("résous sqrt(x+1)=x-1"); eq("√(x+1) = x−1 → x = 3 (pas de racine parasite)", txt(r), "x = 3");
+  r = await solve("résous x^2+y^2=25 et x-y=1"); check("système NON linéaire : les 2 solutions, chacune réinjectée", /x = -3, y = -4/.test(txt(r)) && /x = 4, y = 3/.test(txt(r)) && r.status === ST.VERIFIED_NUMERICALLY && r.notes.indexOf("several-solutions") >= 0, [txt(r), r.status]);
+  r = await solve("résous x*y=6 et x+y=5"); check("x·y=6, x+y=5 → (2,3) et (3,2)", /x = 2, y = 3/.test(txt(r)) && /x = 3, y = 2/.test(txt(r)), txt(r));
+  r = await solve("valeurs propres de [[2,0,0],[0,3,4],[0,4,9]]"); eq("valeurs propres 3×3 (1, 2, 11) : contrôle indépendant trace/déterminant", [r.status, /λ = 1/.test(txt(r)) && /λ = 11/.test(txt(r)) && /λ = 2/.test(txt(r))], [ST.VERIFIED_NUMERICALLY, true]);
+  r = await solve("valeurs propres de [[2,1,0],[0,2,0],[0,0,3]]"); eq("valeur propre double : 2 (×2) et 3", [r.status, /λ = 2 \(×2\)/.test(txt(r))], [ST.VERIFIED_NUMERICALLY, true]);
+  r = await solve("intégrale de 1 à oo de 1/x^2 dx"); eq("∫₁^∞ dx/x² = 1 : impropre, confirmée par changement de variable", [txt(r), r.status], ["1", ST.VERIFIED_NUMERICALLY]);
+  r = await solve("intégrale de -oo à oo de exp(-x^2) dx"); eq("∫₋∞^∞ e^(−x²) dx = √π", [txt(r), r.status], ["sqrt(pi)", ST.VERIFIED_NUMERICALLY]);
+  r = await solve("intégrale de 1 à oo de 1/x dx"); check("∫₁^∞ dx/x diverge : jamais un nombre fini « vérifié »", r.ok === false || /oo|∞/.test(txt(r)) || r.status !== ST.VERIFIED_NUMERICALLY, [r.ok, r.status, txt(r)]);
+  r = await solve("factorise x^2+1 sur les complexes"); check("x²+1 = (x−i)(x+i) sur ℂ", /\(x - i\)/.test(txt(r)) && /\(x \+ i\)/.test(txt(r)), txt(r));
+  r = await solve("simplifie sin(x)^2+cos(x)^2"); eq("sin²+cos² = 1 (équivalence numérique, étiquetée)", [txt(r), r.status], ["1", ST.VERIFIED_NUMERICALLY]);
+  r = await solve("développe (x+y)^3"); check("(x+y)³ développé (2 variables)", /x\^3/.test(txt(r)) && /y\^3/.test(txt(r)), txt(r));
 }
 
 console.log("\n── 2. pièges avec le vrai SymPy ──");

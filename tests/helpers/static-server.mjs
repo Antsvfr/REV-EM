@@ -7,14 +7,17 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 export function startStatic(root, opts) {
   opts = opts || {};
   const hits = [];
+  const state = { blocked: null };                     // state.blocked = /regex/ : ces chemins répondent 404 (simule des fichiers injoignables)
   const server = http.createServer((req, res) => {
     const url = decodeURIComponent(req.url.split("?")[0]);
     hits.push(url);
+    if (state.blocked && state.blocked.test(url)) { res.writeHead(404); return res.end("blocked"); }
     if (opts.blank && url === opts.blank) { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end("<!doctype html><meta charset=utf-8><title>blank</title><body></body>"); }
-    const p = path.join(root, path.normalize(url).replace(/^(\.\.[\/\\])+/, ""));
+    let p = path.join(root, path.normalize(url).replace(/^(\.\.[\/\\])+/, ""));
+    if (p.startsWith(root) && fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, "index.html");
     if (!p.startsWith(root) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(404); return res.end("not found"); }
     res.writeHead(200, { "content-type": MIME[path.extname(p)] || "application/octet-stream", "cache-control": "no-cache" });
     fs.createReadStream(p).pipe(res);
   });
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port, hits, base: "http://127.0.0.1:" + server.address().port })));
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, state, port: server.address().port, hits, base: "http://127.0.0.1:" + server.address().port })));
 }

@@ -26,6 +26,8 @@
   var STATUS = C.STATUS, poly = C.poly, rat = C.rat;
 
   function v(status, method, detail){ return { status: status, method: method, detail: detail || "" }; }
+  /* « réfuté » : un contrôle CONCRET a échoué (≠ « je ne sais pas contrôler »). Un résultat réfuté n'est jamais affiché comme résultat. */
+  function rf(method, detail){ var o = v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, method, detail); o.refuted = true; return o; }
   function unverified(why){ return v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "none", why || "aucune méthode de contrôle indépendante disponible pour ce cas"); }
 
   /* Points d'essai déterministes (non entiers, pour éviter les singularités « évidentes » 0, 1, -1). */
@@ -77,7 +79,7 @@
       if(!isFinite(nd) || !isFinite(ex)) continue;
       if(close(nd, ex, 1e-5)) good++; else bad++;
     }
-    if(bad) return v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "différences-centrées", "écart constaté en " + bad + " point(s) : résultat NON confirmé");
+    if(bad) return rf("différences-centrées", "écart constaté en " + bad + " point(s) : résultat NON confirmé");
     if(good < 3) return unverified("trop peu de points valides pour contrôler la dérivée");
     return v(STATUS.VERIFIED_NUMERICALLY, "différences-centrées(Richardson)", "dérivée numérique concordante en " + good + " points — vérification numérique, pas une preuve");
   }
@@ -91,7 +93,7 @@
       if(!isFinite(nd) || !isFinite(ex)) continue;
       if(close(nd, ex, 1e-5)) good++; else bad++;
     }
-    if(bad) return v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "dérivée-de-la-primitive", "F′ ≠ f en " + bad + " point(s) : résultat NON confirmé");
+    if(bad) return rf("dérivée-de-la-primitive", "F′ ≠ f en " + bad + " point(s) : résultat NON confirmé");
     if(good < 3) return unverified("trop peu de points valides pour contrôler la primitive");
     return v(STATUS.VERIFIED_NUMERICALLY, "dérivée-numérique-de-la-primitive", "F′ = f en " + good + " points — vérification numérique, pas une preuve (la constante C est arbitraire)");
   }
@@ -100,10 +102,23 @@
   function verifyDefiniteIntegral(fAst, name, a, b, value){
     var F = NS.fast;
     if(!F) return unverified("Fast Engine absent");
-    if(!isFinite(a) || !isFinite(b)) return unverified("intégrale impropre : bornes infinies, contrôle numérique non fiable");
     try{
       var f = function(x){ var e = {}; e[name] = x; return C.evalFloat(fAst, e); };
-      var q = F.gaussLegendre(f, a, b);
+      var q, improper = !isFinite(a) || !isFinite(b);
+      if(improper){
+        // bornes infinies : changement de variable x = a + t/(1−t) (ou x = b − t/(1−t)) sur t ∈ [0 ; 1[, puis quadrature — aucune borne infinie n'est évaluée
+        if(isNaN(a) || isNaN(b) || a === b || (a === Infinity) || (b === -Infinity)) return unverified("intégrale impropre : bornes inattendues");
+        var up = function(lo){ return F.gaussLegendre(function(t){ var u = 1 - t; return f(lo + t / u) / (u * u); }, 0, 1); };
+        var down = function(hi){ return F.gaussLegendre(function(t){ var u = 1 - t; return f(hi - t / u) / (u * u); }, 0, 1); };
+        if(isFinite(a) && b === Infinity) q = up(a);
+        else if(a === -Infinity && isFinite(b)) q = down(b);
+        else if(a === -Infinity && b === Infinity) q = up(0) + down(0);
+        else return unverified("intégrale impropre : bornes inattendues");
+        if(!isFinite(q)) return unverified("intégrale impropre : quadrature impossible (singularité ou divergence)");
+        return close(q, value, 1e-5) ? v(STATUS.VERIFIED_NUMERICALLY, "Gauss-Legendre (changement de variable x = a + t/(1−t))", "quadrature de l'intégrale impropre = " + q.toPrecision(8) + " — vérification numérique, pas une preuve")
+                                     : v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "Gauss-Legendre (impropre)", "quadrature " + q.toPrecision(8) + " ≠ " + value + " : résultat NON confirmé");
+      }
+      q = F.gaussLegendre(f, a, b);
       if(!isFinite(q)) return unverified("quadrature impossible (singularité ?)");
       return close(q, value, 1e-7) ? v(STATUS.VERIFIED_NUMERICALLY, "Gauss-Legendre", "quadrature = " + q.toPrecision(10) + " — vérification numérique, pas une preuve")
                                    : v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "Gauss-Legendre", "quadrature " + q.toPrecision(8) + " ≠ " + value + " : résultat NON confirmé");
@@ -133,16 +148,20 @@
     }
     if(typeof result !== "number") return unverified("limite non numérique");
     // chaque côté séparément : l'écart à la limite doit DÉCROÎTRE quand on s'approche, et finir petit
-    var nSides = (point === "oo" || point === "-oo") ? 1 : sides.length, perSide = vals.length / nSides, okAll = true, checked = 0;
+    var nSides = (point === "oo" || point === "-oo") ? 1 : sides.length, perSide = vals.length / nSides, okAll = true, checked = 0, contradicted = false;
     for(var sd = 0; sd < nSides; sd++){
-      var errs = [];
-      for(var k = 0; k < perSide; k++){ var y = (point === "oo" || point === "-oo") ? vals[k] : vals[k * nSides + sd]; if(y !== null && isFinite(y)) errs.push(Math.abs(y - result)); }
+      var errs = [], ys = [];
+      for(var k = 0; k < perSide; k++){ var y = (point === "oo" || point === "-oo") ? vals[k] : vals[k * nSides + sd]; if(y !== null && isFinite(y)){ errs.push(Math.abs(y - result)); ys.push(y); } }
       if(errs.length < 2) continue;
       checked++;
       var scale = Math.max(1, Math.abs(result)), last = errs[errs.length - 1];
       var shrinking = errs.every(function(e, j){ return j === 0 || e <= errs[j - 1] + 1e-12 * scale; });
       if(!(shrinking && last <= 5e-3 * scale)) okAll = false;
+      // les valeurs se STABILISENT ailleurs que sur la limite annoncée : le résultat est CONTREDIT (≠ « convergence trop lente pour conclure »)
+      var yl = ys[ys.length - 1], yp = ys[ys.length - 2];
+      if(ys.length >= 3 && Math.abs(yl - yp) <= 1e-4 * Math.max(1, Math.abs(yl)) && last > 1e-2 * scale) contradicted = true;
     }
+    if(checked && contradicted) return rf("évaluation-près-du-point", "les valeurs se stabilisent AILLEURS que sur " + result + " : résultat contredit");
     return checked && okAll ? v(STATUS.VERIFIED_NUMERICALLY, "évaluation-près-du-point", "valeurs voisines du point → " + result + " — vérification numérique, pas une preuve")
                  : v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "évaluation-près-du-point", "les valeurs ne convergent pas clairement vers " + result);
   }
@@ -160,13 +179,13 @@
         if(Math.abs(a - b) > 1e-7 * scale) bad++;
       }catch(e){ bad++; }
     });
-    return bad ? v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "substitution", bad + " solution(s) ne vérifient PAS l'équation")
+    return bad ? rf("substitution", bad + " solution(s) ne vérifient PAS l'équation")
                : v(STATUS.VERIFIED_NUMERICALLY, "substitution-flottante", "chaque solution réelle réinjectée annule l'équation à 1e-7 près — vérification numérique, pas une preuve");
   }
   function verifySystem(eqs, solution){
     var bad = 0;
     eqs.forEach(function(e){ try{ var a = C.evalFloat(e.l, solution), b = C.evalFloat(e.r, solution); if(Math.abs(a - b) > 1e-7 * Math.max(1, Math.abs(a), Math.abs(b))) bad++; }catch(er){ bad++; } });
-    return bad ? v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "réinjection", "la solution ne vérifie pas " + bad + " équation(s)") : v(STATUS.VERIFIED_NUMERICALLY, "réinjection-flottante", "la solution vérifie chaque équation à 1e-7 près — vérification numérique");
+    return bad ? rf("réinjection", "la solution ne vérifie pas " + bad + " équation(s)") : v(STATUS.VERIFIED_NUMERICALLY, "réinjection-flottante", "la solution vérifie chaque équation à 1e-7 près — vérification numérique");
   }
 
   /* ── 6. MATRICES ──────────────────────────────────────────────────────── */
@@ -175,10 +194,10 @@
     if(exact){
       var F = NS.fast; var P = F.matMul(A, Ainv), ok = true;
       for(i = 0; i < n; i++) for(j = 0; j < n; j++){ var want = i === j ? rat(1) : rat(0); if(!P[i][j].eq(want)) ok = false; }
-      return ok ? v(STATUS.VERIFIED_EXACT, "A×A⁻¹=I", "produit exact égal à l'identité") : v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "A×A⁻¹=I", "A·A⁻¹ ≠ I");
+      return ok ? v(STATUS.VERIFIED_EXACT, "A×A⁻¹=I", "produit exact égal à l'identité") : rf("A×A⁻¹=I", "A·A⁻¹ ≠ I");
     }
     for(i = 0; i < n; i++) for(j = 0; j < n; j++){ var s = 0; for(k = 0; k < n; k++) s += Number(A[i][k]) * Number(Ainv[k][j]); worst = Math.max(worst, Math.abs(s - (i === j ? 1 : 0))); }
-    return worst < 1e-9 ? v(STATUS.VERIFIED_NUMERICALLY, "A×A⁻¹≈I", "écart maximal à l'identité : " + worst.toExponential(1) + " — vérification numérique") : v(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "A×A⁻¹≈I", "écart à l'identité : " + worst.toExponential(1));
+    return worst < 1e-9 ? v(STATUS.VERIFIED_NUMERICALLY, "A×A⁻¹≈I", "écart maximal à l'identité : " + worst.toExponential(1) + " — vérification numérique") : rf("A×A⁻¹≈I", "écart à l'identité : " + worst.toExponential(1));
   }
 
   /* ── 7. RÉPONSE D'UN ÉLÈVE ────────────────────────────────────────────────
@@ -238,9 +257,48 @@
     return hit;
   }
 
+  /* ── 4bis. VALEURS PROPRES : det(A − λI) ≈ 0 pour chacune ; somme (avec multiplicités) = trace ; produit = déterminant ── */
+  function detFloat(M){
+    var n = M.length, a = M.map(function(r){ return r.slice(); }), d = 1, i, j, k;
+    for(i = 0; i < n; i++){
+      var p = i; for(j = i + 1; j < n; j++) if(Math.abs(a[j][i]) > Math.abs(a[p][i])) p = j;
+      if(Math.abs(a[p][i]) < 1e-300) return 0;
+      if(p !== i){ var tmp = a[p]; a[p] = a[i]; a[i] = tmp; d = -d; }
+      d *= a[i][i];
+      for(j = i + 1; j < n; j++){ var fct = a[j][i] / a[i][i]; for(k = i; k < n; k++) a[j][k] -= fct * a[i][k]; }
+    }
+    return d;
+  }
+  function verifyEigenvalues(A, eig){                    // eig : [{ value:number|null, mult }]
+    try{
+      var n = A.length, maxAbs = 1, i, j;
+      for(i = 0; i < n; i++) for(j = 0; j < n; j++) maxAbs = Math.max(maxAbs, Math.abs(A[i][j]));
+      var real = eig.filter(function(e){ return typeof e.value === "number"; });
+      if(!real.length) return unverified("valeurs propres complexes : pas de contrôle réel");
+      var bad = 0;
+      real.forEach(function(e){
+        var M = A.map(function(r, a){ return r.map(function(c, b){ return c - (a === b ? e.value : 0); }); });
+        if(Math.abs(detFloat(M)) > 1e-8 * Math.pow(Math.max(maxAbs, Math.abs(e.value)), n)) bad++;
+      });
+      if(bad) return rf("det(A−λI)", bad + " valeur(s) propre(s) ne vérifient PAS det(A − λI) = 0");
+      var detail = "det(A − λI) ≈ 0 pour chaque valeur propre";
+      var tot = eig.reduce(function(s, e){ return s + e.mult; }, 0);
+      if(tot !== n) return rf("multiplicités", "les valeurs propres annoncées comptent " + tot + " (avec multiplicités) pour une matrice " + n + "×" + n + " : une valeur propre manque");
+      if(real.length === eig.length){
+        if(tot === n){
+          var tr = 0; for(i = 0; i < n; i++) tr += A[i][i];
+          var sum = eig.reduce(function(s, e){ return s + e.value * e.mult; }, 0), prod = eig.reduce(function(s, e){ return s * Math.pow(e.value, e.mult); }, 1);
+          if(!close(sum, tr, 1e-8) || !close(prod, detFloat(A), 1e-7)) return unverified("somme/produit des valeurs propres ≠ trace/déterminant : valeur propre manquante ou fausse");
+          detail += " ; somme = trace et produit = déterminant";
+        }
+      }
+      return v(STATUS.VERIFIED_NUMERICALLY, "det(A−λI)≈0 + trace/déterminant (flottants)", detail + " — vérification numérique, pas une preuve");
+    }catch(e){ return unverified("contrôle impossible : " + e.message); }
+  }
+
   NS.verify = {
     equivalent: equivalent, verifyDerivative: verifyDerivative, verifyAntiderivative: verifyAntiderivative, verifyDefiniteIntegral: verifyDefiniteIntegral,
     verifyLimit: verifyLimit, verifyEquationRoots: verifyEquationRoots, verifySystem: verifySystem, verifyMatrixInverse: verifyMatrixInverse,
-    compareAnswer: compareAnswer, numDeriv: numDeriv, unverified: unverified, isFactored: isFactored
+    verifyEigenvalues: verifyEigenvalues, compareAnswer: compareAnswer, numDeriv: numDeriv, unverified: unverified, isFactored: isFactored
   };
 })(typeof globalThis !== "undefined" ? globalThis : (typeof self !== "undefined" ? self : this));

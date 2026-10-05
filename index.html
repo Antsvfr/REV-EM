@@ -4293,6 +4293,7 @@
   .mx-verified-numeric .mx-badge{ background: var(--info-wash); color: var(--info); }
   .mx-unverified .mx-badge, .mx-ambiguous .mx-badge{ background: var(--warning-wash); color: var(--warning); }
   .mx-unsupported .mx-badge, .mx-invalid .mx-badge{ background: var(--error-wash); color: var(--error); }
+  .mx-kind{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink); }
   .mx-engine{ font-size: var(--text-label); color: var(--text-muted); }
   .mx-row{ margin:6px 0; min-width:0; }
   .mx-label{ display:block; font-size: var(--text-label); text-transform:uppercase; letter-spacing:.06em; color: var(--text-muted); margin-bottom:2px; }
@@ -16876,7 +16877,7 @@ const aiWithTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(()
 const MATH_COMMAND_RE = /^\s*(r[eé]sou|calcul|d[eé]riv|factori|d[eé]velopp|simplifi|int[eé]gr|primitiv|limite|inverse|d[eé]terminant|explique|pourquoi|comment|qu['e ]|solve|compute|calculate|differentiate|derive|factor|expand|simplify|integrate|limit|explain|why|how|what|resuelve|calcula|deriva|factoriza|explica|l[oö]se|berechne|erkl[aä]r|risolvi|calcola|spiega)/i;
 const MATH_NOTE_KEYS = { "no-real-solution": "no_real", "complex-solutions": "complex", "constant-of-integration": "constant_c", "log-base-10": "log10", "multiple-irr-possible": "multiple_irr",
   "infinite-solutions": "infinite_solutions", "singular": "singular", "irreducible-factor-over-Q": "irreducible", "real-solutions-only": "real_only", "approximate-roots": "approx_roots",
-  "infinite-family": "infinite_family", "equation-without-equals": "no_equals", "multiple-root": "multiple_root" };
+  "infinite-family": "infinite_family", "equation-without-equals": "no_equals", "multiple-root": "multiple_root", "several-solutions": "several_solutions", "extraneous-removed": "extraneous" };
 const MATH_NOTE_SENTENCES = [[/^convention non précisée/, "conv_ambiguous"], [/^taux périodique proportionnel/, "rate_proportional"], [/^z critique/, "z_critical"], [/^intervalle z/, "z_known"], [/^N\(μ/, "normal_conv"]];
 
 const mathKatex = { promise: null };
@@ -16915,6 +16916,7 @@ function mathTex(latex, fallback, block){
 function mathErrKey(card){
   const c = String(card.code || "");
   if(card.status === "AMBIGUOUS" || /AMBIGUOUS/.test(c)) return "ambiguous";
+  if(/REFUTED/.test(c)) return "refuted";
   if(c === "DIV_ZERO") return "div_zero";
   if(c === "DOMAIN") return "domain";
   if(/TOO_COMPLEX|OVERFLOW|TOO_MANY/.test(c)) return "too_complex";
@@ -16934,7 +16936,8 @@ function mathCardHtml(card){
   if(!card || card.kind === "practice") return "";
   const parts = [];
   const engine = card.engine === "cas" ? t("math.engine.cas") : (card.engine === "fast" ? t("math.engine.fast") : "");
-  parts.push(`<div class="mx-head"><span class="mx-badge">${escapeHtml(t("math.status." + card.status))}</span>${engine ? `<span class="mx-engine">${escapeHtml(engine)}</span>` : ""}</div>`);
+  const kindLabel = card.kind && /^[a-z]+$/.test(card.kind) ? t("math.kind." + card.kind) : "";
+  parts.push(`<div class="mx-head"><span class="mx-badge">${escapeHtml(t("math.status." + card.status))}</span>${kindLabel && kindLabel.indexOf("math.kind.") !== 0 ? `<span class="mx-kind">${escapeHtml(kindLabel)}</span>` : ""}${engine ? `<span class="mx-engine">${escapeHtml(engine)}</span>` : ""}</div>`);
   if(card.problemText) parts.push(`<div class="mx-row"><span class="mx-label">${escapeHtml(t("math.problem"))}</span><div class="mx-problem">${mathTex(card.problemLatex, card.problemText, false)}</div></div>`);
   if(card.ok){
     if(card.lines && card.lines.length) parts.push(`<div class="mx-row"><span class="mx-label">${escapeHtml(t("math.result"))}</span><ul class="mx-lines">${card.lines.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>`);
@@ -16998,7 +17001,7 @@ function mathProblemFor(question, analysis){
 /* Résolution : Fast Engine, sinon CAS ; ne lève jamais. Renvoie le résultat enrichi { out, calc } pour le prompt. */
 async function mathSolve(problem, analysis){
   let out;
-  try{ out = await RMath.engine.solve(problem, { cas: RMath.cas, lang: mathLangOf(analysis), timeoutMs: 20000 }); }
+  try{ out = await RMath.engine.solve(problem, { cas: RMath.cas, lang: mathLangOf(analysis), timeoutMs: (window.revemMathConfig && window.revemMathConfig.timeoutMs) || 20000 }); }   // revemMathConfig : réglage développeur (console)
   catch(e){ return null; }
   if(!out || !out.handled) return null;
   const blk = out.block || { header: "", text: "" };
@@ -17224,6 +17227,14 @@ async function aiGeneralAsk(text, opts){
       return true;
     }
   }
+  /* Un calcul chiffré que NI le moteur mathématique NI l'ancienne calculatrice n'ont reconnu (« 12 m × 3 m », « f(3) avec f(x)=… ») part quand même au modèle :
+     on le DIT au modèle (aucun résultat vérifié n'existe) et à l'élève (note sous la réponse). Jamais un nombre du modèle présenté comme calculé. */
+  let mathUnrecognized = false;
+  if(RMath && !mathPb && !calc && analysis.intent === "CALCULATION" && /\d/.test(question)){
+    mathUnrecognized = true;
+    calc = { kind: "math-unrecognized", resultText: "", header: "MATH ENGINE REPORT (authoritative)", steps: [], values: null,
+             block: "the deterministic math engine did not recognize this as a supported problem, so NO verified result exists.\nrules: any number you give is your own UNVERIFIED estimate: say so explicitly, show the method step by step, keep the arithmetic short and simple, and invite the student to check it. Never claim the result is exact, computed or verified." };
+  }
   if(calc) diag.localCalc = calc.kind;
 
   /* REV-EM Knowledge : choix DÉTERMINISTE des éléments pertinents, avant la génération (aucun appel au modèle).
@@ -17297,7 +17308,7 @@ async function aiGeneralAsk(text, opts){
   chat.lastOutput = proc ? { raw: proc.raw, clean: answer } : null;       // en MÉMOIRE seulement (diagnostic) : jamais écrit en stockage, jamais envoyé à Supabase, jamais affiché
   chat.qualityNote = null;
   const userAbort = signal.cancelled || (res && res.aborted && !res.loopAborted);
-  const mathMeta = mathRes ? { math: mathRes.card } : {};
+  const mathMeta = mathRes ? { math: mathRes.card } : (mathUnrecognized ? { mathUnverified: true } : {});
   if(userAbort){
     if(answer.trim()) thread.push({ role: "assistant", content: answer, meta: Object.assign({ aborted: true, intent: analysis.intent }, mathMeta) });
     else if(mathRes) mathPushAssistant(thread, mathSummaryText(mathRes.card), Object.assign({ intent: analysis.intent, cardOnly: true }, mathMeta));
@@ -18264,7 +18275,7 @@ function renderAI(){
           const label = m.display || (i === 0 ? action.label : "");
           if(label) html += `<div class="ai-bubble user">${escapeHtml(label)}</div>`;
         } else if(state.aiMode === "text"){
-          html += `<div class="ai-bubble assistant">${m.meta && m.meta.math && typeof m.meta.math === "object" ? mathCardHtml(m.meta.math) : ""}${m.meta && m.meta.cardOnly ? (m.meta.mathHint ? `<p class="ai-hint mx-hint">${escapeHtml(t("math.explain_hint"))}</p>` : "") : `<div class="ai-result-body">${renderAIMarkdown(m.content)}</div>`}</div>`;
+          html += `<div class="ai-bubble assistant">${m.meta && m.meta.math && typeof m.meta.math === "object" ? mathCardHtml(m.meta.math) : ""}${m.meta && m.meta.cardOnly ? (m.meta.mathHint ? `<p class="ai-hint mx-hint">${escapeHtml(t("math.explain_hint"))}</p>` : "") : `<div class="ai-result-body">${renderAIMarkdown(m.content)}</div>`}${m.meta && m.meta.mathUnverified ? `<div class="ai-bubble-note mx-unverified-note" role="note">${escapeHtml(t("math.unrecognized_note"))}</div>` : ""}</div>`;
         }
       });
       if(state.aiBusy){

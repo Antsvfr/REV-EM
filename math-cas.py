@@ -229,7 +229,7 @@ def num_float(e):
 def op_simple(kind, req):
     e = build(req["expr"], True)
     if kind == "factor":
-        r = sp.factor(e)
+        r = sp.factor(e, extension=[sp.I]) if req.get("domain") == "complex" else sp.factor(e)
     elif kind == "expand":
         r = sp.expand(e)
     elif kind == "simplify":
@@ -280,6 +280,19 @@ def op_solve(req):
     x = _sym(req["var"], real_only)
     expr = eq.lhs - eq.rhs
     notes = []
+    # Équation NON polynomiale (log, racine, puissance variable…) : SymPy sur ℂ renvoie des racines parasites (ex. ln x + ln(x−1) = ln 6 → −2).
+    # Le domaine réel est alors la seule lecture sûre ; on le DIT (sauf si l'élève a demandé ℂ explicitement).
+    if not real_only and req.get("domain") != "complex":
+        try:
+            is_poly = bool(expr.is_polynomial(x))
+        except Exception:
+            is_poly = False
+        if not is_poly:
+            real_only = True
+            eq = build(req["eq"], True)
+            x = _sym(req["var"], True)
+            expr = eq.lhs - eq.rhs
+            notes.append("real-solutions-only")
     try:
         cset = sp.solveset(expr, x, domain=S.Reals if real_only else S.Complexes)
     except Exception:
@@ -308,6 +321,7 @@ def op_solve(req):
     if cset == S.EmptySet:
         return {"ok": True, "exact": "aucune solution", "latex": "\\varnothing", "solutions": [], "kind": "none", "notes": notes}
     sols = []
+    dropped = 0
     for sv in cset.args:
         if sv.has(sp.CRootOf):
             re_, im_ = _cplx(sv)
@@ -322,6 +336,9 @@ def op_solve(req):
             selfcheck = True if r == 0 else (False if r.is_number and r != 0 else None)
         except Exception:
             selfcheck = None
+        if selfcheck is False:          # candidat parasite : il ne vérifie pas l'équation de départ → jamais présenté comme solution
+            dropped += 1
+            continue
         sols.append({"str": to_text(sv), "latex": to_latex(sv), "real": real, "value": val, "selfcheck": selfcheck, "approxOnly": False})
     sols.sort(key=lambda d: (0 if d["real"] else 1, d["value"] if d["value"] is not None else d.get("re", 0)))
     parts, latex_parts = [], []
@@ -333,6 +350,10 @@ def op_solve(req):
         else:
             parts.append(req["var"] + " = " + d["str"])
             latex_parts.append(req["var"] + " = " + d["latex"])
+    if dropped:
+        notes.append("extraneous-removed")
+    if not sols:
+        return {"ok": True, "exact": "aucune solution", "latex": "\\varnothing", "solutions": [], "kind": "none", "notes": notes}
     if any(d["approxOnly"] for d in sols):
         notes.append("approximate-roots")
     if not any(d["real"] for d in sols):
@@ -351,10 +372,17 @@ def op_system(req):
     if not res:
         return {"ok": True, "exact": "aucune solution (système incompatible)", "latex": "\\varnothing", "solutionKind": "none"}
     if len(res) > 1:
-        parts = []
+        parts, flist, all_real = [], [], True
         for r in res:
-            parts.append(" , ".join(k.name + " = " + to_text(v) for k, v in sorted(r.items(), key=lambda kv: kv[0].name)))
-        return {"ok": True, "exact": " | ".join(parts), "latex": "", "solutionKind": "several", "solutions": []}
+            items = sorted(r.items(), key=lambda kv: kv[0].name)
+            parts.append("(" + ", ".join(k.name + " = " + to_text(v) for k, v in items) + ")")
+            vals = {k.name: num_float(v) for k, v in items}
+            if len(items) == len(syms) and all(v is not None for v in vals.values()):
+                flist.append(vals)
+            else:
+                all_real = False
+        return {"ok": True, "exact": " | ".join(parts), "latex": "", "solutionKind": "several", "solutions": [],
+                "solutionsList": flist if all_real else [], "notes": ["several-solutions"]}
     r = res[0]
     free = [s for s in syms if s not in r]
     text = " ; ".join(k.name + " = " + to_text(v) for k, v in sorted(r.items(), key=lambda kv: kv[0].name))
@@ -493,10 +521,10 @@ def op_matrix(req):
                 ok = sp.simplify((A - val * sp.eye(A.rows)).det()) == 0
             except Exception:
                 ok = None
-            out.append({"str": to_text(val), "latex": to_latex(val), "mult": int(mult), "selfcheck": ok})
+            out.append({"str": to_text(val), "latex": to_latex(val), "mult": int(mult), "selfcheck": ok, "value": num_float(val)})
         text = " ; ".join("λ = " + d["str"] + (" (×" + str(d["mult"]) + ")" if d["mult"] > 1 else "") for d in out)
         latex = ",\\; ".join("\\lambda = " + d["latex"] for d in out)
-        return {"ok": True, "exact": text, "latex": latex, "eigenvalues": out}
+        return {"ok": True, "exact": text, "latex": latex, "eigenvalues": out, "matrixA": _mat_floats(A)}
     if fn == "eigenvects":
         evs = A.eigenvects()
         parts = []

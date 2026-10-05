@@ -537,6 +537,18 @@
       var n = A.length, m = A[0].length;
       if(op === "transpose"){ var T = A[0].map(function(_, j){ return A.map(function(r){ return r[j]; }); }); return matRes("transpose", T, verif(STATUS.VERIFIED_EXACT, "double-transposition", "(Aᵀ)ᵀ = A vérifié"), [], matEq(A, T[0].map(function(_, j){ return T.map(function(r){ return r[j]; }); }))); }
       if(op === "add" || op === "sub"){ if(!B || B.length !== n || B[0].length !== m) return failRes(STATUS.INVALID_INPUT, "DIMENSION", "dimensions différentes"); var S = A.map(function(r, i){ return r.map(function(c, j){ return op === "add" ? c.add(B[i][j]) : c.sub(B[i][j]); }); }); return matRes(op, S, verif(STATUS.VERIFIED_EXACT, "recalcul-élément-par-élément", ""), [], true); }
+      if(op === "solve"){                                                           // A·x = b (b : colonne ou ligne)
+        if(!B) return failRes(STATUS.INVALID_INPUT, "NO_B", "le second membre b manque");
+        if(n !== m) return failRes(STATUS.INVALID_INPUT, "NOT_SQUARE", "A doit être carrée pour résoudre A·x = b");
+        var bv = B.length === 1 ? B[0] : (B[0].length === 1 ? B.map(function(r){ return r[0]; }) : null);
+        if(!bv || bv.length !== n) return failRes(STATUS.INVALID_INPUT, "DIMENSION", "b doit avoir " + n + " composantes");
+        var sres = solveLinearMatrix(A, bv);
+        if(sres.ok && sres.solutionKind === "unique"){
+          var xs = sres.variables.map(function(vn){ return sres.solution[vn]; }), okAx = A.every(function(row, i){ return row.reduce(function(acc, c, j){ return acc.add(c.mul(xs[j])); }, R0).eq(bv[i]); });
+          sres.verification = okAx ? verif(STATUS.VERIFIED_EXACT, "A·x=b", "A·x recalculé exactement = b") : verif(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "check-failed", "");
+        }
+        return sres;
+      }
       if(op === "mul"){ if(!B) return failRes(STATUS.INVALID_INPUT, "NO_B", "deuxième matrice manquante"); var P = matMul(A, B); return matRes("mul", P, verif(STATUS.VERIFIED_EXACT, "produit-par-colonnes", "chaque colonne de AB = A × colonne de B"), [], matEq(P, B[0].map(function(_, j){ var col = A.map(function(r){ var s = R0; for(var k = 0; k < r.length; k++) s = s.add(r[k].mul(B[k][j])); return s; }); return col; }).reduce(function(acc, col){ col.forEach(function(v, i){ (acc[i] = acc[i] || []).push(v); }); return acc; }, []))); }
       if(n > 8 || m > 8) return needsCAS("matrice trop grande");
       var rr = rref(A);

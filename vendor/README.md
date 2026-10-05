@@ -26,7 +26,25 @@ Pyodide ne sont pas modifiés.
 4. Relancer `node tests/math-cas.test.mjs` (Pyodide + SymPy réels) et `tests/math-ui.test.mjs` (navigateur).
 
 ## KaTeX (rendu des formules)
-| `katex/katex.min.js`, `katex/katex.min.css`, `katex/fonts/*.woff2` | rendu LaTeX → HTML | KaTeX 0.19.0 | MIT (`katex/LICENSE`) | js `103a5376…c8ae7`, css `144d9ea8…df303` |
 
-La feuille de style est celle de KaTeX **sans** les formats de police `woff`/`ttf` (seul `woff2` est servi, supporté par Chrome, Safari ≥ 14 et WKWebView récents) et avec `font-display:swap`.
-Chargé uniquement à la première carte de résultat mathématique (`mathLoadKatex()` dans `index.html`) ; s'il est indisponible, le texte brut de la formule reste affiché.
+| Fichier | Rôle | Version | Licence | SHA-256 |
+|---|---|---|---|---|
+| `katex/katex.min.js` | rendu LaTeX → HTML/MathML | KaTeX 0.19.0 | MIT (`katex/LICENSE`) | `103a53763cc033bba8d175bf3f0ba597c3505c9b6747dd3f2c7bc2a6bfcc8ae7` |
+| `katex/katex.min.css` | feuille de style (modifiée, voir ci-dessous) | idem | MIT | `144d9ea8097c553f5672ea8bb89b4241c486e0e89ec844580823155fd4fdf303` |
+| `katex/fonts/*.woff2` (20 fichiers, ≈ 300 Ko) | polices mathématiques (distribuées avec KaTeX) | idem | `katex/LICENSE` (MIT) ; fichiers de polices de la distribution KaTeX 0.19.0, non modifiés (leurs licences propres n'ont pas été auditées ici) | — | — |
+
+La feuille de style est celle de KaTeX **sans** les formats de police `woff`/`ttf` (seul `woff2` est servi : Chrome, Safari ≥ 14, WKWebView récents) et avec `font-display:swap`.
+Chargé uniquement à la première carte de résultat mathématique (`mathLoadKatex()` dans `index.html`) ; s'il est indisponible (hors ligne, jamais mis en cache), le texte brut de la formule reste affiché.
+
+## Poids réels (octets bruts / gzip -9, mesurés)
+
+| Fichier | Brut | gzip |
+|---|---|---|
+| `pyodide/pyodide.asm.wasm` | 9 598 218 | 3 542 413 |
+| `pyodide/python_stdlib.zip` | 2 545 637 | 2 501 808 |
+| `pyodide/pyodide.asm.mjs` | 1 250 344 | 260 720 |
+| `pyodide/pyodide-lock.json` | 119 077 | 26 457 |
+| `py/sympy-1.14.0-py3-none-any.whl` | 6 299 353 | 6 152 345 |
+| `py/mpmath-1.4.1-py3-none-any.whl` | 567 787 | 560 694 |
+| **Total CAS (au premier calcul formel seulement)** | **≈ 20,4 Mo** | **≈ 13,05 Mo** |
+| `katex/katex.min.js` + `.css` | 295 507 | 79 389 |

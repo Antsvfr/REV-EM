@@ -286,7 +286,7 @@
 
     // ── 2.4 matrices ───────────────────────────────────────────────────────────────────────────────
     if((KW.matrix.test(f) || /\[\s*\[/.test(src)) && /\[/.test(src)){
-      var lits = src.match(/\[\s*\[[^\]]*\](?:\s*,\s*\[[^\]]*\])*\s*\]|\[[^\[\]]*;[^\[\]]*\]/g) || [];
+      var lits = src.match(/\[\s*\[[^\]]*\](?:\s*,\s*\[[^\]]*\])*\s*\]|\[[^\[\]]*;[^\[\]]*\]|\[[^\[\]]+\]/g) || [];
       var mats = [];
       for(var li = 0; li < lits.length; li++){ var pm = tryParse(lits[li], lang); if(!pm.ok) return Object.assign(base, invalidExpr(lits[li], pm.error)); mats.push(pm.ast); }
       var op = null;
@@ -296,6 +296,7 @@
       else if(/\btranspos\w*/.test(f)) op = "transpose";
       else if(/\b(rang|rank)\b/.test(f)) op = "rank";
       else if(/\binvers\w*|\binvert\w*/.test(f)) op = "inverse";
+      else if(mats.length === 2 && /\b(resou\w*|resolv\w*|solv\w*|resuelv\w*|loes\w*|risolv\w*)/.test(f)) op = "solve";
       else if(mats.length === 2 && (/[*×]/.test(src) || /\b(produit|multipli\w*|product|multiply|prodotto|producto|produkt)\b/.test(f))) op = "mul";
       else if(mats.length === 2 && (/\+/.test(src) || /\b(somme|sum|addition\w*|add|addiere\w*|suma|sommare|somma)\b/.test(f))) op = "add";
       if(!op || !mats.length) return isExplain ? noneResult("explication") : Object.assign(base, { kind: "invalid", src: src, message: "opération matricielle non reconnue", code: "MATRIX_OP", status: STATUS.INVALID_INPUT });
@@ -325,9 +326,9 @@
       }
       var domain = null;
       var dmDom = /\s*(?:\b(?:en|dans|in|over|sur|im|nei|nel|en los|sobre)\s+(?:l'ensemble des |les |the |los |die |i |il |el |der )?(?:nombres? |numbers? |n[uú]meros? |zahlen |numeri )?|\s)(?:(complexes?|complex|complejos?|komplex\w*|complessi)|(r[ée]els?|reals?|reales?|reell\w*|reali))\s*[?.]?\s*$/i.exec(rest);
-      if(dmDom && kind === "equation"){ domain = dmDom[1] ? "complex" : "real"; rest = rest.slice(0, dmDom.index); }
+      if(dmDom && (kind === "equation" || kind === "factor")){ domain = dmDom[1] ? "complex" : "real"; rest = rest.slice(0, dmDom.index); }
       var dm3 = /\s*(?:dans |in |over |sur |en )?(ℂ|ℝ)\s*[?.]?\s*$/.exec(rest);
-      if(dm3 && kind === "equation"){ domain = dm3[1] === "ℂ" ? "complex" : "real"; rest = rest.slice(0, dm3.index); }
+      if(dm3 && (kind === "equation" || kind === "factor")){ domain = dm3[1] === "ℂ" ? "complex" : "real"; rest = rest.slice(0, dm3.index); }
       var exprS = cleanExpr(rest);
       if(!exprS) return noneResult("pas d'expression");
       if(isExplain && !looksMathy(exprS)) return noneResult("explication");
@@ -345,7 +346,7 @@
         return Object.assign(base, { kind: "equation", eq: ast3, var: mainVar(ast3), domain: domain, notes: base.notes.concat(pe3.notes) });
       }
       if(ast3.t === "eq") return Object.assign(base, invalidExpr(exprS, { message: "une expression est attendue, pas une équation", code: "EQUATION_GIVEN" }));
-      return Object.assign(base, { kind: kind, ast: ast3, var: mainVar(ast3), notes: pe3.notes });
+      return Object.assign(base, { kind: kind, ast: ast3, var: mainVar(ast3), domain: domain, notes: pe3.notes });
     }
 
     if(isExplain) return noneResult("explication demandée");
@@ -404,9 +405,9 @@
       return Object.assign(base, { kind: "invalid", src: src, code: "CI_PARAMS", status: STATUS.INVALID_INPUT, message: "pour un intervalle de confiance z, donne la moyenne, σ (connu), n et le niveau (ex. 95 %)" });
     }
     if(KW.zscore.test(f)){
-      var xv = named(/\bx\s*=\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); });
-      var mz = named(/(?:μ|mu|moyenne|mean|media)\s*=?\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); });
-      var sz = named(/(?:σ|sigma|ecart[- ]?type|std|sd|standard deviation)\s*=?\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); });
+      var xv = named(/\bx\s*=\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); }) || named(/(?:z[- ]?score|score z|cote z|z-wert|valore z|puntaje z)\s*(?:de |of |for |von |di |para |d')?\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); });
+      var mz = named(/(?:μ|mu|moyenne|mean|media|mittelwert)\s*(?:=|de |of |:)?\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); });
+      var sz = named(/(?:σ|sigma|[eé]cart[- ]?type|std|sd|standard deviation|standardabweichung|desviaci[oó]n|deviazione standard)\s*(?:=|de |of |:)?\s*(-?[\d.,]+)/i, function(mm){ return toRat(mm[1], lang); });
       if(xv && mz && sz) return Object.assign(base, { kind: "zscore", x: xv, mean: mz, sd: sz });
       return Object.assign(base, { kind: "invalid", src: src, code: "ZSCORE_PARAMS", status: STATUS.INVALID_INPUT, message: "pour un z-score, donne x, la moyenne μ et l'écart-type σ" });
     }
@@ -547,7 +548,7 @@
         }
         return ar;
       }
-      case "factor": return F.factorPoly(p.ast, p.var, { lang: lang });
+      case "factor": return p.domain === "complex" ? F.needsCAS("factorisation sur ℂ") : F.factorPoly(p.ast, p.var, { lang: lang });
       case "expand": return F.expandPoly(p.ast, p.var);
       case "simplify": {
         var r1 = F.simplifyRational(p.ast, p.var);
@@ -673,7 +674,7 @@
   function casRequest(p){
     switch(p.kind){
       case "arith": return { op: "evaluate", expr: p.ast };
-      case "factor": return { op: "factor", expr: p.ast };
+      case "factor": return { op: "factor", expr: p.ast, domain: p.domain || null };
       case "expand": return { op: "expand", expr: p.ast };
       case "simplify": return { op: "simplify", expr: p.ast };
       case "equation": return { op: "solve", eq: p.eq, var: p.var, domain: p.domain || null };
@@ -734,6 +735,12 @@
           return vr || V.unverified("aucune solution à réinjecter");
         }
         case "system": {
+          if(cr.solutionsList && cr.solutionsList.length){
+            var vs = cr.solutionsList.map(function(sl){ return V.verifySystem(p.eqs, sl); });
+            return vs.every(function(x){ return x.status === STATUS.VERIFIED_NUMERICALLY || x.status === STATUS.VERIFIED_EXACT; })
+              ? { status: STATUS.VERIFIED_NUMERICALLY, method: "réinjection de chaque solution (flottants)", detail: vs.length + " solutions réinjectées dans chaque équation — vérification numérique ; l'ABSENCE d'autres solutions n'est pas contrôlée" }
+              : V.unverified("une solution au moins ne vérifie pas le système");
+          }
           var sol = cr.solution; if(!sol) return V.unverified("solution non fournie");
           return V.verifySystem(p.eqs, sol);
         }
@@ -741,7 +748,7 @@
           var out = parseCasText(cr.exact, p.lang); if(!out) return V.unverified("résultat du CAS non relu");
           var eq = V.equivalent(p.ast, out);
           if(eq.equal === true) return { status: eq.status, method: eq.method + " (original ≡ résultat)", detail: eq.status === STATUS.VERIFIED_EXACT ? "égalité exacte" : "égalité numérique en " + eq.points + " points — vérification numérique, pas une preuve" };
-          if(eq.equal === false) return { status: STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, method: "équivalence", detail: "le résultat du CAS n'est PAS équivalent à l'expression d'origine : NON confirmé" };
+          if(eq.equal === false) return { status: STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, method: "équivalence", detail: "le résultat du CAS n'est PAS équivalent à l'expression d'origine : NON confirmé", refuted: true };
           return V.unverified("équivalence non décidable numériquement");
         }
         case "arith": {
@@ -752,6 +759,7 @@
         case "matrix": {
           if(p.op === "inverse" && cr.matrix && cr.matrixA){ return V.verifyMatrixInverse(cr.matrixA, cr.matrix); }
           if(p.op === "eigen" && cr.eigenvalues){
+            if(cr.matrixA) return V.verifyEigenvalues(cr.matrixA, cr.eigenvalues.map(function(l){ return { value: typeof l.value === "number" ? l.value : null, mult: l.mult || 1 }; }));
             var okE = cr.eigenvalues.every(function(l){ return l.selfcheck === true; });
             return okE ? { status: STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, method: "det(A−λI)=0 par le CAS", detail: "contrôle effectué par le CAS lui-même : pas indépendant" } : V.unverified("valeurs propres non confirmées");
           }
@@ -772,6 +780,7 @@
     catch(e){ return F.failRes(STATUS.UNSUPPORTED, (e && e.code) || "CAS_FAILED", (e && e.message) || "le moteur avancé a échoué", { casLoadMs: e && e.loadMs, timedOut: e && e.code === "CAS_TIMEOUT" }); }
     if(!cr || cr.ok === false) return F.failRes(cr && cr.error && cr.error.status || STATUS.UNSUPPORTED, (cr && cr.error && cr.error.code) || "CAS_ERROR", (cr && cr.error && cr.error.message) || "le CAS n'a pas pu résoudre ce problème", { casMs: cr && cr.timeMs });
     var verification = verifyCas(p, cr);
+    if(verification && verification.refuted) return F.failRes(STATUS.UNSUPPORTED, "CAS_RESULT_REFUTED", "le résultat du CAS est contredit par le contrôle indépendant (" + (verification.detail || verification.method) + ") : il n'est pas affiché", { casMs: cr.timeMs });
     var res = { ok: true, kind: p.kind, engine: "cas", exact: { text: cr.exact, latex: cr.latex || "" }, approx: typeof cr.approxValue === "number" ? { text: C.fmtFloat(cr.approxValue, 10, p.lang), value: cr.approxValue } : (cr.approx ? { text: cr.approx, value: null } : null), verification: verification,
                 steps: cr.steps || [], notes: cr.notes || [], casMs: cr.timeMs, casLoadMs: cr.loadMs, solutions: cr.solutions, setLatex: cr.setLatex, raw: cr, domainNote: cr.domainNote || null };
     return res;
@@ -919,7 +928,7 @@
     resultLines(out, lang).forEach(function(x){ L.push(x); });
     L.push("verification: " + (STATUS_PHRASE[out.status] || out.status) + " — " + (out.verification.method || "") + (out.verification.detail ? " (" + out.verification.detail + ")" : ""));
     if(out.domainNote) L.push("domain note: " + out.domainNote);
-    (out.notes || []).forEach(function(n){ if(n && !/^(percent|log-base-10|implicit-mult-after-division|split-word|irrational|constant-of-integration|no-real-solution|complex-solutions|infinite-solutions|singular|non-integer-periods|irreducible-factor-over-Q|multiple-irr-possible|domain-excludes|multiple-root|real-solutions-only|approximate-roots|infinite-family|equation-without-equals)/.test(n)) L.push("note: " + n); });
+    (out.notes || []).forEach(function(n){ if(n && !/^(percent|log-base-10|implicit-mult-after-division|split-word|irrational|constant-of-integration|no-real-solution|complex-solutions|infinite-solutions|singular|non-integer-periods|irreducible-factor-over-Q|multiple-irr-possible|domain-excludes|multiple-root|real-solutions-only|approximate-roots|infinite-family|equation-without-equals|several-solutions|extraneous-removed)/.test(n)) L.push("note: " + n); });
     var nset = out.notes || [];
     if(nset.indexOf("log-base-10") >= 0) L.push("note: log(x) was read as the base-10 logarithm; ln(x) is the natural logarithm");
     if(nset.indexOf("constant-of-integration") >= 0) L.push("note: an antiderivative is defined up to an arbitrary constant C");
@@ -927,6 +936,8 @@
     if(nset.some(function(n){ return n.indexOf("domain-excludes") === 0; })) L.push("note: " + nset.filter(function(n){ return n.indexOf("domain-excludes") === 0; })[0].replace("domain-excludes:", "the simplification is valid only for ") );
     if(nset.indexOf("implicit-mult-after-division") >= 0) L.push("note: an implicit product after a division (a/bc) was read as (a/b)·c — say so if the student meant a/(bc)");
     if(nset.indexOf("multiple-irr-possible") >= 0) L.push("note: the cash flows change sign several times; more than one IRR may exist");
+    if(nset.indexOf("extraneous-removed") >= 0) L.push("note: extraneous candidate solutions (not satisfying the original equation) were removed after checking");
+    if(nset.indexOf("several-solutions") >= 0) L.push("note: the system has several solutions, each given in parentheses (the absence of other solutions was not checked)");
     if(nset.indexOf("multiple-root") >= 0) L.push("note: a repeated root is listed once (it is a double/multiple root)");
     if(nset.indexOf("real-solutions-only") >= 0) L.push("note: only the REAL solutions are given; the equation also has complex solutions");
     if(nset.indexOf("approximate-roots") >= 0) L.push("note: some roots have no simple exact form and are given as decimal approximations (exact value unavailable)");
@@ -939,12 +950,52 @@
     return { header: out.status === STATUS.VERIFIED_EXACT ? "MATH ENGINE RESULT (computed deterministically, verified exactly — authoritative)" : out.status === STATUS.VERIFIED_NUMERICALLY ? "MATH ENGINE RESULT (computed deterministically, verified numerically — authoritative)" : "MATH ENGINE RESULT (computed deterministically, NOT independently verified)", text: L.join("\n") };
   }
 
+  /* ── Localisation des TEXTES D'AFFICHAGE générés en français par les moteurs (libellés de statistiques, cas particuliers) ──
+     Les nombres, symboles et formules sont neutres ; seuls les libellés sont traduits, par une table FERMÉE de motifs que les moteurs
+     produisent eux-mêmes. Un libellé non reconnu est laissé tel quel (jamais inventé). Les « étapes » ne sont affichées qu'en français. */
+  var LOC = [
+    [/^aucune solution \(système incompatible\)$/, { en: "no solution (inconsistent system)", es: "sin solución (sistema incompatible)", de: "keine Lösung (unverträgliches System)", it: "nessuna soluzione (sistema incompatibile)" }],
+    [/^aucune solution réelle$/, { en: "no real solution", es: "ninguna solución real", de: "keine reelle Lösung", it: "nessuna soluzione reale" }],
+    [/^aucune solution$/, { en: "no solution", es: "sin solución", de: "keine Lösung", it: "nessuna soluzione" }],
+    [/^tout réel$/, { en: "every real number", es: "todo número real", de: "jede reelle Zahl", it: "ogni numero reale" }],
+    [/^non inversible \(déterminant 0\)$/, { en: "not invertible (determinant 0)", es: "no invertible (determinante 0)", de: "nicht invertierbar (Determinante 0)", it: "non invertibile (determinante 0)" }],
+    [/ \((.+?) libre\(s\)\)$/, { en: " ($1 free)", es: " ($1 libre)", de: " ($1 frei)", it: " ($1 libero)" }],
+    [/^n'existe pas : limite à droite = (.+), limite à gauche = (.+)$/, { en: "does not exist: right-hand limit = $1, left-hand limit = $2", es: "no existe: límite por la derecha = $1, límite por la izquierda = $2", de: "existiert nicht: rechtsseitiger Grenzwert = $1, linksseitiger Grenzwert = $2", it: "non esiste: limite destro = $1, limite sinistro = $2" }],
+    [/^moyenne = /, { en: "mean = ", es: "media = ", de: "Mittelwert = ", it: "media = " }],
+    [/^médiane = /, { en: "median = ", es: "mediana = ", de: "Median = ", it: "mediana = " }],
+    [/^mode\(s\) = /, { en: "mode(s) = ", es: "moda(s) = ", de: "Modus = ", it: "moda/e = " }],
+    [/^pas de mode \(toutes les valeurs apparaissent une seule fois\)$/, { en: "no mode (every value appears once)", es: "sin moda (todos los valores aparecen una vez)", de: "kein Modus (jeder Wert kommt einmal vor)", it: "nessuna moda (ogni valore compare una volta)" }],
+    [/^étendue = /, { en: "range = ", es: "rango = ", de: "Spannweite = ", it: "intervallo = " }],
+    [/^variance \(population, ÷ n\) = /, { en: "variance (population, ÷ n) = ", es: "varianza (poblacional, ÷ n) = ", de: "Varianz (Grundgesamtheit, ÷ n) = ", it: "varianza (popolazione, ÷ n) = " }],
+    [/^variance \(échantillon, ÷ \(n−1\)\) = /, { en: "variance (sample, ÷ (n−1)) = ", es: "varianza (muestral, ÷ (n−1)) = ", de: "Varianz (Stichprobe, ÷ (n−1)) = ", it: "varianza (campione, ÷ (n−1)) = " }],
+    [/^variance de la POPULATION \(÷ n\) = /, { en: "POPULATION variance (÷ n) = ", es: "varianza POBLACIONAL (÷ n) = ", de: "Varianz der GRUNDGESAMTHEIT (÷ n) = ", it: "varianza della POPOLAZIONE (÷ n) = " }],
+    [/^variance de l'ÉCHANTILLON \(÷ \(n−1\)\) = /, { en: "SAMPLE variance (÷ (n−1)) = ", es: "varianza MUESTRAL (÷ (n−1)) = ", de: "Varianz der STICHPROBE (÷ (n−1)) = ", it: "varianza del CAMPIONE (÷ (n−1)) = " }],
+    [/^variance d'échantillon indéfinie pour n = 1$/, { en: "sample variance undefined for n = 1", es: "varianza muestral indefinida para n = 1", de: "Stichprobenvarianz für n = 1 nicht definiert", it: "varianza campionaria indefinita per n = 1" }],
+    [/^écart-type \(population\) = /, { en: "standard deviation (population) = ", es: "desviación típica (poblacional) = ", de: "Standardabweichung (Grundgesamtheit) = ", it: "deviazione standard (popolazione) = " }],
+    [/^écart-type \(échantillon\) = /, { en: "standard deviation (sample) = ", es: "desviación típica (muestral) = ", de: "Standardabweichung (Stichprobe) = ", it: "deviazione standard (campione) = " }],
+    [/^écart-type de la POPULATION = /, { en: "POPULATION standard deviation = ", es: "desviación típica POBLACIONAL = ", de: "Standardabweichung der GRUNDGESAMTHEIT = ", it: "deviazione standard della POPOLAZIONE = " }],
+    [/^écart-type de l'ÉCHANTILLON = /, { en: "SAMPLE standard deviation = ", es: "desviación típica MUESTRAL = ", de: "Standardabweichung der STICHPROBE = ", it: "deviazione standard del CAMPIONE = " }],
+    [/^écart-type d'échantillon indéfini pour n = 1$/, { en: "sample standard deviation undefined for n = 1", es: "desviación típica muestral indefinida para n = 1", de: "Stichproben-Standardabweichung für n = 1 nicht definiert", it: "deviazione standard campionaria indefinita per n = 1" }],
+    [/^quartiles \(méthode inclusive, interpolation linéaire, Excel QUARTILE\.INC\) : /, { en: "quartiles (inclusive method, linear interpolation, Excel QUARTILE.INC): ", es: "cuartiles (método inclusivo, interpolación lineal, Excel QUARTILE.INC): ", de: "Quartile (inklusive Methode, lineare Interpolation, Excel QUARTILE.INC): ", it: "quartili (metodo inclusivo, interpolazione lineare, Excel QUARTILE.INC): " }],
+    [/^quartiles \(méthode exclusive, Excel QUARTILE\.EXC\) : /, { en: "quartiles (exclusive method, Excel QUARTILE.EXC): ", es: "cuartiles (método exclusivo, Excel QUARTILE.EXC): ", de: "Quartile (exklusive Methode, Excel QUARTILE.EXC): ", it: "quartili (metodo esclusivo, Excel QUARTILE.EXC): " }],
+    [/^\(méthode exclusive : /, { en: "(exclusive method: ", es: "(método exclusivo: ", de: "(exklusive Methode: ", it: "(metodo esclusivo: " }]
+  ];
+  function localize(text, lang){
+    if(!text || !lang || lang === "fr") return text;
+    var out = String(text);
+    LOC.forEach(function(pair){ var tr = pair[1][lang]; if(tr !== undefined) out = out.replace(pair[0], tr); });
+    return out;
+  }
+  var SPECIAL_EXACT = /^(aucune solution|tout réel|non inversible|n'existe pas)/;
+
   /* La carte affichée à l'élève (rendue en LaTeX côté page). Les libellés visibles passent par translations.js : ici, des CLÉS. */
   function cardOf(out, lang){
-    var card = { kind: out.kind, problemText: out.problemText, problemLatex: out.problemLatex, engine: out.engine, statusClass: out.statusClass, status: out.status, ok: out.ok };
+    var card = { kind: out.kind, problemText: out.problemText, problemLatex: out.problemLatex, engine: out.ok ? out.engine : null, statusClass: out.statusClass, status: out.status, ok: out.ok, lang: lang };
+    if((out.kind === "factor" || out.kind === "expand" || out.kind === "simplify") && out.problem && out.problem.ast) card.problemText = C.toText(out.problem.ast);   // le libellé du type est traduit par l'interface (clé math.kind.*)
     if(out.ok){
-      var exL = out.exact && (out.exact.latex || out.exact.text), exT = out.exact && out.exact.text;
+      var exL = out.exact && out.exact.latex, exT = out.exact && out.exact.text;       // pas de LaTeX → texte brut (jamais du texte passé tel quel à KaTeX)
       card.exactText = exT || null; card.exactLatex = exL || null; card.approxText = out.approx && out.approx.text || null;
+      if(lang !== "fr" && exT && (SPECIAL_EXACT.test(exT) || / libre\(s\)\)$/.test(exT))){ card.exactText = localize(exT, lang); card.exactLatex = null; }
       card.moneyText = null;
       var r = out.raw || {};
       if(out.kind === "finance" && r.value instanceof Rat){
@@ -954,9 +1005,9 @@
         if(out.rounded) card.moneyText = F.money(out.rounded, lang, out.money ? "€" : "");
         if(r.kind === "percent-change" || r.kind === "cagr") card.exactText = card.approxText;
       }
-      if(out.kind === "stats" && out.lines){ card.lines = out.lines.slice(); card.exactText = null; card.exactLatex = null; }
+      if(out.kind === "stats" && out.lines){ card.lines = out.lines.map(function(x){ return localize(x, lang); }); card.exactText = null; card.exactLatex = null; }
       card.verification = { status: out.status, method: out.verification.method };
-      card.steps = (out.steps || []).slice(0, 6); card.notes = (out.notes || []).filter(function(n){ return /^(domain-excludes|no-real-solution|complex-solutions|constant-of-integration|log-base-10|multiple-irr-possible|infinite-solutions|singular|irreducible)/.test(n) || !/^(percent|implicit|split-word|irrational|non-integer)/.test(n); });
+      card.steps = lang === "fr" ? (out.steps || []).slice(0, 6) : []; card.notes = (out.notes || []).filter(function(n){ return /^(domain-excludes|no-real-solution|complex-solutions|constant-of-integration|log-base-10|multiple-irr-possible|infinite-solutions|singular|irreducible)/.test(n) || !/^(percent|implicit|split-word|irrational|non-integer)/.test(n); });
       card.convAmbiguous = !!out.raw && !!out.raw.convAmbiguous;
     } else { card.message = out.message; card.code = out.code; card.complexNote = out.complexNote || null; }
     return card;
@@ -1027,7 +1078,7 @@
   NS.engine = {
     VERSION: VERSION, analyze: analyze, solve: solve, runFast: runFast, casRequest: casRequest, verifyCas: verifyCas, blockOf: blockOf, cardOf: cardOf,
     extractNumbers: extractNumbers, problemText: problemText, problemLatex: problemLatex, statusClass: statusClass, STATUS_PHRASE: STATUS_PHRASE,
-    practice: { kinds: PRACTICE_KINDS, generate: practiceGenerate, check: practiceCheck, next: practiceNext }
+    practice: { kinds: PRACTICE_KINDS, generate: practiceGenerate, check: practiceCheck, next: practiceNext }, localize: localize
   };
   /* API publique minimale, réutilisable par le futur REV-EM Excel Lab : fonctions numériques/statistiques EXACTES, sans l'analyseur. */
   NS.api = {

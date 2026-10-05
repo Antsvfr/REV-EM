@@ -252,6 +252,15 @@ console.log("\n── 5. MathVerifier ──");
   eq("A·A⁻¹ ≈ I confirmé", V.verifyMatrixInverse([[1, 2], [3, 4]], [[-2, 1], [1.5, -0.5]]).status, ST.VERIFIED_NUMERICALLY);
   check("inverse FAUSSE non vérifiée", V.verifyMatrixInverse([[1, 2], [3, 4]], [[1, 0], [0, 1]]).status === ST.COMPUTED_NOT_INDEPENDENTLY_VERIFIED);
   check("un contrôle numérique n'est JAMAIS présenté comme exact", V.verifyDerivative(P("sin(x)"), P("cos(x)"), "x").status !== ST.VERIFIED_EXACT);
+  eq("intégrale impropre ∫₁^∞ dx/x² = 1 confirmée (changement de variable)", V.verifyDefiniteIntegral(P("1/x^2"), "x", 1, Infinity, 1).status, ST.VERIFIED_NUMERICALLY);
+  eq("∫₋∞^∞ e^(−x²) = √π confirmée", V.verifyDefiniteIntegral(P("exp(-x^2)"), "x", -Infinity, Infinity, Math.sqrt(Math.PI)).status, ST.VERIFIED_NUMERICALLY);
+  check("∫₁^∞ dx/x² = 2 (faux) : non vérifiée", V.verifyDefiniteIntegral(P("1/x^2"), "x", 1, Infinity, 2).status === ST.COMPUTED_NOT_INDEPENDENTLY_VERIFIED);
+  check("∫₁^∞ dx/x diverge : jamais « vérifiée » comme valeur finie", V.verifyDefiniteIntegral(P("1/x"), "x", 1, Infinity, 5).status !== ST.VERIFIED_NUMERICALLY);
+  eq("valeurs propres : [[2,1],[1,2]] → 1 et 3 confirmées", V.verifyEigenvalues([[2, 1], [1, 2]], [{ value: 1, mult: 1 }, { value: 3, mult: 1 }]).status, ST.VERIFIED_NUMERICALLY);
+  check("valeurs propres fausses (1 et 4) : contredites", V.verifyEigenvalues([[2, 1], [1, 2]], [{ value: 1, mult: 1 }, { value: 4, mult: 1 }]).refuted === true);
+  check("limite FAUSSE (sin x/x → 2) : CONTREDITE (valeurs stabilisées ailleurs)", V.verifyLimit(P("sin(x)/x"), "x", 0, null, 2).refuted === true);
+  check("limite à convergence lente (x ln x → 0 en 0⁺) : PAS réfutée à tort", V.verifyLimit(P("x*ln(x)"), "x", 0, "+", 0).refuted !== true);
+  check("« non vérifiable » ≠ « réfuté » (intégrale d'une singularité intégrable)", V.verifyDefiniteIntegral(P("1/sqrt(x)"), "x", 0, 1, 2).refuted !== true);
 }
 
 /* ═══ 6. RÉPONSES D'ÉLÈVE (comparaison MATHÉMATIQUE) ═════════════════════════════════════════════════════════ */
@@ -320,13 +329,28 @@ console.log("\n── 10. routage Fast → CAS → vérification (faux CAS) ─�
   eq("…résultat recontrôlé numériquement par le MathVerifier (pas par le CAS)", [txt(r), r.status, r.diag.engineUsed], ["1", ST.VERIFIED_NUMERICALLY, "cas"]);
   cas = mockCas(() => ({ ok: true, exact: "2", latex: "2", limit: { kind: "finite", value: 2 }, timeMs: 5 }));
   r = await solve("limite de sin(x)/x quand x tend vers 0", { cas });
-  checkMock("un CAS qui SE TROMPE (lim = 2) n'obtient PAS « vérifié »", r.status === ST.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, r.status);
+  checkMock("un CAS qui SE TROMPE (lim = 2) : résultat CONTREDIT → NON AFFICHÉ (CAS_RESULT_REFUTED)", [r.ok, r.code, r.exact], [false, "CAS_RESULT_REFUTED", null]);
   cas = mockCas(() => ({ ok: true, exact: "cos(x)", latex: "\\cos x", timeMs: 5 }));
   r = await solve("dérivée de sin(x)", { cas });
   checkMock("dérivée via CAS : cos(x) recontrôlée par différences centrées", [txt(r), r.status], ["cos(x)", ST.VERIFIED_NUMERICALLY]);
   cas = mockCas(() => ({ ok: true, exact: "-sin(x)", latex: "-\\sin x", timeMs: 5 }));
   r = await solve("dérivée de sin(x)", { cas });
-  checkMock("dérivée FAUSSE renvoyée par le CAS : non vérifiée", r.status, ST.COMPUTED_NOT_INDEPENDENTLY_VERIFIED);
+  checkMock("dérivée FAUSSE renvoyée par le CAS : CONTREDITE → non affichée", [r.ok, r.code, r.exact], [false, "CAS_RESULT_REFUTED", null]);
+  cas = mockCas(() => ({ ok: true, exact: "x + 2", latex: "x+2", timeMs: 5 }));
+  r = await solve("factorise x^2+1 sur les complexes", { cas });
+  checkMock("factorisation renvoyée par le CAS NON équivalente à l'original : contredite, non affichée", [r.ok, r.code], [false, "CAS_RESULT_REFUTED"]);
+  cas = mockCas(() => ({ ok: true, exact: "(x = -3, y = -4) | (x = 4, y = 3)", latex: "", solutionKind: "several", solutions: [], solutionsList: [{ x: -3, y: -4 }, { x: 4, y: 3 }], timeMs: 5 }));
+  r = await solve("résous x^2+y^2=25 et x-y=1", { cas });
+  checkMock("système non linéaire : CHAQUE solution du CAS est réinjectée (VERIFIED_NUMERICALLY)", [r.status, cas.calls[0].op], [ST.VERIFIED_NUMERICALLY, "system"]);
+  cas = mockCas(() => ({ ok: true, exact: "(x = -3, y = -4) | (x = 4, y = 4)", latex: "", solutionKind: "several", solutions: [], solutionsList: [{ x: -3, y: -4 }, { x: 4, y: 4 }], timeMs: 5 }));
+  r = await solve("résous x^2+y^2=25 et x-y=1", { cas });
+  checkMock("…une solution fausse parmi deux : contredite, non affichée", [r.ok, r.code], [false, "CAS_RESULT_REFUTED"]);
+  cas = mockCas(() => ({ ok: true, exact: "λ = 2 ; λ = 11 ; λ = 1", latex: "", eigenvalues: [{ str: "2", mult: 1, value: 2, selfcheck: true }, { str: "11", mult: 1, value: 11, selfcheck: true }, { str: "1", mult: 1, value: 1, selfcheck: true }], matrixA: [[2, 0, 0], [0, 3, 4], [0, 4, 9]], timeMs: 5 }));
+  r = await solve("valeurs propres de [[2,0,0],[0,3,4],[0,4,9]]", { cas });
+  checkMock("valeurs propres 3×3 : det(A−λI)≈0 + trace + déterminant (contrôle indépendant du CAS)", [r.status, r.verification.method], [ST.VERIFIED_NUMERICALLY, "det(A−λI)≈0 + trace/déterminant (flottants)"]);
+  cas = mockCas(() => ({ ok: true, exact: "λ = 2 ; λ = 11", latex: "", eigenvalues: [{ str: "2", mult: 1, value: 2, selfcheck: true }, { str: "11", mult: 1, value: 11, selfcheck: true }], matrixA: [[2, 0, 0], [0, 3, 4], [0, 4, 9]], timeMs: 5 }));
+  r = await solve("valeurs propres de [[2,0,0],[0,3,4],[0,4,9]]", { cas });
+  checkMock("valeur propre MANQUANTE (λ=1 oubliée par le CAS) : détectée (multiplicités ≠ n), résultat non affiché", [r.ok, r.code], [false, "CAS_RESULT_REFUTED"]);
   cas = mockCas(() => { const e = new Error("t"); e.code = "CAS_TIMEOUT"; e.message = "Le calcul formel a dépassé 20 s et a été interrompu"; throw e; });
   r = await solve("intégrale de exp(-x^2)*sin(x)^5*x^3 de 0 à oo", { cas });
   checkMock("timeout du CAS : échec propre, AUCUN résultat inventé", [r.ok, r.status, r.code, r.exact], [false, ST.UNSUPPORTED, "CAS_TIMEOUT", null]);
