@@ -74,12 +74,13 @@
       try{ exact = C.evalExact(ast, {}); }
       catch(e){ if(!(e && e.name === "MathError" && e.code === "IRRATIONAL")) throw e; }
       if(exact){
-        var f = C.evalFloat(ast, {}), ef = exact.toNumber();
-        var close = Math.abs(f - ef) <= 1e-9 * Math.max(1, Math.abs(ef));
+        var f, ef, close, floatSkipped = false;
+        try{ f = C.evalFloat(ast, {}); ef = exact.toNumber(); close = Math.abs(f - ef) <= 1e-9 * Math.max(1, Math.abs(ef)); }
+        catch(e){ if(!(e && e.name === "MathError" && (e.code === "OVERFLOW" || e.code === "TOO_COMPLEX"))) throw e; close = true; floatSkipped = true; }   // hors de la plage des flottants : l'exact BigInt reste valable
         var p = presentRat(exact, o), ap = approxOf(exact, o.digits, o.lang);
         return { ok: true, kind: "arithmetic", engine: "fast", value: exact, exact: { text: p.exactText, latex: p.exactLatex }, approx: ap,
                  decimal: p.decimalText, decimalExact: p.decimalExact,
-                 verification: close ? verif(STATUS.VERIFIED_EXACT, "exact-rational+float-crosscheck", "rationnels BigInt, recoupés par un second calcul en flottants")
+                 verification: close ? verif(STATUS.VERIFIED_EXACT, floatSkipped ? "exact-rational" : "exact-rational+float-crosscheck", floatSkipped ? "rationnels BigInt (hors de la plage des flottants : pas de recoupement flottant)" : "rationnels BigInt, recoupés par un second calcul en flottants")
                                      : verif(STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED, "float-crosscheck-failed", "écart entre exact et flottant"),
                  steps: [C.toText(ast) + " = " + p.exactText + (p.isInt ? "" : (p.decimalExact ? " = " : " ≈ ") + p.decimalText)], notes: [] };
       }
@@ -199,7 +200,7 @@
                                    verification: verif(STATUS.VERIFIED_EXACT, "polynomial-identity", "0 = 0 : identité"), steps: ["l'équation se réduit à 0 = 0"], notes: [], poly: p };
       if(deg === 0) return { ok: true, kind: "equation", engine: "fast", variable: v, solutionKind: "none", solutions: [], exact: { text: "aucune solution", latex: "\\varnothing" }, approx: null,
                              verification: verif(STATUS.VERIFIED_EXACT, "polynomial-identity", "constante non nulle = 0 : impossible"), steps: ["l'équation se réduit à " + ratText(p[0]) + " = 0"], notes: [], poly: p };
-      var sols = [], steps = [], status = STATUS.VERIFIED_EXACT, method = "substitution-exacte", detail = [];
+      var sols = [], steps = [], status = STATUS.VERIFIED_EXACT, method = "substitution-exacte", detail = [], multiple = false;
       var rr = rationalRoots(p), rest = rr.rest, restDeg = poly.degree(rest);
       if(restDeg > 2 || (!rr.complete && restDeg >= 2 && restDeg > 2)) return needsCAS("degré > 2 sans racines rationnelles suffisantes");
       var allRoots = [];
@@ -229,7 +230,14 @@
         if(!res) coeffsOK = false;
       });
       if(!coeffsOK){ status = STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED; method = "substitution-failed"; }
-      // doublons (racines doubles) : une seule entrée, multiplicité notée
+      // doublons (racines multiples) : une seule entrée, multiplicité notée
+      var merged = [];
+      allRoots.forEach(function(x){
+        var same = merged.filter(function(m){ return m.kind === x.kind && m.complex === x.complex && m.u.eq(x.u) && m.v.eq(x.v) && String(m.rad) === String(x.rad); })[0];
+        if(same) same.mult = (same.mult || 1) + (x.mult || 1); else merged.push(x);
+      });
+      allRoots = merged;
+      if(allRoots.some(function(x){ return (x.mult || 1) > 1; })) multiple = true;
       allRoots.forEach(function(x){
         var d = rootDisplay(x, o.lang);
         sols.push({ text: d.text, latex: d.latex, approx: d.approx, kind: x.kind, mult: x.mult || 1, real: !x.complex, re: d.re, im: d.im });
@@ -237,10 +245,15 @@
       var realSols = sols.filter(function(s){ return s.real; });
       var cplx = sols.filter(function(s){ return !s.real; });
       realSols.sort(function(a, b){ return a.re - b.re; });
+      if(o.domain === "real"){                                                           // l'élève a demandé les solutions RÉELLES : on ne montre pas les complexes
+        if(!realSols.length) return { ok: true, kind: "equation", engine: "fast", variable: v, degree: deg, solutionKind: "none", solutions: [], exact: { text: "aucune solution réelle", latex: "\\varnothing" }, approx: null,
+                                      verification: verif(status, method, "toutes les racines (complexes) ont été réinjectées ; aucune n'est réelle"), steps: steps.concat(["équation ramenée à " + polyToText(p, v) + " = 0"]), notes: ["no-real-solution"], poly: p };
+        cplx = [];
+      }
       var all = realSols.concat(cplx);
       var text = all.map(function(s){ return v + " = " + s.text; }).join(" ; ");
       var latex = all.map(function(s){ return v + " = " + s.latex; }).join(",\\; ");
-      var notes = [];
+      var notes = multiple ? ["multiple-root"] : [];
       if(!realSols.length && cplx.length) notes.push("no-real-solution");
       if(cplx.length) notes.push("complex-solutions");
       var approxTxt = all.filter(function(s){ return s.kind === "surd"; }).map(function(s){ return v + " ≈ " + C.fmtFloat(s.re, 6, o.lang || "fr"); }).join(" ; ");
@@ -293,13 +306,24 @@
       var p = poly.fromAst(ast, v); if(!p) return needsCAS("expression non polynomiale");
       if(poly.degree(p) < 1) return failRes(STATUS.INVALID_INPUT, "NOT_POLYNOMIAL_IN_VAR", "pas de variable à factoriser");
       var lead = p[p.length - 1], rr = rationalRoots(p), rest = rr.rest, restDeg = poly.degree(rest);
+      if(restDeg === 1){                                       // le dernier facteur linéaire est une racine rationnelle de plus
+        var rl = rest[1], r1x = rest[0].neg().div(rl), dupIdx = -1;
+        rr.roots.forEach(function(x, k){ if(x.r.eq(r1x)) dupIdx = k; });
+        if(dupIdx >= 0) rr.roots[dupIdx].mult++; else rr.roots.push({ r: r1x, mult: 1 });
+        rest = [rl]; restDeg = 0;
+      }
       if(!rr.complete && restDeg >= 3) return needsCAS("facteurs rationnels non déterminés");
       if(restDeg >= 4) return needsCAS("facteur irréductible de degré ≥ 4 à examiner");
-      var partsT = [], partsL = [], prod = [R1];
+      var partsT = [], partsL = [], prod = [R1], denProd = R1;
       rr.roots.forEach(function(x){
-        var f = linearFactorTextLatex(x.r, v);
+        var f, lin;
+        if(x.r.isInt()){ f = linearFactorTextLatex(x.r, v); lin = [x.r.neg(), R1]; }
+        else {                                                    // racine p/q : facteur à coefficients ENTIERS (qx − p), le 1/q passe dans la constante globale
+          lin = [new Rat(-x.r.n, ONE), new Rat(x.r.d, ONE)];
+          f = { t: "(" + polyToText(lin, v) + ")", l: "\\left(" + polyToLatex(lin, v) + "\\right)" };
+        }
         partsT.push(f.t + (x.mult > 1 ? "^" + x.mult : "")); partsL.push(f.l + (x.mult > 1 ? "^{" + x.mult + "}" : ""));
-        for(var k = 0; k < x.mult; k++) prod = poly.mul(prod, [x.r.neg(), R1]);
+        for(var k = 0; k < x.mult; k++){ prod = poly.mul(prod, lin); if(!x.r.isInt()) denProd = denProd.mul(new Rat(x.r.d, ONE)); }
       });
       var restLead = rest[rest.length - 1], constant = lead.div(restLead.isZero() ? R1 : restLead);
       var restFactorT = null;
@@ -312,8 +336,8 @@
         restFactorT = "(" + polyToText(monic, v) + ")";
         partsT.push(restFactorT); partsL.push("\\left(" + polyToLatex(monic, v) + "\\right)");
         prod = poly.mul(prod, monic);
-        constant = lead;                                // p = lead × Π(x − r) × monic(rest)
-      } else constant = lead;
+        constant = lead.div(denProd);                   // p = (lead / Π q) × Π(qx − p) × monic(rest)
+      } else constant = lead.div(denProd);
       // reconstruction EXACTE : constante × produit = p ?
       var rebuilt = prod.map(function(c){ return c.mul(constant); });
       var okExact = poly.eq(rebuilt, p);

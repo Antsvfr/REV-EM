@@ -139,8 +139,10 @@
   };
 
   CasClient.prototype.cancel = function(){
+    if(!this._pending) return false;                       // rien en cours : on ne tue pas un moteur prêt pour rien
     this._failPending({ code: "CAS_CANCELLED", message: "calcul annulé" });
     this._kill();
+    return true;
   };
 
   CasClient.prototype.isReady = function(){ return this.state === "ready" && !!this.worker; };

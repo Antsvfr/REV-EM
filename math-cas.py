@@ -51,6 +51,8 @@ def _count(n):
 
 
 _SYMS = {}
+_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,15}$")
+_INT_RE = re.compile(r"^-?[0-9]+$")
 
 
 def _sym(name, real):
@@ -68,12 +70,18 @@ def build(n, real):
     """AST (dict) -> objet SymPy. Table de construction FERMÉE."""
     t = n["t"]
     if t == "q":
-        num, den = int(n["n"]), int(n["d"])
-        if len(str(abs(num))) > MAX_INT_DIGITS or len(str(den)) > MAX_INT_DIGITS:
-            raise CasError("TOO_COMPLEX", "nombre trop volumineux")
+        sn, sd = str(n["n"]), str(n["d"])
+        if not _INT_RE.match(sn) or not _INT_RE.match(sd) or len(sn) > MAX_INT_DIGITS + 1 or len(sd) > MAX_INT_DIGITS:
+            raise CasError("INVALID_INPUT" if not (_INT_RE.match(sn) and _INT_RE.match(sd)) else "TOO_COMPLEX", "nombre invalide ou trop volumineux", "INVALID_INPUT")
+        num, den = int(sn), int(sd)
+        if den == 0:
+            raise CasError("DIV_ZERO", "dénominateur nul", "INVALID_INPUT")
         return Rational(num, den)
     if t == "sym":
-        return _sym(n["name"], real)
+        nm = n["name"]
+        if not isinstance(nm, str) or not _NAME_RE.match(nm):
+            raise CasError("INVALID_INPUT", "nom de variable invalide", "INVALID_INPUT")
+        return _sym(nm, real)
     if t == "const":
         name = n["name"]
         if name == "pi":
@@ -134,7 +142,7 @@ def build(n, real):
         if fn == "log2":
             return sp.log(a[0], 2)
         simple = {"sin": sp.sin, "cos": sp.cos, "tan": sp.tan, "asin": sp.asin, "acos": sp.acos, "atan": sp.atan,
-                  "sinh": sp.sinh, "cosh": sp.cosh, "tanh": sp.tanh, "floor": sp.floor, "ceil": sp.ceiling}
+                  "sinh": sp.sinh, "cosh": sp.cosh, "tanh": sp.tanh, "floor": sp.floor, "ceil": sp.ceiling, "sign": sp.sign}
         if fn in simple:
             return simple[fn](a[0])
         if fn == "fact":
@@ -267,12 +275,13 @@ def _family_parts(rset, var):
 
 
 def op_solve(req):
-    eq = build(req["eq"], False)
-    x = _sym(req["var"], False)
+    real_only = req.get("domain") == "real"
+    eq = build(req["eq"], real_only)
+    x = _sym(req["var"], real_only)
     expr = eq.lhs - eq.rhs
     notes = []
     try:
-        cset = sp.solveset(expr, x, domain=S.Complexes)
+        cset = sp.solveset(expr, x, domain=S.Reals if real_only else S.Complexes)
     except Exception:
         # valeur absolue / fonctions non inversibles dans ℂ : on résout dans les réels, et on le dit
         eq = build(req["eq"], True)
@@ -485,7 +494,6 @@ def op_matrix(req):
             except Exception:
                 ok = None
             out.append({"str": to_text(val), "latex": to_latex(val), "mult": int(mult), "selfcheck": ok})
-        out.sort(key=lambda d: (num_float(sp.sympify(0)) or 0))
         text = " ; ".join("λ = " + d["str"] + (" (×" + str(d["mult"]) + ")" if d["mult"] > 1 else "") for d in out)
         latex = ",\\; ".join("\\lambda = " + d["latex"] for d in out)
         return {"ok": True, "exact": text, "latex": latex, "eigenvalues": out}

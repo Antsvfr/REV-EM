@@ -4282,6 +4282,33 @@
   .ai-noai-actions{ display:flex; flex-wrap:wrap; gap:16px; }
   .ai-noai-actions .btn-text{ min-height:32px; }
 
+  /* Carte de résultat du moteur mathématique : le statut de vérification se lit d'abord (couleur + texte, jamais la couleur seule). */
+  .mx-card{ margin:0 0 12px; padding:12px 16px; background: var(--surface); border:1px solid var(--border); border-left:3px solid var(--border); border-radius: var(--radius-md); min-width:0; }
+  .mx-card.mx-verified{ border-left-color: var(--success); }
+  .mx-card.mx-verified-numeric{ border-left-color: var(--info); }
+  .mx-card.mx-unverified, .mx-card.mx-ambiguous{ border-left-color: var(--warning); }
+  .mx-card.mx-unsupported, .mx-card.mx-invalid{ border-left-color: var(--error); }
+  .mx-head{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:8px; }
+  .mx-badge{ font-size: var(--text-label); font-weight: var(--weight-semibold); text-transform:uppercase; letter-spacing:.06em; padding:2px 8px; border-radius:999px; background: var(--success-wash); color: var(--success); }
+  .mx-verified-numeric .mx-badge{ background: var(--info-wash); color: var(--info); }
+  .mx-unverified .mx-badge, .mx-ambiguous .mx-badge{ background: var(--warning-wash); color: var(--warning); }
+  .mx-unsupported .mx-badge, .mx-invalid .mx-badge{ background: var(--error-wash); color: var(--error); }
+  .mx-engine{ font-size: var(--text-label); color: var(--text-muted); }
+  .mx-row{ margin:6px 0; min-width:0; }
+  .mx-label{ display:block; font-size: var(--text-label); text-transform:uppercase; letter-spacing:.06em; color: var(--text-muted); margin-bottom:2px; }
+  .mx-problem, .mx-exact, .mx-approx{ overflow-x:auto; overflow-y:hidden; max-width:100%; }
+  .mx-exact{ font-size:1.15em; }
+  .mx-approx{ color: var(--ink-soft); font-size: var(--text-metadata); }
+  .mx-lines{ margin:0; padding-left:18px; font-size: var(--text-metadata); }
+  .mx-steps{ margin-top:8px; font-size: var(--text-metadata); }
+  .mx-steps summary{ cursor:pointer; color: var(--ink-soft); min-height:28px; }
+  .mx-steps ol{ margin:4px 0 0; padding-left:20px; }
+  .mx-note{ margin:6px 0 0; font-size: var(--text-metadata); color: var(--text-muted); }
+  .mx-note.mx-warn{ color: var(--warning); }
+  .mx-msg{ margin:4px 0 0; font-size: var(--text-metadata); color: var(--ink); }
+  .mx-tex .katex{ font-size:1em; }
+  .mx-tex-block .katex-display{ margin:.2em 0; }
+  .mx-tex-block .katex-display > .katex{ text-align:left; }
   .ai-msg-actions{ display:flex; flex-wrap:wrap; gap:12px; margin-top:2px; }
   .ai-quickrow{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
   .ai-quickrow .btn-text{ min-height:36px; padding:4px 8px; }
@@ -5291,6 +5318,14 @@
 <!-- Logique PURE de la BANQUE de révision d'un cours et du SESSION BUILDER (Fisher-Yates, choix mélangés,
      couverture par concept, jamais deux sessions identiques). Ni DOM, ni state, ni WebLLM. Voir REVISION_BANK.md. -->
 <script src="revision-bank.js"></script>
+<!-- MOTEUR MATHÉMATIQUE (déterministe, vérifiable) : cœur exact (rationnels BigInt, parseur à liste blanche), Fast Engine, MathVerifier,
+     analyseur + orchestrateur, et le CLIENT du CAS avancé (SymPy/Pyodide, dans un Worker créé À LA DEMANDE : rien n'est téléchargé
+     au démarrage). Ni DOM, ni state. Le LLM n'y calcule jamais : il explique. Voir AI_MATH.md. -->
+<script src="math-core.js"></script>
+<script src="math-fast.js"></script>
+<script src="math-verify.js"></script>
+<script src="math-engine.js"></script>
+<script src="math-cas-client.js"></script>
 
 <script>
 /* ============================================================
@@ -16776,6 +16811,7 @@ async function aiSend(){
 
 function aiCancelGeneration(){
   if(aiCurrentSignal) aiCurrentSignal.cancelled = true;
+  if(RMath) RMath.cas.cancel();                      // un calcul formel en cours est TUÉ (SymPy n'est pas interruptible) ; un moteur prêt et inactif est laissé en paix
   try{ aiAbortGeneration(); }catch(e){}
 }
 
@@ -16793,6 +16829,7 @@ function aiCancelGeneration(){
    ============================================================ */
 const RAssist = window.RevemAssistant;
 const RKnow = window.RevemKnowledge;
+const RMath = (window.RevemMath && window.RevemMath.engine && window.RevemMath.cas) ? window.RevemMath : null;
 
 /* ── REV-EM Knowledge : chargement PARESSEUX (au 1er usage, jamais au démarrage) et réglage ──
    Mode « auto » : seuls les éléments VÉRIFIÉS sont envoyés au modèle (aujourd'hui : aucun, la base ne contient que des
@@ -16828,7 +16865,210 @@ function knowledgeEnsure(){
 }
 const aiWithTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
 
-function aiChatFresh(){ return { phase: "IDLE", topic: "", domain: "", qualityNote: null, lastOutput: null, lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
+/* ============================================================
+   13ter. MOTEUR MATHÉMATIQUE — branchement (la logique est dans math-*.js ; ici : état, rendu, navigation)
+   ------------------------------------------------------------
+   question → RevemMath.engine.analyze() (déterministe, sans modèle) → Fast Engine (exact) ou CAS (SymPy/Pyodide, Worker,
+   chargé À LA DEMANDE) → MathVerifier (contrôle indépendant) → carte de résultat (KaTeX) + bloc « MATH ENGINE RESULT » pour
+   le LLM, qui EXPLIQUE sans jamais calculer. Si le moteur ne sait pas ou ne peut pas vérifier, il le dit ; aucun nombre inventé.
+   Voir AI_MATH.md.
+   ============================================================ */
+const MATH_COMMAND_RE = /^\s*(r[eé]sou|calcul|d[eé]riv|factori|d[eé]velopp|simplifi|int[eé]gr|primitiv|limite|inverse|d[eé]terminant|explique|pourquoi|comment|qu['e ]|solve|compute|calculate|differentiate|derive|factor|expand|simplify|integrate|limit|explain|why|how|what|resuelve|calcula|deriva|factoriza|explica|l[oö]se|berechne|erkl[aä]r|risolvi|calcola|spiega)/i;
+const MATH_NOTE_KEYS = { "no-real-solution": "no_real", "complex-solutions": "complex", "constant-of-integration": "constant_c", "log-base-10": "log10", "multiple-irr-possible": "multiple_irr",
+  "infinite-solutions": "infinite_solutions", "singular": "singular", "irreducible-factor-over-Q": "irreducible", "real-solutions-only": "real_only", "approximate-roots": "approx_roots",
+  "infinite-family": "infinite_family", "equation-without-equals": "no_equals", "multiple-root": "multiple_root" };
+const MATH_NOTE_SENTENCES = [[/^convention non précisée/, "conv_ambiguous"], [/^taux périodique proportionnel/, "rate_proportional"], [/^z critique/, "z_critical"], [/^intervalle z/, "z_known"], [/^N\(μ/, "normal_conv"]];
+
+const mathKatex = { promise: null };
+/* KaTeX (auto-hébergé, vendor/katex/) : chargé à la PREMIÈRE carte seulement. S'il échoue (hors ligne, jamais mis en cache), le texte brut reste affiché. */
+function mathLoadKatex(){
+  if(window.katex) return Promise.resolve(true);
+  if(mathKatex.promise) return mathKatex.promise;
+  mathKatex.promise = new Promise(resolve => {
+    try{
+      const base = new URL("vendor/katex/", document.baseURI).href;
+      const css = document.createElement("link"); css.rel = "stylesheet"; css.href = base + "katex.min.css"; document.head.appendChild(css);
+      const sc = document.createElement("script"); sc.src = base + "katex.min.js";
+      sc.onload = () => resolve(!!window.katex);
+      sc.onerror = () => { mathKatex.promise = null; resolve(false); };
+      document.head.appendChild(sc);
+    }catch(e){ mathKatex.promise = null; resolve(false); }
+  });
+  return mathKatex.promise;
+}
+function mathHydrate(){
+  if(!document.querySelector(".mx-tex[data-tex]:not([data-done])")) return;
+  mathLoadKatex().then(ok => {
+    if(!ok || !window.katex) return;
+    document.querySelectorAll(".mx-tex[data-tex]:not([data-done])").forEach(el => {
+      try{
+        window.katex.render(el.getAttribute("data-tex"), el, { throwOnError: false, displayMode: el.classList.contains("mx-tex-block"), trust: false, strict: "ignore", maxExpand: 200 });
+        el.setAttribute("data-done", "1");
+      }catch(e){ /* le texte brut reste */ }
+    });
+  });
+}
+const mathAttr = s => escapeHtml(s).replace(/"/g, "&quot;");
+function mathTex(latex, fallback, block){
+  return `<span class="mx-tex${block ? " mx-tex-block" : ""}"${latex ? ` data-tex="${mathAttr(latex)}"` : ""}>${escapeHtml(fallback || "")}</span>`;
+}
+function mathErrKey(card){
+  const c = String(card.code || "");
+  if(card.status === "AMBIGUOUS" || /AMBIGUOUS/.test(c)) return "ambiguous";
+  if(c === "DIV_ZERO") return "div_zero";
+  if(c === "DOMAIN") return "domain";
+  if(/TOO_COMPLEX|OVERFLOW|TOO_MANY/.test(c)) return "too_complex";
+  if(/TIMEOUT/.test(c)) return "timeout";
+  if(/^CAS_(UNAVAILABLE|ASSET_MISSING|UNSUPPORTED_ENV|WORKER|BAD)/.test(c)) return "cas_unavailable";
+  if(card.status === "INVALID_INPUT") return "invalid";
+  return "unsupported";
+}
+function mathNoteText(n){
+  if(n.indexOf("domain-excludes:") === 0) return t("math.note.domain_excludes", { v: n.slice(16).replace(/,/g, ", ") });
+  const key = MATH_NOTE_KEYS[n];
+  if(key) return t("math.note." + key);
+  for(const [rx, k] of MATH_NOTE_SENTENCES) if(rx.test(n)) return t("math.note." + k);
+  return (window.LyonI18n && LyonI18n.getLang && LyonI18n.getLang() === "fr") ? n : "";     // phrase technique non traduite : jamais affichée dans une autre langue
+}
+function mathCardHtml(card){
+  if(!card || card.kind === "practice") return "";
+  const parts = [];
+  const engine = card.engine === "cas" ? t("math.engine.cas") : (card.engine === "fast" ? t("math.engine.fast") : "");
+  parts.push(`<div class="mx-head"><span class="mx-badge">${escapeHtml(t("math.status." + card.status))}</span>${engine ? `<span class="mx-engine">${escapeHtml(engine)}</span>` : ""}</div>`);
+  if(card.problemText) parts.push(`<div class="mx-row"><span class="mx-label">${escapeHtml(t("math.problem"))}</span><div class="mx-problem">${mathTex(card.problemLatex, card.problemText, false)}</div></div>`);
+  if(card.ok){
+    if(card.lines && card.lines.length) parts.push(`<div class="mx-row"><span class="mx-label">${escapeHtml(t("math.result"))}</span><ul class="mx-lines">${card.lines.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>`);
+    else {
+      let res = "";
+      if(card.exactText || card.exactLatex) res += `<div class="mx-exact">${mathTex(card.exactLatex, card.exactText, true)}</div>`;
+      if(card.moneyText) res += `<div class="mx-approx">${escapeHtml(card.moneyText)}</div>`;
+      else if(card.approxText && card.approxText !== card.exactText) res += `<div class="mx-approx">≈ ${escapeHtml(card.approxText)}</div>`;
+      if(res) parts.push(`<div class="mx-row"><span class="mx-label">${escapeHtml(t("math.result"))}</span>${res}</div>`);
+    }
+    if(card.steps && card.steps.length) parts.push(`<details class="mx-steps"><summary>${escapeHtml(t("math.steps"))}</summary><ol>${card.steps.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ol></details>`);
+    if(card.status === "VERIFIED_NUMERICALLY") parts.push(`<p class="mx-note">${escapeHtml(t("math.verif.numeric"))}</p>`);
+    else if(card.status === "COMPUTED_NOT_INDEPENDENTLY_VERIFIED") parts.push(`<p class="mx-note mx-warn">${escapeHtml(t("math.verif.unverified"))}</p>`);
+    const notes = (card.notes || []).map(mathNoteText).filter(Boolean);
+    if(card.convAmbiguous && !(card.notes || []).some(n => /^convention non précisée/.test(n))) notes.push(t("math.note.conv_ambiguous"));
+    notes.forEach(x => parts.push(`<p class="mx-note">${escapeHtml(x)}</p>`));
+  } else {
+    parts.push(`<p class="mx-msg">${escapeHtml(t("math.err." + mathErrKey(card)))}</p>`);
+    if(card.complexNote) parts.push(`<p class="mx-note">${escapeHtml(t("math.note.complex_domain"))}</p>`);
+  }
+  return `<div class="mx-card mx-${escapeHtml(card.statusClass || "unverified")}" role="group" aria-label="${mathAttr(t("math.title"))}">${parts.join("")}</div>`;
+}
+/* Résumé TEXTE d'une carte (copie, historique, réponse quand le modèle IA n'est pas chargé). */
+function mathSummaryText(card){
+  if(!card) return "";
+  if(!card.ok) return t("math.status." + card.status) + " — " + t("math.err." + mathErrKey(card));
+  const L = [];
+  if(card.problemText) L.push(card.problemText);
+  if(card.lines && card.lines.length) card.lines.forEach(x => L.push(x));
+  else {
+    L.push(t("math.result") + " : " + (card.moneyText || card.exactText || card.approxText || ""));
+    if(!card.moneyText && card.exactText && card.approxText && card.approxText !== card.exactText) L.push("≈ " + card.approxText);
+  }
+  L.push(t("math.status." + card.status));
+  return L.join("\n");
+}
+/* Statut du CAS : « Initialisation… » n'apparaît QUE pendant un vrai chargement (jamais au démarrage, jamais quand il est déjà prêt). */
+function mathPaintStatus(st){
+  const el = document.getElementById("ai-stream");
+  if(!el || !state.aiBusy || !state.aiChat.mathPending) return;
+  const txt = st && st.state === "loading" ? t("math.loading") : t("math.computing");
+  el.innerHTML = `<span class="ai-loading" style="padding:0;"><span class="ai-spinner"></span>${escapeHtml(txt)}</span>`;
+}
+if(RMath) RMath.cas.onStatus(mathPaintStatus);
+
+function mathQuestionDetected(q){
+  try{
+    const uiLang = (window.LyonI18n && LyonI18n.getLang) ? LyonI18n.getLang() : "fr";
+    const a = RAssist.analyzeQuestion(q, { previous: null, lang: uiLang });
+    return !!mathProblemFor(q, a);
+  }catch(e){ return false; }
+}
+const mathLangOf = a => ({ fr: "fr", en: "en", es: "es", de: "de", it: "it" }[a.lang] || "fr");
+function mathProblemFor(question, analysis){
+  if(!RMath) return null;
+  try{
+    const p = RMath.engine.analyze(question, { lang: mathLangOf(analysis) });
+    return p && p.kind && p.kind !== "none" ? p : null;
+  }catch(e){ return null; }
+}
+/* Résolution : Fast Engine, sinon CAS ; ne lève jamais. Renvoie le résultat enrichi { out, calc } pour le prompt. */
+async function mathSolve(problem, analysis){
+  let out;
+  try{ out = await RMath.engine.solve(problem, { cas: RMath.cas, lang: mathLangOf(analysis), timeoutMs: 20000 }); }
+  catch(e){ return null; }
+  if(!out || !out.handled) return null;
+  const blk = out.block || { header: "", text: "" };
+  const calc = { kind: "math:" + out.kind, resultText: mathSummaryText(out.card), block: blk.text, header: blk.header, steps: (out.steps || []).slice(0, 6), values: null };
+  return { out, calc, card: out.card };
+}
+/* ── M'ENTRAÎNER : exercices générés de façon déterministe, réponse comparée MATHÉMATIQUEMENT (1/2 = 0,5 = 2/4 ; (x+1)² = x²+2x+1) ── */
+function mathPracticeKind(question){
+  const f = String(question).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  if(/deriv|derivative|ableit|derivad|derivat/.test(f)) return "derivative";
+  if(/factori|faktorisi|fattorizz/.test(f)) return "quadratic";
+  if(/interet|compos|compound|zins|interes|interesse/.test(f)) return "compound";
+  if(/moyenne|mean|average|mittel|media|promedio/.test(f)) return "mean";
+  if(/equation|ecuacion|gleichung|equazione/.test(f)) return "linear";
+  return null;
+}
+function mathPracticeChips(level){ return level <= 0 ? ["practice_hint", "practice_solution"] : ["practice_retry", "practice_hint", "practice_step", "practice_solution"]; }
+function mathPushAssistant(thread, text, meta){ thread.push({ role: "assistant", content: text, meta: Object.assign({ math: true, local: false }, meta || {}) }); }
+
+function aiMathPracticeStart(question, analysis, history, userMsg){
+  const chat = state.aiChat, thread = state.aiThread;
+  const ex = RMath.engine.practice.generate(mathPracticeKind(question), Date.now() % 1000003, mathLangOf(analysis));
+  if(!ex.ok){ return false; }
+  chat.practice = { ex, level: 0, attempts: 0 };
+  mathPushAssistant(thread, ex.problemText + "\n\n" + t("math.practice.intro"), { practice: "start" });
+  chat.suggestions = mathPracticeChips(0);
+  return true;
+}
+function aiMathPracticeAttempt(answer){
+  const chat = state.aiChat, thread = state.aiThread, pr = chat.practice;
+  const r = RMath.engine.practice.check(pr.ex, answer);
+  pr.attempts++;
+  if(r.verdict === "correct" || r.verdict === "correct-wrong-form"){
+    let msg = t("math.practice.correct");
+    if(r.verdict === "correct-wrong-form") msg = t("math.practice.wrong_form");
+    else if(r.status === "VERIFIED_NUMERICALLY") msg += " " + t("math.verif.numeric");
+    mathPushAssistant(thread, msg, { practice: r.verdict });
+    if(r.verdict === "correct"){ chat.practice = null; chat.suggestions = ["practice_another"]; }
+    else chat.suggestions = mathPracticeChips(1);
+  } else {
+    const key = r.verdict === "invalid" ? "invalid" : (r.verdict === "unsure" ? "unsure" : "incorrect");
+    mathPushAssistant(thread, t("math.practice." + key), { practice: key });
+    chat.suggestions = mathPracticeChips(1);
+  }
+}
+function aiMathPracticeAction(kind){
+  const chat = state.aiChat, thread = state.aiThread;
+  if(kind === "practice_another"){
+    const prev = chat.practice && chat.practice.ex ? chat.practice.ex.kind : null;
+    const ex = RMath.engine.practice.generate(prev, Date.now() % 1000003, chat.lang || "fr");
+    if(ex.ok){ thread.push({ role: "user", content: t("assistant.sug.practice_another"), display: t("assistant.sug.practice_another"), meta: { general: true } }); chat.practice = { ex, level: 0, attempts: 0 }; mathPushAssistant(thread, ex.problemText + "\n\n" + t("math.practice.intro"), { practice: "start" }); chat.suggestions = mathPracticeChips(0); }
+    render(); return;
+  }
+  const pr = chat.practice;
+  if(!pr){ mathPushAssistant(thread, t("math.practice.none"), { practice: "none" }); chat.suggestions = []; render(); return; }
+  if(kind === "practice_retry"){ chat.suggestions = mathPracticeChips(1); render(); return; }
+  const lvl = kind === "practice_hint" ? Math.max(pr.level, 0) + 1 : (kind === "practice_step" ? Math.max(pr.level, 1) + 1 : 4);
+  pr.level = Math.min(lvl, 4);
+  const n = RMath.engine.practice.next(pr.ex, pr.level);
+  let text;
+  if(n.type === "hint") text = t("math.practice.hint") + " : " + n.text;
+  else if(n.type === "steps") text = n.steps.join("\n");
+  else { text = t("math.practice.solution") + " : " + n.text + "\n" + (n.steps || []).join("\n"); chat.practice = null; }
+  thread.push({ role: "user", content: t("assistant.sug." + kind), display: t("assistant.sug." + kind), meta: { general: true } });
+  mathPushAssistant(thread, text, { practice: n.type });
+  chat.suggestions = chat.practice ? mathPracticeChips(1) : ["practice_another"];
+  render();
+}
+
+function aiChatFresh(){ return { practice: null, mathLive: null, mathPending: false, phase: "IDLE", topic: "", domain: "", qualityNote: null, lastOutput: null, lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
 /* La conversation en cours est-elle une conversation « Mode Général » ? (le premier message la marque ;
    tout autre mode crée un fil sans cette marque : aucune réinitialisation à faire ailleurs.) */
 function aiIsGeneral(){ const th = state.aiThread; return !!(RAssist && th.length && th[0].meta && th[0].meta.general); }
@@ -16906,8 +17146,12 @@ async function aiGeneralAsk(text, opts){
   // une suite (« donne-moi un exemple », « et si… ») reste dans le domaine de la conversation : mêmes consignes de domaine, mêmes connaissances
   if(analysis.needsHistory && analysis.domain === "general" && chat.domain) analysis.domain = chat.domain;
   const local = RAssist.localAnswer(analysis);
+  /* MOTEUR MATHÉMATIQUE : une réponse d'élève en mode exercice, ou un vrai problème de calcul, passe AVANT le modèle (déterministe, sans WebLLM). */
+  const practiceAttempt = !!(RMath && !local && !opts.forced && !opts.regenerate && state.aiChat.practice && !MATH_COMMAND_RE.test(question) && !/\?\s*$/.test(question));
+  const mathProblem = (RMath && !local && !practiceAttempt && !opts.forced) ? mathProblemFor(question, analysis) : null;
+  const mathLocalOk = practiceAttempt || !!mathProblem;
   const ready = state.aiStatus === "ready" && aiEngineReady();
-  if(!ready && !local){
+  if(!ready && !local && !mathLocalOk){
     state.aiError = aiChatErrorText("MODEL_NOT_READY"); chat.error = { code: "MODEL_NOT_READY" };
     if(!userMsg) state.aiThread = history.length ? history : [];           // rien n'est ajouté à la conversation si on ne peut pas répondre
     render(); return false;
@@ -16936,15 +17180,51 @@ async function aiGeneralAsk(text, opts){
     chat.diag = diag; aiChatPhase("LOCAL_DONE"); render();
     return true;
   }
+  if(practiceAttempt){
+    aiMathPracticeAttempt(question);
+    diag.mathPractice = "attempt"; diag.prepMs = Math.round(performance.now() - t0);
+    chat.diag = diag; aiChatPhase("LOCAL_DONE"); render();
+    return true;
+  }
+  let mathPb = mathProblem;
+  if(mathPb && mathPb.kind === "practice-request"){
+    if(aiMathPracticeStart(question, analysis, history, userMsg)){
+      diag.mathPractice = "start"; diag.prepMs = Math.round(performance.now() - t0);
+      chat.diag = diag; aiChatPhase("LOCAL_DONE"); render();
+      return true;
+    }
+    mathPb = null;
+  }
 
   const tier = state.aiTier || "avance";
   const reasoning = !!(AIE.TIERS[tier] && AIE.TIERS[tier].reasoning);
-  const calc = analysis.intent === "CALCULATION" ? RAssist.localCalculation(question, analysis.lang) : null;
-  if(calc) diag.localCalc = calc.kind;
+  let calc = (!mathPb && analysis.intent === "CALCULATION") ? RAssist.localCalculation(question, analysis.lang) : null;
   let windowTokens = RAssist.CONTEXT_TOKENS;
   const signal = { cancelled: false };
   aiCurrentSignal = signal;
-  render();                                                              // « Réflexion… » (PREPARING)
+  chat.mathPending = !!mathPb; chat.mathLive = null;
+  render();                                                              // « Réflexion… » / « Calcul en cours… » (PREPARING)
+
+  /* Calcul DÉTERMINISTE avant toute génération : le modèle ne calcule jamais, il explique le résultat du moteur. */
+  let mathRes = null;
+  if(mathPb){
+    mathRes = await mathSolve(mathPb, analysis);
+    chat.mathPending = false;
+    if(state.aiChat !== chat || state.aiThread !== thread){ aiCurrentSignal = null; return false; }
+    const cancelledMath = signal.cancelled || (mathRes && mathRes.out && mathRes.out.code === "CAS_CANCELLED");
+    if(cancelledMath){ aiCurrentSignal = null; aiChatPhase("ABORT"); render(); return false; }
+    if(mathRes){
+      calc = mathRes.calc; chat.mathLive = mathRes.card; diag.math = mathRes.out.diag; diag.mathBlock = mathRes.calc.header;
+    } else if(analysis.intent === "CALCULATION") calc = RAssist.localCalculation(question, analysis.lang);
+    if(mathRes && !ready){                                               // pas de modèle : le résultat vérifié s'affiche quand même
+      aiCurrentSignal = null; chat.mathLive = null;
+      mathPushAssistant(thread, mathSummaryText(mathRes.card), { math: mathRes.card, intent: analysis.intent, cardOnly: true, mathHint: !!mathRes.card.ok });
+      chat.suggestions = []; diag.prepMs = Math.round(performance.now() - t0);
+      chat.diag = diag; aiChatPhase("LOCAL_DONE"); render();
+      return true;
+    }
+  }
+  if(calc) diag.localCalc = calc.kind;
 
   /* REV-EM Knowledge : choix DÉTERMINISTE des éléments pertinents, avant la génération (aucun appel au modèle).
      Ignoré si la réponse est un calcul local exact, si la question n'en a pas besoin, ou si le mode est « off ». */
@@ -16994,6 +17274,7 @@ async function aiGeneralAsk(text, opts){
     }
   }
   aiCurrentSignal = null;
+  chat.mathLive = null;
   if(aiPaintRaf){ cancelAnimationFrame(aiPaintRaf); aiPaintRaf = 0; }
   if(state.aiChat !== chat || state.aiThread !== thread){      // la conversation a été effacée / remplacée pendant la génération : on n'écrit plus rien
     if(state.aiChat === chat){ aiChatPhase(signal.cancelled ? "ABORT" : "DONE"); render(); }
@@ -17016,17 +17297,20 @@ async function aiGeneralAsk(text, opts){
   chat.lastOutput = proc ? { raw: proc.raw, clean: answer } : null;       // en MÉMOIRE seulement (diagnostic) : jamais écrit en stockage, jamais envoyé à Supabase, jamais affiché
   chat.qualityNote = null;
   const userAbort = signal.cancelled || (res && res.aborted && !res.loopAborted);
+  const mathMeta = mathRes ? { math: mathRes.card } : {};
   if(userAbort){
-    if(answer.trim()) thread.push({ role: "assistant", content: answer, meta: { aborted: true, intent: analysis.intent } });
+    if(answer.trim()) thread.push({ role: "assistant", content: answer, meta: Object.assign({ aborted: true, intent: analysis.intent }, mathMeta) });
+    else if(mathRes) mathPushAssistant(thread, mathSummaryText(mathRes.card), Object.assign({ intent: analysis.intent, cardOnly: true }, mathMeta));
     aiChatPhase("ABORT");
   } else if(err || !answer.trim()){
+    if(mathRes) mathPushAssistant(thread, mathSummaryText(mathRes.card), Object.assign({ intent: analysis.intent, explainFailed: true, cardOnly: true }, mathMeta));   // le résultat vérifié reste affiché même si l'explication échoue
     const code = err ? RAssist.classifyChatError(err).code : (proc && proc.flags.loop ? "OUTPUT_LOOP" : (proc && proc.flags.truncatedThinking ? "REASONING_TRUNCATED" : "EMPTY_RESPONSE"));
     diag.errorCode = code; chat.error = { code };
     state.aiError = aiChatErrorText(code);
     aiChatPhase("FAIL");
     aiLog("Réponse impossible", code);
   } else {
-    thread.push({ role: "assistant", content: answer, meta: { intent: analysis.intent, depth: analysis.depth, topic: topic, finishReason: diag.finishReason || null } });   // la version NETTOYÉE : jamais le brut
+    thread.push({ role: "assistant", content: answer, meta: Object.assign({ intent: analysis.intent, depth: analysis.depth, topic: topic, finishReason: diag.finishReason || null }, mathMeta) });   // la version NETTOYÉE : jamais le brut
     chat.truncated = diag.finishReason === "length";
     chat.qualityNote = verdict && verdict.codes.indexOf("FOREIGN_SCRIPT") >= 0 ? "foreign" : (verdict && verdict.codes.indexOf("LANG_MISMATCH") >= 0 ? "lang" : null);
     chat.suggestions = (chat.truncated ? ["continue"] : []).concat(RAssist.suggestFollowUps(analysis, thread.slice(0, -1))).slice(0, 3);
@@ -17095,6 +17379,7 @@ const AI_SUGGESTION_FORCED = {
   hint: { intent: "FOLLOW_UP", followType: "hint" }, "continue": { intent: "REFORMULATION", followType: "continue" },
 };
 function aiGeneralSuggestion(kind){
+  if(kind.indexOf("practice_") === 0 && RMath){ aiMathPracticeAction(kind); return; }
   const forced = AI_SUGGESTION_FORCED[kind];
   if(!forced) return;
   aiGeneralAsk(t("assistant.sug." + kind), { forced });
@@ -17123,7 +17408,7 @@ function aiGeneralActionsHtml(){
   if(RAssist.isBusyPhase(c.phase)) return "";
   const last = state.aiThread[state.aiThread.length - 1];
   let html = "";
-  if(last && last.role === "assistant" && !(last.meta && last.meta.local)){
+  if(last && last.role === "assistant" && !(last.meta && (last.meta.local || last.meta.practice))){
     if(last.meta && last.meta.aborted) html += `<div class="ai-bubble-note">${escapeHtml(t("assistant.aborted"))}</div>`;
     if(c.truncated) html += `<div class="ai-bubble-note">${escapeHtml(t("assistant.truncated"))}</div>`;
     if(c.qualityNote) html += `<div class="ai-bubble-note" role="note">${escapeHtml(t("assistant.note_" + c.qualityNote))}</div>`;
@@ -17169,7 +17454,11 @@ function aiChatDiagHtml(){
     <div>timePreparing : ${v(d.prepMs, " ms")} · TTFT(engine) : ${v(d.ttftMs, " ms")} · TTFT(page) : ${v(d.ttftPageMs, " ms")} · generationTime : ${v(d.genMs, " ms")}</div>
     <div>output : raw ${v(d.rawChars)} → clean ${v(d.cleanChars)} chars · reasoningHidden ${v(d.reasoningChars)} · orphanThink ${escapeHtml(v(d.orphanThink))} · tagsRemoved ${v(d.tagsRemoved)} · specialTokens ${v(d.specialTokensRemoved)} · duplicatesRemoved ${v(d.duplicatesRemoved)} · loop ${escapeHtml(v(d.loop))} · cumulativeChunks ${v(d.cumulativeChunks)}</div>
     <div>language : preferred ${escapeHtml(v(d.preferredLanguage))} (${escapeHtml(v(d.langSource))}) · allowForeign ${escapeHtml(v(d.allowForeign))} · issues : ${escapeHtml((d.outputIssues || []).join(", ") || "none")} · outputProcessingTime : ${v(d.outputProcessingMs, " ms")}</div>
-    <div>finishReason : ${escapeHtml(v(d.finishReason))} · errorCode : ${escapeHtml(v(d.errorCode))}</div>
+    <div>finishReason : ${escapeHtml(v(d.finishReason))} · errorCode : ${escapeHtml(v(d.errorCode))}</div>${d.math ? `
+    <div><b>math</b> : mathProblemType ${escapeHtml(v(d.math.mathProblemType))} · engineUsed ${escapeHtml(v(d.math.engineUsed))} · verificationStatus ${escapeHtml(v(d.math.verificationStatus))} · verificationMethod ${escapeHtml(v(d.math.verificationMethod))} · errorCode ${escapeHtml(v(d.math.errorCode))}</div>
+    <div>math : exactResult ${escapeHtml(v(d.math.exactResult))} · approximateResult ${escapeHtml(v(d.math.approximateResult))}</div>
+    <div>math : calculationTime ${v(d.math.calculationTimeMs, " ms")} · fast ${v(d.math.fastMs, " ms")} · cas ${v(d.math.casMs, " ms")} · CASLoadTime ${v(d.math.casLoadTimeMs, " ms")}</div>` : ""}${d.mathPractice ? `
+    <div>math : practice ${escapeHtml(d.mathPractice)}</div>` : ""}
   </div>`;
 }
 
@@ -17669,6 +17958,9 @@ function aiRunPersonalQuery(text){
   if(!q) return;
   state.aiAction = "personal";
   if(state.aiStatus !== "ready"){
+    /* Le moteur mathématique est DÉTERMINISTE : il n'a pas besoin du modèle. Un vrai problème de calcul est donc traité même quand
+       l'IA n'est pas chargée (résultat vérifié affiché ; l'explication, elle, demande le modèle). Tout autre question garde l'erreur habituelle. */
+    if(RMath && RAssist && mathQuestionDetected(q)){ aiGeneralAsk(q); return; }
     state.aiError = aiErrorMessage({message:"not_ready"});
     render();
     return;
@@ -17785,10 +18077,10 @@ function renderAssistantHeroHtml(){
     ${renderAssistantModeChipsHtml()}
     <div class="ai-queryrow">
       <label class="sr-only" for="assistant-query-input">${t("assistant.query_placeholder")}</label>
-      <input type="text" class="ai-select" id="assistant-query-input" placeholder="${t("assistant.query_placeholder")}" value="${escapeHtml(state.aiPersonalQuery)}" ${ready?"":"disabled"}>
+      <input type="text" class="ai-select" id="assistant-query-input" placeholder="${t("assistant.query_placeholder")}" value="${escapeHtml(state.aiPersonalQuery)}" ${ready || RMath ? "" : "disabled"}>
       ${state.aiBusy
         ? `<button type="button" class="btn outline" id="assistant-stop-btn">${escapeHtml(t("assistant.stop"))}</button>`
-        : `<button type="button" class="btn red" id="assistant-query-btn" ${ready && !aiEngineBusy() ? "" : "disabled"}>${t("assistant.query_btn")}</button>`}
+        : `<button type="button" class="btn red" id="assistant-query-btn" ${(ready || RMath) && !aiEngineBusy() ? "" : "disabled"}>${t("assistant.query_btn")}</button>`}
     </div>
     ${ready ? `<div class="ai-queryrow-meta" role="group" aria-label="${escapeHtml(t("assistant.meta_aria"))}"><span class="ai-pill">${escapeHtml(t("assistant.mode_general"))}</span>${state.aiTier ? `<span class="ai-pill is-tier">${escapeHtml(t("ai.tier." + state.aiTier + ".name"))}</span>` : ""}</div>` : ""}
     ${showFull && suggestions.length ? `<div class="ai-suggestions">
@@ -17972,11 +18264,11 @@ function renderAI(){
           const label = m.display || (i === 0 ? action.label : "");
           if(label) html += `<div class="ai-bubble user">${escapeHtml(label)}</div>`;
         } else if(state.aiMode === "text"){
-          html += `<div class="ai-bubble assistant"><div class="ai-result-body">${renderAIMarkdown(m.content)}</div></div>`;
+          html += `<div class="ai-bubble assistant">${m.meta && m.meta.math && typeof m.meta.math === "object" ? mathCardHtml(m.meta.math) : ""}${m.meta && m.meta.cardOnly ? (m.meta.mathHint ? `<p class="ai-hint mx-hint">${escapeHtml(t("math.explain_hint"))}</p>` : "") : `<div class="ai-result-body">${renderAIMarkdown(m.content)}</div>`}</div>`;
         }
       });
       if(state.aiBusy){
-        html += `<div class="ai-bubble assistant"><div class="ai-result-body" id="ai-stream" aria-busy="true"><span class="ai-loading" style="padding:0;"><span class="ai-spinner"></span>${escapeHtml(t("assistant.thinking"))}</span></div></div>`;
+        html += `<div class="ai-bubble assistant">${state.aiChat.mathLive ? mathCardHtml(state.aiChat.mathLive) : ""}<div class="ai-result-body" id="ai-stream" aria-busy="true"><span class="ai-loading" style="padding:0;"><span class="ai-spinner"></span>${escapeHtml(t(state.aiChat.mathPending ? "math.computing" : "assistant.thinking"))}</span></div></div>`;
         if(aiIsGeneral()) html += `<div class="ai-msg-actions"><button type="button" class="btn-text" id="ai-stop-btn">${escapeHtml(t("assistant.stop"))}</button></div>`;
       }
       html += `</div>`;
@@ -18041,6 +18333,7 @@ function renderAI(){
 
 function attachAIEvents(){
   if(state.aiStatus === "checking") checkAIStatus();
+  mathHydrate();
 
   attachAssistantHeroEvents();
 

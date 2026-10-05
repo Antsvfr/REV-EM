@@ -797,7 +797,7 @@
       var prevTopics = hist0.topics;
       topicLine = "Current topic of the conversation: « " + topic + " »" + (prevTopics.length > 1 ? " (earlier: " + prevTopics.slice(0, -1).join("; ") + ")" : "") + ".";
     }
-    var calcBlock = o.calc ? "VERIFIED CALCULATION (computed locally, exact):\n" + o.calc.block : "";
+    var calcBlock = o.calc ? (o.calc.header || "VERIFIED CALCULATION (computed locally, exact)") + ":\n" + o.calc.block : "";
 
     var knowText = "", knFit = null;
     function compose(styleLines){

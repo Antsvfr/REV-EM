@@ -132,7 +132,7 @@
   function cleanExpr(s){
     s = String(s || "").trim();
     var prev;
-    do{ prev = s; s = s.replace(/^[\s:–—-]+/, "").replace(/^(?:de |d'|du |des |la |le |les |l'|l’|une? |the |of |el |los |las |del |der |die |das |di |il |lo |pour |for |para |per |expression |polyn[oô]me |fonction |function |equation |équation |polynomial |suivante? |following )/i, ""); }while(s !== prev);
+    do{ prev = s; s = s.replace(/^(?:\s|:|[–—](?=\s))+/, "").replace(/^(?:de |d'|du |des |la |le |les |l'|l’|une? |the |of |el |los |las |del |der |die |das |di |il |lo |pour |for |para |per |expression |polyn[oô]me |fonction |function |equation |équation |polynomial |suivante? |following )/i, ""); }while(s !== prev);
     s = s.replace(/[?!]+\s*$/, "").replace(/\.\s*$/, "");
     s = s.replace(/\s*(?:par rapport [àa] |with respect to |en fonction de |respecto a |nach |rispetto a )([a-z])\s*$/i, "");
     s = s.replace(/^[a-zA-Z]\s*\(\s*[a-zA-Z]\s*\)\s*=\s*/, "");        // f(x) = …
@@ -142,7 +142,10 @@
   function mapSub(s){ return s.replace(/[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹₋⁻]/g, function(c){ return SUB[c] || c; }); }
 
   function noneResult(why){ return { kind: "none", reason: why || "pas un problème de calcul" }; }
-  function invalidExpr(src, e){ return { kind: "invalid", src: src, code: e && e.code, message: e && e.message ? e.message : "expression invalide", status: STATUS.INVALID_INPUT }; }
+  function invalidExpr(src, e){
+    var amb = e && /^AMBIGUOUS/.test(e.code || "");
+    return { kind: "invalid", src: src, code: e && e.code, message: e && e.message ? e.message : "expression invalide", status: amb ? STATUS.AMBIGUOUS : (e && /^(TOO_COMPLEX|OVERFLOW|TOO_LONG|TOO_DEEP)/.test(e.code || "") ? STATUS.UNSUPPORTED : STATUS.INVALID_INPUT) };
+  }
   function tryParse(src, lang){
     try{ var p = C.parse(src, { decimalComma: lang !== "en" }); return { ok: true, ast: p.ast, notes: p.notes, normalized: p.normalized }; }
     catch(e){ return { ok: false, error: e }; }
@@ -171,7 +174,15 @@
     if(!src || src.length > 1500) return noneResult("vide ou trop long");
     var f = fold(src);
     var base = { src: original, lang: lang, mode: "solve", notes: [] };
-    var isExplain = KW.explain.test(f);
+    /* « Qu'est-ce que la dérivée ? » = explication. Mais « what is 2+2 », « qu'est-ce que 15 % de 80 », « what is the derivative of x^2 » demandent un CALCUL. */
+    function explainIsCalc(){
+      var m = /^\s*(?:qu'est[- ]ce (?:que|qu')|c'est quoi|what is|what's|what are|que es|que son|was ist|cos'e)\s*(.*)$/.exec(f);
+      if(!m) return false;
+      var rest = m[1];
+      if(/^[\s(\-+]*\d/.test(rest) && /[+\-*\/^×÷%]/.test(rest)) return true;
+      return /^(?:la |le |les |l'|the |a |an |el |der |die |das |il |lo )?(?:derivee|derivative|integrale|integral|primitive|limite|limit|valeur|value|solution|resultat|result|determinant|inverse|somme|sum|produit|product|moyenne|mean|median)\b.*(?:\bde\b|\bof\b|\bd'|\bdu\b|\bdes\b|\bvon\b|\bdi\b)\s*.*[\d^]/.test(rest);
+    }
+    var isExplain = KW.explain.test(f) && !explainIsCalc();
 
     // ── mode M'ENTRAÎNER (exercice) : géré par Practice, pas par un calcul de la question
     if(/^\s*(donne[- ]moi un exercice|propose[- ]moi un exercice|je veux m'entrainer|entraine[- ]moi|give me an exercise|practice|quiz me on|dame un ejercicio|gib mir eine aufgabe|dammi un esercizio)/.test(f))
@@ -266,6 +277,7 @@
         var wr = /\s*(?:par rapport [àa]|with respect to|respecto a|nach|rispetto a)\s+([a-z])\s*$/i.exec(dexpr);
         if(wr){ dv = wr[1]; dexpr = dexpr.slice(0, wr.index); }
         dexpr = cleanExpr(dexpr);
+        if(/^(de|of|du|des|der|von|di|la|le|les|the|d'|l'|f)$/i.test(String(dexpr).trim())) return noneResult("aucune expression à dériver");
         var pd = tryParse(dexpr, lang);
         if(!pd.ok) return looksMathy(dexpr) && /[0-9^+*/()]/.test(dexpr) ? Object.assign(base, invalidExpr(dexpr, pd.error)) : noneResult("expression non reconnue");
         return Object.assign(base, { kind: "derivative", ast: pd.ast, var: dv || mainVar(pd.ast, "x"), order: order, notes: pd.notes });
@@ -273,7 +285,7 @@
     }
 
     // ── 2.4 matrices ───────────────────────────────────────────────────────────────────────────────
-    if(KW.matrix.test(f) && /\[/.test(src)){
+    if((KW.matrix.test(f) || /\[\s*\[/.test(src)) && /\[/.test(src)){
       var lits = src.match(/\[\s*\[[^\]]*\](?:\s*,\s*\[[^\]]*\])*\s*\]|\[[^\[\]]*;[^\[\]]*\]/g) || [];
       var mats = [];
       for(var li = 0; li < lits.length; li++){ var pm = tryParse(lits[li], lang); if(!pm.ok) return Object.assign(base, invalidExpr(lits[li], pm.error)); mats.push(pm.ast); }
@@ -284,8 +296,8 @@
       else if(/\btranspos\w*/.test(f)) op = "transpose";
       else if(/\b(rang|rank)\b/.test(f)) op = "rank";
       else if(/\binvers\w*|\binvert\w*/.test(f)) op = "inverse";
-      else if(mats.length === 2 && /[*×]/.test(src)) op = "mul";
-      else if(mats.length === 2 && /\+/.test(src)) op = "add";
+      else if(mats.length === 2 && (/[*×]/.test(src) || /\b(produit|multipli\w*|product|multiply|prodotto|producto|produkt)\b/.test(f))) op = "mul";
+      else if(mats.length === 2 && (/\+/.test(src) || /\b(somme|sum|addition\w*|add|addiere\w*|suma|sommare|somma)\b/.test(f))) op = "add";
       if(!op || !mats.length) return isExplain ? noneResult("explication") : Object.assign(base, { kind: "invalid", src: src, message: "opération matricielle non reconnue", code: "MATRIX_OP", status: STATUS.INVALID_INPUT });
       if((op === "mul" || op === "add") && mats.length < 2) return Object.assign(base, { kind: "invalid", src: src, message: "deux matrices sont nécessaires", code: "MATRIX_B", status: STATUS.INVALID_INPUT });
       return Object.assign(base, { kind: "matrix", op: op, A: mats[0], B: mats[1] || null });
@@ -302,7 +314,7 @@
       else rest = src;
       rest = rest.replace(/^\s*(?:le |la |les |l'|l’|the |the following |ce |cette |this )?(?:systeme|system|sistema|equations?|polynome|expression|fonction|function|racines?|roots?|zeros?|solutions?)\s*(?:de |d'|du |of |:)?\s*/i, "");
       var isSystem = /\bsyst[eè]me\b|\bsystem\b|\bsistema\b/i.test(src) || (rest.match(/=/g) || []).length >= 2;
-      rest = rest.replace(/^\s*[:\-–—]\s*/, "").replace(/^\s*(?:de |d'|du |of |:)\s*/i, "");
+      rest = rest.replace(/^\s*(?:[:–—])\s*/, "").replace(/^\s*(?:de |d'|du |of |:)\s*/i, "");
       if(kind === "equation" && isSystem){
         var parts = splitEquations(rest.replace(/[?.]\s*$/, ""));
         if(parts.length >= 2){
@@ -311,6 +323,11 @@
           return Object.assign(base, { kind: "system", eqs: eqs });
         }
       }
+      var domain = null;
+      var dmDom = /\s*(?:\b(?:en|dans|in|over|sur|im|nei|nel|en los|sobre)\s+(?:l'ensemble des |les |the |los |die |i |il |el |der )?(?:nombres? |numbers? |n[uú]meros? |zahlen |numeri )?|\s)(?:(complexes?|complex|complejos?|komplex\w*|complessi)|(r[ée]els?|reals?|reales?|reell\w*|reali))\s*[?.]?\s*$/i.exec(rest);
+      if(dmDom && kind === "equation"){ domain = dmDom[1] ? "complex" : "real"; rest = rest.slice(0, dmDom.index); }
+      var dm3 = /\s*(?:dans |in |over |sur |en )?(ℂ|ℝ)\s*[?.]?\s*$/.exec(rest);
+      if(dm3 && kind === "equation"){ domain = dm3[1] === "ℂ" ? "complex" : "real"; rest = rest.slice(0, dm3.index); }
       var exprS = cleanExpr(rest);
       if(!exprS) return noneResult("pas d'expression");
       if(isExplain && !looksMathy(exprS)) return noneResult("explication");
@@ -325,13 +342,16 @@
       var ast3 = pe3.ast;
       if(kind === "equation"){
         if(ast3.t !== "eq"){ base.notes.push("equation-without-equals"); ast3 = { t: "eq", l: ast3, r: C.mkq(0) }; }
-        return Object.assign(base, { kind: "equation", eq: ast3, var: mainVar(ast3), notes: base.notes.concat(pe3.notes) });
+        return Object.assign(base, { kind: "equation", eq: ast3, var: mainVar(ast3), domain: domain, notes: base.notes.concat(pe3.notes) });
       }
       if(ast3.t === "eq") return Object.assign(base, invalidExpr(exprS, { message: "une expression est attendue, pas une équation", code: "EQUATION_GIVEN" }));
       return Object.assign(base, { kind: kind, ast: ast3, var: mainVar(ast3), notes: pe3.notes });
     }
 
     if(isExplain) return noneResult("explication demandée");
+    // Probabilités, statistiques, finance, arithmétique : tout cela exige des NOMBRES. Sans aucun chiffre (« comment calculer la VAN ? »,
+    // « la différence entre le TRI et la VAN »), c'est une question de cours : le moteur ne se déclenche pas et le modèle explique.
+    if(!/\d/.test(src)) return noneResult("aucun nombre : question conceptuelle");
 
     // ── 2.6 probabilités ──────────────────────────────────────────────────────────────────────────
     var nums = extractNumbers(src, lang);
@@ -494,15 +514,18 @@
     }
 
     // ── 2.9 arithmétique pure ───────────────────────────────────────────────────────────────────
-    var exprA = src.replace(/^\s*(?:calcule\w*|calculer|quelle est la valeur de|quelle est|combien (?:font|fait|vaut|valent)|how much is|what is the value of|what is|what's|cuanto es|wieviel ist|quanto fa|compute|evaluate|evalue\w*)\s*/i, "").replace(/\s*[?=]\s*$/, "").trim();
+    var exprA = src.replace(/^\s*(?:calcule\w*|calculer|quelle est la valeur de|quelle est|combien (?:font|fait|vaut|valent)|qu'est[- ]ce (?:que|qu')|c'est quoi|how much is|what is the value of|what is|what's|cuanto es|cu[aá]nto es|que es|wieviel ist|was ist|quanto fa|quanto fa|cos'[eè]|compute|evaluate|evalue\w*)\s*/i, "").replace(/\s*[?=]\s*$/, "").trim();
     exprA = exprA.replace(/^(.+?)\s+mod(?:ulo)?\s+(.+)$/i, "mod(($1);($2))");
     exprA = exprA.replace(/(\d)\s*[xX]\s*(?=[\d(])/g, "$1*");
-    if(exprA && exprA.length <= 300 && /[0-9]/.test(exprA) && (/[+\-*/^×÷√!%]|\b(sqrt|ln|log|exp|sin|cos|tan|abs|binom|root|cbrt|mod|gcd|lcm|pgcd|ppcm)\s*\(/i.test(exprA))){
+    var explicitCmd = /^\s*(?:calcule\w*|calculer|compute|evaluate|evalue\w*|calcula\w*|berechne\w*|calcola\w*)\b/i.test(src);   // un verbe de calcul explicite : tout échec de lecture doit être DIT, pas ignoré
+    if(explicitCmd && exprA && /[0-9]/.test(exprA) && exprA.length > 300) return Object.assign(base, { kind: "invalid", src: src.slice(0, 80), code: "TOO_COMPLEX", message: "expression trop longue", status: STATUS.UNSUPPORTED });
+    if(exprA && exprA.length <= 300 && /[0-9]/.test(exprA) && (explicitCmd || /[+\-*/^×÷√!%]|\b(sqrt|ln|log|exp|sin|cos|tan|abs|binom|root|cbrt|mod|gcd|lcm|pgcd|ppcm)\s*\(/i.test(exprA))){
       if(!/[A-Za-z]{3,}/.test(exprA.replace(/\b(sqrt|ln|log\d*|exp|sin|cos|tan|asin|acos|atan|abs|binom|root|cbrt|fact|pi|oo|mod|gcd|lcm|pgcd|ppcm)\b/gi, ""))){
         var pa2 = tryParse(exprA, lang);
         if(pa2.ok && C.freeVars(pa2.ast).length === 0 && pa2.ast.t !== "eq" && !pa2.notes.some(function(n){ return n.indexOf("split-word") === 0; })) return Object.assign(base, { kind: "arith", ast: pa2.ast, notes: pa2.notes });
-        if(!pa2.ok && /^[\d\s+\-*/^().,×÷√!%a-z]+$/i.test(exprA) && /^\s*[\d(√-]/.test(exprA) && (exprA.match(/[+\-*/^×÷]/g) || []).length >= 1 && !/\s[a-z]{4,}\s/i.test(exprA))
+        if(!pa2.ok && /^[\d\s+\-*/^().,×÷√!%a-z]+$/i.test(exprA) && /^\s*[\d(√-]/.test(exprA) && (explicitCmd || ((exprA.match(/[+\-*/^×÷]/g) || []).length >= 1 && !/\s[a-z]{4,}\s/i.test(exprA))))
           return Object.assign(base, invalidExpr(exprA, pa2.error));
+        if(!pa2.ok && explicitCmd) return Object.assign(base, invalidExpr(exprA, pa2.error));
       }
     }
     return noneResult("aucun problème mathématique reconnu");
@@ -532,7 +555,7 @@
         var r2 = F.expandPoly(p.ast, p.var); // un polynôme à simplifier = le développer
         return r2.ok ? r2 : r1;
       }
-      case "equation": return F.solveEquation(p.eq, p.var, { lang: lang });
+      case "equation": return F.solveEquation(p.eq, p.var, { lang: lang, domain: p.domain || null });
       case "system": return F.solveSystem(p.eqs, null, { lang: lang });
       case "derivative": {
         var cur = p.ast, res = null;
@@ -653,7 +676,7 @@
       case "factor": return { op: "factor", expr: p.ast };
       case "expand": return { op: "expand", expr: p.ast };
       case "simplify": return { op: "simplify", expr: p.ast };
-      case "equation": return { op: "solve", eq: p.eq, var: p.var };
+      case "equation": return { op: "solve", eq: p.eq, var: p.var, domain: p.domain || null };
       case "system": return { op: "system", eqs: p.eqs };
       case "derivative": return { op: "diff", expr: p.ast, var: p.var, order: p.order || 1 };
       case "integral": return { op: "integrate", expr: p.ast, var: p.var, bounds: p.bounds };
@@ -749,7 +772,7 @@
     catch(e){ return F.failRes(STATUS.UNSUPPORTED, (e && e.code) || "CAS_FAILED", (e && e.message) || "le moteur avancé a échoué", { casLoadMs: e && e.loadMs, timedOut: e && e.code === "CAS_TIMEOUT" }); }
     if(!cr || cr.ok === false) return F.failRes(cr && cr.error && cr.error.status || STATUS.UNSUPPORTED, (cr && cr.error && cr.error.code) || "CAS_ERROR", (cr && cr.error && cr.error.message) || "le CAS n'a pas pu résoudre ce problème", { casMs: cr && cr.timeMs });
     var verification = verifyCas(p, cr);
-    var res = { ok: true, kind: p.kind, engine: "cas", exact: { text: cr.exact, latex: cr.latex || "" }, approx: cr.approx ? { text: cr.approx, value: cr.approxValue } : null, verification: verification,
+    var res = { ok: true, kind: p.kind, engine: "cas", exact: { text: cr.exact, latex: cr.latex || "" }, approx: typeof cr.approxValue === "number" ? { text: C.fmtFloat(cr.approxValue, 10, p.lang), value: cr.approxValue } : (cr.approx ? { text: cr.approx, value: null } : null), verification: verification,
                 steps: cr.steps || [], notes: cr.notes || [], casMs: cr.timeMs, casLoadMs: cr.loadMs, solutions: cr.solutions, setLatex: cr.setLatex, raw: cr, domainNote: cr.domainNote || null };
     return res;
   }
@@ -814,7 +837,12 @@
   function statusClass(st){
     return { VERIFIED_EXACT: "verified", VERIFIED_NUMERICALLY: "verified-numeric", COMPUTED_NOT_INDEPENDENTLY_VERIFIED: "unverified", UNSUPPORTED: "unsupported", INVALID_INPUT: "invalid", AMBIGUOUS: "ambiguous" }[st] || "unverified";
   }
-  function bigExact(t){ return t && t.length > 48; }
+  function bigExact(t){ return t && t.length > 48 && !/^-?\d{1,400}$/.test(t); }       // un entier (≤ 400 chiffres) est affiché EN ENTIER ; une fraction énorme est résumée
+  function sciOf(intText){                                                                   // 1,267651×10^30 pour un entier à 16 chiffres et plus
+    var neg = intText.charAt(0) === "-", d = neg ? intText.slice(1) : intText;
+    if(d.length < 16) return null;
+    return (neg ? "-" : "") + d.charAt(0) + "," + d.slice(1, 7) + " × 10^" + (d.length - 1);
+  }
 
   function finish(p, res, diag, t0, opts){
     var lang = p.lang || "fr";
@@ -835,6 +863,7 @@
     out.statusClass = statusClass(out.status);
     out.verification = res.verification || { status: out.status, method: "none", detail: "" };
     out.exact = res.exact || null; out.approx = res.approx || null; out.steps = res.steps || [];
+    if(!out.approx && res.exact && /^-?\d{16,400}$/.test(res.exact.text)){ var sc = sciOf(res.exact.text); if(sc) out.approx = { text: "≈ " + sc, value: null, sci: true }; }
     out.notes = (p.notes || []).concat(res.notes || []);
     out.raw = res; out.value = res.value; out.lines = res.lines; out.money = !!res.money || !!p.money; out.rounded = res.rounded || null; out.domainNote = res.domainNote || null;
     if(res.exact && bigExact(res.exact.text) && res.value instanceof Rat){ out.exactFull = res.exact; out.exact = { text: "(fraction exacte de " + (res.exact.text.length) + " caractères)", latex: "" }; out.exactIsHuge = true; }
@@ -890,7 +919,7 @@
     resultLines(out, lang).forEach(function(x){ L.push(x); });
     L.push("verification: " + (STATUS_PHRASE[out.status] || out.status) + " — " + (out.verification.method || "") + (out.verification.detail ? " (" + out.verification.detail + ")" : ""));
     if(out.domainNote) L.push("domain note: " + out.domainNote);
-    (out.notes || []).forEach(function(n){ if(n && !/^(percent|log-base-10|implicit-mult-after-division|split-word|irrational|constant-of-integration|no-real-solution|complex-solutions|infinite-solutions|singular|non-integer-periods|irreducible-factor-over-Q|multiple-irr-possible|domain-excludes)/.test(n)) L.push("note: " + n); });
+    (out.notes || []).forEach(function(n){ if(n && !/^(percent|log-base-10|implicit-mult-after-division|split-word|irrational|constant-of-integration|no-real-solution|complex-solutions|infinite-solutions|singular|non-integer-periods|irreducible-factor-over-Q|multiple-irr-possible|domain-excludes|multiple-root|real-solutions-only|approximate-roots|infinite-family|equation-without-equals)/.test(n)) L.push("note: " + n); });
     var nset = out.notes || [];
     if(nset.indexOf("log-base-10") >= 0) L.push("note: log(x) was read as the base-10 logarithm; ln(x) is the natural logarithm");
     if(nset.indexOf("constant-of-integration") >= 0) L.push("note: an antiderivative is defined up to an arbitrary constant C");
@@ -898,6 +927,11 @@
     if(nset.some(function(n){ return n.indexOf("domain-excludes") === 0; })) L.push("note: " + nset.filter(function(n){ return n.indexOf("domain-excludes") === 0; })[0].replace("domain-excludes:", "the simplification is valid only for ") );
     if(nset.indexOf("implicit-mult-after-division") >= 0) L.push("note: an implicit product after a division (a/bc) was read as (a/b)·c — say so if the student meant a/(bc)");
     if(nset.indexOf("multiple-irr-possible") >= 0) L.push("note: the cash flows change sign several times; more than one IRR may exist");
+    if(nset.indexOf("multiple-root") >= 0) L.push("note: a repeated root is listed once (it is a double/multiple root)");
+    if(nset.indexOf("real-solutions-only") >= 0) L.push("note: only the REAL solutions are given; the equation also has complex solutions");
+    if(nset.indexOf("approximate-roots") >= 0) L.push("note: some roots have no simple exact form and are given as decimal approximations (exact value unavailable)");
+    if(nset.indexOf("infinite-family") >= 0) L.push("note: infinitely many solutions, written with an integer parameter n");
+    if(nset.indexOf("equation-without-equals") >= 0) L.push("note: no '=' sign was written; the expression was assumed equal to 0");
     if(nset.indexOf("irreducible-factor-over-Q") >= 0) L.push("note: the remaining factor has no rational root (irreducible over the rationals)");
     L.push("rules: these results come from the deterministic math engine and are authoritative. Present them EXACTLY as given; never recompute, round differently or replace any number. Explain the method, the formula used and what the result means. " +
            (out.status === STATUS.VERIFIED_NUMERICALLY ? "The verification was numerical: say it was checked numerically, not proven. " : "") +

@@ -24,3 +24,9 @@ Pyodide ne sont pas modifiés.
 2. Mettre à jour `WHEELS` dans `math-cas-worker.js` et `tests/helpers/node-cas.mjs`.
 3. Incrémenter `MATH_CACHE_VERSION` dans `sw.js`.
 4. Relancer `node tests/math-cas.test.mjs` (Pyodide + SymPy réels) et `tests/math-ui.test.mjs` (navigateur).
+
+## KaTeX (rendu des formules)
+| `katex/katex.min.js`, `katex/katex.min.css`, `katex/fonts/*.woff2` | rendu LaTeX → HTML | KaTeX 0.19.0 | MIT (`katex/LICENSE`) | js `103a5376…c8ae7`, css `144d9ea8…df303` |
+
+La feuille de style est celle de KaTeX **sans** les formats de police `woff`/`ttf` (seul `woff2` est servi, supporté par Chrome, Safari ≥ 14 et WKWebView récents) et avec `font-display:swap`.
+Chargé uniquement à la première carte de résultat mathématique (`mathLoadKatex()` dans `index.html`) ; s'il est indisponible, le texte brut de la formule reste affiché.
