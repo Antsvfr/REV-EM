@@ -3058,7 +3058,7 @@
   }
   .dash-section-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:12px; flex-wrap:wrap; }
   .dash-goal-count{ font-size: var(--text-metadata); font-weight: var(--weight-medium); color:var(--red); font-variant-numeric: tabular-nums; }
-  .dash-goal-track{ height:9px; background: var(--bg); border-radius:999px; overflow:hidden; border:1px solid var(--border); }
+  .dash-goal-track{ height:9px; background: var(--bg); border-radius:999px; overflow:hidden; }
   .dash-goal-fill{ height:100%; background: var(--accent); border-radius:999px; transition: width 0.5s var(--ease); }
   .dash-goal-msg{ font-size: var(--text-metadata); color:var(--ink-soft); margin:12px 0 0; }
 
@@ -4314,7 +4314,7 @@
   /* ── Tuteur Maths & Stats : Résoudre · Expliquer · M'entraîner. Formules d'abord, très lisibles ; couleur + texte + icône, jamais la couleur seule. ── */
   .mt-card{ min-width:0; }
   .mt-sub{ margin-top:0; }
-  .mt-tabs{ display:flex; gap:4px; padding:4px; background: var(--surface-2); border:1px solid var(--border); border-radius: var(--radius-md); margin-bottom:16px; }
+  .mt-tabs{ display:flex; gap:4px; padding:4px; background: var(--surface-2); border-radius: var(--radius-md); margin-bottom:16px; }
   .mt-tab{ flex:1 1 0; min-height:44px; border:0; background:transparent; border-radius: var(--radius-sm); font-family:"Inter",sans-serif; font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink-soft); cursor:pointer; transition: background .15s var(--ease), color .15s var(--ease); padding:8px 12px; }
   .mt-tab:hover{ color: var(--ink); }
   .mt-tab.is-active{ background: var(--surface); color: var(--red-dark); box-shadow: var(--shadow-sm); }
@@ -4329,18 +4329,18 @@
   .mt-field .ai-select{ width:100%; min-height:44px; }
   .mt-go .btn{ width:100%; min-height:44px; }
   .mt-lbl{ display:block; font-size: var(--text-label); text-transform:uppercase; letter-spacing:.06em; color: var(--text-muted); margin-bottom:4px; }
-  .mt-seg{ display:flex; flex-wrap:wrap; gap:4px; padding:3px; background: var(--surface-2); border:1px solid var(--border); border-radius: var(--radius-sm); }
-  .mt-segbtn{ flex:1 1 auto; min-height:44px; border:0; background:transparent; border-radius:6px; font-family:"Inter",sans-serif; font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink-soft); cursor:pointer; padding:6px 10px; transition: background .15s var(--ease), color .15s var(--ease); }
+  .mt-seg{ display:flex; flex-wrap:wrap; gap:4px; padding:3px; background: var(--surface-2); border-radius: var(--radius-sm); }
+  .mt-segbtn{ flex:1 1 auto; min-height:44px; border:0; background:transparent; border-radius: var(--radius-sm); font-family:"Inter",sans-serif; font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink-soft); cursor:pointer; padding:6px 10px; transition: background .15s var(--ease), color .15s var(--ease); }
   .mt-segbtn.is-active{ background: var(--surface); color: var(--red-dark); box-shadow: var(--shadow-sm); }
   .mt-detail{ margin-top:12px; max-width:420px; }
   .mt-suggest{ margin-top:4px; }
-  .mt-ex{ margin-top:20px; padding:20px; background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-md); min-width:0; }
+  .mt-ex{ margin-top:20px; padding:20px; background: var(--surface-2); border-radius: var(--radius-md); min-width:0; }
   .mt-ex-meta{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
-  .mt-chip{ font-size: var(--text-label); font-weight: var(--weight-semibold); padding:2px 10px; border-radius:999px; background: var(--surface-2); border:1px solid var(--border); color: var(--ink-soft); }
+  .mt-chip{ font-size: var(--text-label); font-weight: var(--weight-semibold); padding:2px 10px; border-radius:999px; background: var(--surface); color: var(--ink-soft); }
   .mt-chip-ok{ background: var(--success-wash); border-color:transparent; color: var(--success); }
   .mt-ex-title{ margin:0 0 4px; font-size: var(--text-label); text-transform:uppercase; letter-spacing:.08em; color: var(--text-muted); font-weight: var(--weight-semibold); }
   .mt-ex-intro{ margin:0 0 8px; font-size:1.05rem; line-height:1.55; color: var(--ink); }
-  .mt-formula{ margin:6px 0; padding:12px 16px; background: var(--surface-2); border-radius: var(--radius-sm); overflow-x:auto; overflow-y:hidden; max-width:100%; font-size:1.2em; }
+  .mt-formula{ margin:6px 0; padding:12px 16px; background: var(--surface); border-radius: var(--radius-sm); overflow-x:auto; overflow-y:hidden; max-width:100%; font-size:1.2em; }
   .mt-formula .katex-display{ margin:0; }
   .mt-formula .katex-display > .katex{ text-align:left; }
   .mt-formula-text{ font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,serif; white-space:pre-wrap; font-size:1.1em; }
@@ -4355,14 +4355,14 @@
   .mt-feedback.is-info{ background: var(--info-wash); border-left-color: var(--info); color: var(--ink); }
   .mt-fb-icon{ font-weight:700; flex:0 0 auto; }
   .mt-shown{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
-  .mt-block{ padding:12px 16px; border:1px solid var(--border); border-left:3px solid var(--info); border-radius: var(--radius-sm); background: var(--surface); }
+  .mt-block{ padding:12px 16px; border-left:3px solid var(--info); border-radius: var(--radius-sm); background: var(--surface); }
   .mt-block p{ margin:0 0 6px; font-size: var(--text-metadata); line-height:1.6; }
   .mt-blabel{ font-size: var(--text-label); text-transform:uppercase; letter-spacing:.06em; font-weight: var(--weight-semibold); color: var(--text-muted); margin-bottom:4px; }
   .mt-solution{ border-left-color: var(--success); }
   .mt-answerline{ font-size:1.1rem; margin:4px 0 8px; }
   .mt-lines{ display:flex; flex-direction:column; gap:4px; margin-top:4px; }
-  .mt-line{ font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,serif; font-size:1.02rem; padding:4px 10px; background: var(--surface-2); border-radius:6px; overflow-x:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
-  .mt-expl{ margin-top:16px; padding:16px; border:1px solid var(--border); border-left:3px solid var(--success); border-radius: var(--radius-sm); }
+  .mt-line{ font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,serif; font-size:1.02rem; padding:4px 10px; background: var(--surface-2); border-radius: var(--radius-sm); overflow-x:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .mt-expl{ margin-top:16px; padding:16px; background: var(--surface); border-left:3px solid var(--success); border-radius: var(--radius-sm); }
   .mt-sec-title{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink); margin-bottom:8px; }
   .mt-ex-line{ margin:6px 0; font-size: var(--text-metadata); line-height:1.6; }
   .mt-verified{ color: var(--success); }
@@ -4371,7 +4371,7 @@
   .mt-prog{ margin-top:28px; padding-top:20px; border-top:1px solid var(--border); }
   .mt-prow{ display:grid; grid-template-columns: minmax(110px, 170px) 1fr 52px; gap:4px 12px; align-items:center; margin:10px 0; }
   .mt-pname{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink); }
-  .mt-pbar{ height:8px; background: var(--surface-2); border-radius:999px; overflow:hidden; border:1px solid var(--border); }
+  .mt-pbar{ height:8px; background: var(--border); border-radius:999px; overflow:hidden; border:1px solid var(--border); }
   .mt-pbar > span{ display:block; height:100%; background: var(--red); border-radius:999px; }
   .mt-pnum{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); text-align:right; font-variant-numeric: tabular-nums; }
   .mt-pmeta{ grid-column: 1 / -1; font-size: var(--text-label); color: var(--text-muted); }
