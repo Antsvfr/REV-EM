@@ -52,6 +52,15 @@ console.log("\n── 1. problèmes de référence ──");
   eq("lim sin x / x = 1 : PAS de réponse sans CAS (jamais inventée)", [r.ok, r.status, r.code], [false, ST.UNSUPPORTED, "CAS_UNAVAILABLE"]);
 }
 
+/* ═══ 1bis. ÉQUATIONS NUES (sans verbe) ═══════════════════════════════════════════════════════════════════════ */
+console.log("\n── 1bis. équations nues ──");
+{
+  for (const [q, want] of [["x² - 5x + 6 = 0", "x = 2 ; x = 3"], ["2x + 4 = 10", "x = 3"], ["x² = 4", "x = -2 ; x = 2"], ["3x - 1 = 0 ?", "x = 1/3"]]) {
+    const r = await solve(q); eq("« " + q + " » (sans verbe) est résolue : " + want, [txt(r), r.status], [want, ST.VERIFIED_EXACT]);
+  }
+  for (const q of ["2+2=4", "x+y=5", "y = 2x + 1", "Le prix est x = 5 euros", "a = b"]) eq("« " + q + " » n'est PAS prise pour une équation à résoudre", E.analyze(q, { lang: "fr" }).kind, "none");
+}
+
 /* ═══ 2. ARITHMÉTIQUE EXACTE ET NOTATIONS ════════════════════════════════════════════════════════════════════ */
 console.log("\n── 2. arithmétique exacte, notations ──");
 {

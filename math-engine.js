@@ -354,6 +354,14 @@
     // « la différence entre le TRI et la VAN »), c'est une question de cours : le moteur ne se déclenche pas et le modèle explique.
     if(!/\d/.test(src)) return noneResult("aucun nombre : question conceptuelle");
 
+    // Une ÉQUATION NUE (« x² - 5x + 6 = 0 », « 2x + 4 = 10 », « x² = 4 ») sans verbe : l'élève demande évidemment de la résoudre.
+    // Une seule inconnue, un seul « = », aucun mot : sinon (« 2+2=4 », « x+y=5 », du texte) ce n'est pas reconnu comme un problème.
+    var bareEq = src.replace(/[?!.\s]+$/, "").trim();
+    if((bareEq.match(/=/g) || []).length === 1 && bareEq.length <= 120 && !/[A-Za-z]{3,}/.test(bareEq.replace(/\b(sqrt|ln|log\d*|exp|sin|cos|tan|abs)\b/gi, "")) && /^[\s\dA-Za-z+\-−*\/^().,=²³⁴×·÷√π]+$/.test(bareEq)){
+      var pbe = tryParse(bareEq, lang);
+      if(pbe.ok && pbe.ast.t === "eq" && C.freeVars(pbe.ast).length === 1) return Object.assign(base, { kind: "equation", eq: pbe.ast, var: C.freeVars(pbe.ast)[0], domain: null, notes: base.notes.concat(pbe.notes, ["bare-equation"]) });
+    }
+
     // ── 2.6 probabilités ──────────────────────────────────────────────────────────────────────────
     var nums = extractNumbers(src, lang);
     var named = function(re, mapper){ var mm = re.exec(src); return mm ? mapper(mm) : null; };
@@ -928,7 +936,7 @@
     resultLines(out, lang).forEach(function(x){ L.push(x); });
     L.push("verification: " + (STATUS_PHRASE[out.status] || out.status) + " — " + (out.verification.method || "") + (out.verification.detail ? " (" + out.verification.detail + ")" : ""));
     if(out.domainNote) L.push("domain note: " + out.domainNote);
-    (out.notes || []).forEach(function(n){ if(n && !/^(percent|log-base-10|implicit-mult-after-division|split-word|irrational|constant-of-integration|no-real-solution|complex-solutions|infinite-solutions|singular|non-integer-periods|irreducible-factor-over-Q|multiple-irr-possible|domain-excludes|multiple-root|real-solutions-only|approximate-roots|infinite-family|equation-without-equals|several-solutions|extraneous-removed)/.test(n)) L.push("note: " + n); });
+    (out.notes || []).forEach(function(n){ if(n && !/^(percent|log-base-10|implicit-mult-after-division|split-word|irrational|constant-of-integration|no-real-solution|complex-solutions|infinite-solutions|singular|non-integer-periods|irreducible-factor-over-Q|multiple-irr-possible|domain-excludes|multiple-root|real-solutions-only|approximate-roots|infinite-family|equation-without-equals|several-solutions|extraneous-removed|bare-equation)/.test(n)) L.push("note: " + n); });
     var nset = out.notes || [];
     if(nset.indexOf("log-base-10") >= 0) L.push("note: log(x) was read as the base-10 logarithm; ln(x) is the natural logarithm");
     if(nset.indexOf("constant-of-integration") >= 0) L.push("note: an antiderivative is defined up to an arbitrary constant C");
@@ -944,7 +952,7 @@
     if(nset.indexOf("infinite-family") >= 0) L.push("note: infinitely many solutions, written with an integer parameter n");
     if(nset.indexOf("equation-without-equals") >= 0) L.push("note: no '=' sign was written; the expression was assumed equal to 0");
     if(nset.indexOf("irreducible-factor-over-Q") >= 0) L.push("note: the remaining factor has no rational root (irreducible over the rationals)");
-    L.push("rules: these results come from the deterministic math engine and are authoritative. Present them EXACTLY as given; never recompute, round differently or replace any number. Explain the method, the formula used and what the result means. " +
+    L.push("rules: these results come from the deterministic math engine and are authoritative. Present them EXACTLY as given; never recompute, round differently or replace any number. Explain the method, the formula used and what the result means. State the result once and stop after a short check. " +
            (out.status === STATUS.VERIFIED_NUMERICALLY ? "The verification was numerical: say it was checked numerically, not proven. " : "") +
            (out.status === STATUS.COMPUTED_NOT_INDEPENDENTLY_VERIFIED ? "This result could not be verified independently: say so clearly and do not present it as certain. " : ""));
     return { header: out.status === STATUS.VERIFIED_EXACT ? "MATH ENGINE RESULT (computed deterministically, verified exactly — authoritative)" : out.status === STATUS.VERIFIED_NUMERICALLY ? "MATH ENGINE RESULT (computed deterministically, verified numerically — authoritative)" : "MATH ENGINE RESULT (computed deterministically, NOT independently verified)", text: L.join("\n") };
@@ -1007,7 +1015,7 @@
       }
       if(out.kind === "stats" && out.lines){ card.lines = out.lines.map(function(x){ return localize(x, lang); }); card.exactText = null; card.exactLatex = null; }
       card.verification = { status: out.status, method: out.verification.method };
-      card.steps = lang === "fr" ? (out.steps || []).slice(0, 6) : []; card.notes = (out.notes || []).filter(function(n){ return /^(domain-excludes|no-real-solution|complex-solutions|constant-of-integration|log-base-10|multiple-irr-possible|infinite-solutions|singular|irreducible)/.test(n) || !/^(percent|implicit|split-word|irrational|non-integer)/.test(n); });
+      card.steps = lang === "fr" ? (out.steps || []).slice(0, 6) : []; card.notes = (out.notes || []).filter(function(n){ return /^(domain-excludes|no-real-solution|complex-solutions|constant-of-integration|log-base-10|multiple-irr-possible|infinite-solutions|singular|irreducible)/.test(n) || !/^(percent|implicit|split-word|irrational|non-integer|bare-equation)/.test(n); });
       card.convAmbiguous = !!out.raw && !!out.raw.convAmbiguous;
     } else { card.message = out.message; card.code = out.code; card.complexNote = out.complexNote || null; }
     return card;

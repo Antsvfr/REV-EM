@@ -176,6 +176,9 @@ globalThis.caches = { keys: async () => [...cacheSet], delete: async (n) => cach
     const done = await h.waitFor("GENERATION_COMPLETE", "g1");
     eq("jetons dans l'ordre", h.of("GENERATION_TOKEN", "g1").map(m => m.delta).join(""), "Bonjour le monde !");
     check("premier jeton mesuré", typeof done.ttftMs === "number" && done.ttftMs > 0 && done.totalMs >= done.ttftMs);
+    /* Sémantique des chunks : l'hôte relaie des DELTAS (choices[0].delta.content, WebLLM 0.2.85 : `curMessage.slice(prevMessageLength)`, vérifié dans
+       node_modules/@mlc-ai/web-llm/lib/index.js) sans jamais en recoller : le total relayé = la somme des deltas. */
+    eq("chars (hôte) = somme exacte des deltas relayés : aucun chunk rejoué ni recollé", done.chars, h.of("GENERATION_TOKEN", "g1").reduce((n, m) => n + m.delta.length, 0));
     eq("retour à READY", done.state, "READY");
     h.send({ type: "GENERATE", id: "g2", messages: [{ role: "user", content: "a" }] });
     h.send({ type: "GENERATE", id: "g3", messages: [{ role: "user", content: "b" }] });

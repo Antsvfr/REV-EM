@@ -17174,7 +17174,7 @@ async function aiGeneralAsk(text, opts){
   if(analysis.domain !== "general") chat.domain = analysis.domain;
 
   const diag = { at: Date.now(), tier: state.aiTier || null, model: state.aiModelId || null, intent: analysis.intent, depth: analysis.depth, domain: analysis.domain, followType: analysis.followType,
-                 lang: analysis.lang, llmCalls: 0, localAnswer: local ? local.kind : null, localCalc: null, errorCode: null };
+                 lang: analysis.lang, llmCalls: 0, generationCount: 0, attempts: [], localAnswer: local ? local.kind : null, localCalc: null, errorCode: null };
 
   // — réponse LOCALE : jamais d'invention possible, jamais un appel au modèle
   if(local){
@@ -17269,17 +17269,21 @@ async function aiGeneralAsk(text, opts){
     if(signal.cancelled) break;
     tDispatch = performance.now();
     if(attempt === 0) aiChatPhase("DISPATCHED");
-    diag.llmCalls++;
+    diag.llmCalls++; diag.generationCount = diag.llmCalls;
     try{
       res = await webllmChat(prompt.messages, {
         signal, task: "chat", temperature: prompt.params.temperature, topP: prompt.params.topP, maxTokens: prompt.params.maxTokens,
         budgetTokens: windowTokens - prompt.params.maxTokens - 120,
         onText: ({ text }) => { if(tFirst === null && text) tFirst = performance.now(); aiGeneralPaint(text); },
       });
+      diag.attempts.push({ n: attempt + 1, ok: true, finishReason: res.finishReason || null, rawChars: res.proc ? res.proc.rawChars : null, loopAborted: !!res.loopAborted, aborted: !!res.aborted });
       err = null; break;
     }catch(e){
       err = e;
       const cls = RAssist.classifyChatError(e);
+      diag.attempts.push({ n: attempt + 1, ok: false, error: cls.code, retried: !!(cls.shrinkContext && attempt === 0 && !signal.cancelled) });
+      /* RETRY : la tentative précédente (même partielle) est ABANDONNÉE — l'affichage est réinitialisé, et chaque génération a son PROPRE assembleur
+         (créé dans aiHostGenerate) : jamais « tentative 1 + tentative 2 ». */
       if(cls.shrinkContext && attempt === 0 && !signal.cancelled){ windowTokens = Math.floor(windowTokens * 0.65); prompt = build(); diag.retriedSmaller = true; aiPaintReset(); continue; }
       break;
     }
@@ -17305,7 +17309,12 @@ async function aiGeneralAsk(text, opts){
   if(proc) Object.assign(diag, { preferredLanguage: analysis.lang, langSource: analysis.langSource, allowForeign, outputProcessingMs: proc.processingMs, rawChars: proc.rawChars, cleanChars: answer.length, reasoningChars: proc.reasoningChars,
                                  orphanThink: proc.flags.orphanClose, tagsRemoved: proc.flags.tagsRemoved, specialTokensRemoved: proc.flags.specialTokensRemoved, duplicatesRemoved: proc.flags.duplicatesRemoved,
                                  loop: proc.flags.loop, cumulativeChunks: proc.flags.cumulativeChunks, outputIssues: verdict.codes });
-  chat.lastOutput = proc ? { raw: proc.raw, clean: answer } : null;       // en MÉMOIRE seulement (diagnostic) : jamais écrit en stockage, jamais envoyé à Supabase, jamais affiché
+  /* en MÉMOIRE seulement (diagnostic) : jamais écrit en stockage, jamais envoyé à Supabase, jamais affiché dans l'interface normale.
+     Les 4 STADES permettent de voir À QUEL MOMENT une répétition apparaît : rawModelOutput (somme des deltas) → assembledStream (raisonnement et balises
+     retirés) → processedOutput (boucle/redémarrage/doublons/queue incomplète/typographie) → displayedOutput (le texte réellement dans le DOM, relevé après le rendu). */
+  chat.lastOutput = proc ? { raw: proc.raw, rawModelOutput: proc.raw, assembledStream: proc.assembled, processedOutput: proc.text, clean: answer, displayedOutput: null, chunks: proc.chunks, stages: proc.repeatStages, finishReason: res.finishReason || null } : null;
+  if(proc) Object.assign(diag, { chunks: proc.chunks, hostChars: state.aiPerf ? state.aiPerf.chars : null, stopReason: proc.flags.repeatCollapsed ? "repeat-detected" : (proc.flags.loop ? "loop-detected" : (res.finishReason || null)),
+                                 repeatCollapsed: !!proc.flags.repeatCollapsed, tailTrimmed: !!proc.flags.tailTrimmed, repeatStages: { raw: proc.repeatStages.raw.repeated, assembled: proc.repeatStages.assembled.repeated, processed: proc.repeatStages.processed.repeated } });
   chat.qualityNote = null;
   const userAbort = signal.cancelled || (res && res.aborted && !res.loopAborted);
   const mathMeta = mathRes ? { math: mathRes.card } : (mathUnrecognized ? { mathUnverified: true } : {});
@@ -17332,7 +17341,24 @@ async function aiGeneralAsk(text, opts){
   }
   chat.diag = diag;
   render();
+  aiCaptureDisplayed(chat, diag);
   return true;
+}
+/* STADE « displayedOutput » : le texte réellement affiché dans la dernière bulle (DOM), relevé APRÈS le rendu — diagnostic seulement. */
+function aiCaptureDisplayed(chat, diag){
+  try{
+    const els = document.querySelectorAll(".ai-bubble.assistant .ai-result-body");
+    const el = els.length ? els[els.length - 1] : null;
+    const shown = el ? el.innerText : "";
+    if(chat.lastOutput){
+      chat.lastOutput.displayedOutput = shown;
+      const st = RevemOutput.repetitionStats(shown);
+      chat.lastOutput.stages = Object.assign({}, chat.lastOutput.stages, { displayed: st });
+      if(diag){ diag.repeatStages = Object.assign({}, diag.repeatStages, { displayed: st.repeated }); diag.displayedChars = shown.length;
+        const order = ["raw", "assembled", "processed", "displayed"], ss = chat.lastOutput.stages;
+        diag.firstRepeatStage = order.filter(k => ss[k] && ss[k].repeated)[0] || null; }
+    }
+  }catch(e){}
 }
 
 /* OUTIL DE DÉVELOPPEMENT (console) — « les connaissances améliorent-elles vraiment la réponse ? ».
@@ -17379,7 +17405,7 @@ async function revemKnowledgeCompare(question, opts){
 }
 window.revemKnowledgeCompare = revemKnowledgeCompare;
 /* DIAGNOSTIC (console) : le texte BRUT et le texte PROPRE de la dernière réponse, pour les comparer. En mémoire seulement. */
-window.revemLastRawOutput = () => (state.aiChat && state.aiChat.lastOutput) || null;
+window.revemLastRawOutput = () => (state.aiChat && state.aiChat.lastOutput) || null;     // { rawModelOutput, assembledStream, processedOutput, displayedOutput, chunks, stages } — console seulement
 
 function aiGeneralStop(){ if(state.aiBusy) aiCancelGeneration(); }
 function aiGeneralRegenerate(){ return aiGeneralAsk(null, { regenerate: true }); }
@@ -17461,6 +17487,8 @@ function aiChatDiagHtml(){
     <div>params : temperature ${v(d.temperature)} · top_p ${v(d.topP)} · max_tokens ${v(d.maxTokens)} · profile ${escapeHtml(v(d.profile))}</div>
     <div>knowledge : mode ${escapeHtml(v(d.knowledgeMode))} · ${escapeHtml(v(d.knowledgeStatus))} · topicsDetected : ${escapeHtml((d.topicsDetected || []).join(", ") || "—")} · candidates ${v(d.knowledgeCandidates)} · selected ${escapeHtml((d.knowledgeSelected || []).join(", ") || "none")} · scores ${escapeHtml((d.knowledgeScores || []).join(", ") || "—")}</div>
     <div>knowledgeContext : ${v(d.knowledgeContextTokens, " tokens≈")} · used ${escapeHtml((d.knowledgeUsed || []).join(", ") || "none")}${(d.knowledgeCompacted || []).length ? " (compact: " + escapeHtml(d.knowledgeCompacted.join(", ")) + ")" : ""}${(d.knowledgeDropped || []).length ? " · dropped " + escapeHtml(d.knowledgeDropped.join(", ")) : ""}${(d.knowledgeWithheld || []).length ? " · withheld " + escapeHtml(d.knowledgeWithheld.join(", ")) : ""} · retrievalTime : ${v(d.retrievalMs, " ms")}</div>
+    <div>generationCount : ${v(d.generationCount)} · attempts : ${escapeHtml((d.attempts || []).map(a => a.ok ? "#" + a.n + " " + (a.finishReason || "?") + (a.loopAborted ? " (stopped: repeat)" : "") : "#" + a.n + " " + a.error + (a.retried ? " → retry" : "")).join(" | ") || "—")} · stopReason : ${escapeHtml(v(d.stopReason))} · repeatCollapsed : ${escapeHtml(v(d.repeatCollapsed))} · tailTrimmed : ${escapeHtml(v(d.tailTrimmed))}</div>
+    <div>chunks : ${d.chunks ? d.chunks.count + " deltas · " + d.chunks.deltaChars + " chars (host " + v(d.hostChars) + ") · max " + d.chunks.maxDeltaChars + " · identical-run " + d.chunks.longestIdenticalRun + " · cumulative " + d.chunks.cumulative : "—"} · repetition by stage (raw/assembled/processed/displayed) : ${d.repeatStages ? ["raw", "assembled", "processed", "displayed"].map(k => v(d.repeatStages[k])).join(" / ") : "—"} · firstRepeatStage : ${escapeHtml(v(d.firstRepeatStage))}</div>
     <div>llmCalls : ${d.llmCalls}${d.retriedSmaller ? " (retry with smaller context)" : ""} · localAnswer : ${escapeHtml(v(d.localAnswer))} · localCalc : ${escapeHtml(v(d.localCalc))}</div>
     <div>timePreparing : ${v(d.prepMs, " ms")} · TTFT(engine) : ${v(d.ttftMs, " ms")} · TTFT(page) : ${v(d.ttftPageMs, " ms")} · generationTime : ${v(d.genMs, " ms")}</div>
     <div>output : raw ${v(d.rawChars)} → clean ${v(d.cleanChars)} chars · reasoningHidden ${v(d.reasoningChars)} · orphanThink ${escapeHtml(v(d.orphanThink))} · tagsRemoved ${v(d.tagsRemoved)} · specialTokens ${v(d.specialTokensRemoved)} · duplicatesRemoved ${v(d.duplicatesRemoved)} · loop ${escapeHtml(v(d.loop))} · cumulativeChunks ${v(d.cumulativeChunks)}</div>

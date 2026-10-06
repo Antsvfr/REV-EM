@@ -135,6 +135,113 @@
     return { text: text.slice(0, lp.firstStart + lp.length).replace(/\s+$/, ""), collapsed: true };
   }
 
+  /* ── 3bis. RÉPÉTITIONS SÉMANTIQUES : la même démonstration recommencée (avec des variantes), pas seulement un bloc identique ──
+     CAUSE visée (voir AI_OUTPUT.md « Répétition de la démonstration ») : un petit modèle, une fois sa réponse terminée, ne produit pas
+     toujours son jeton de fin : il REDÉMARRE (« factorisation → solutions → vérification », puis encore) jusqu'à max_tokens, où il est coupé
+     en pleine phrase. findLoop() ne voit que des blocs STRICTEMENT identiques de ≤ 400 caractères collés les uns aux autres : une démonstration
+     de 600 caractères reformulée à chaque tour lui échappe.
+     Ici : on découpe en UNITÉS (lignes, phrases) ; deux unités se ressemblent si elles ont les MÊMES nombres et des mots quasi identiques ;
+     un « redémarrage » = au moins DEUX unités consécutives qui répètent deux unités antérieures consécutives (ou une longue phrase déjà
+     vue deux fois). Prudent par construction : listes, tableaux, blocs de code, lignes très courtes ne comptent jamais. */
+  function splitUnits(text){
+    var out = [], pos = 0, fence = false, lines = String(text).split("\n"), i, j;
+    for(i = 0; i < lines.length; i++){
+      var line = lines[i], start = pos;
+      pos += line.length + 1;
+      if(/^\s*```/.test(line)){ fence = !fence; continue; }
+      if(fence || /^\s*\|/.test(line) || /^\s*(?:[-*+]|\d+[.)])\s/.test(line) || /^\s*#{1,6}\s/.test(line)) { out.push({ text: line, start: start, skip: true, terminated: true }); continue; }
+      var parts = line.replace(/([.!?…])(\s+)/g, "$1\u0001$2").split("\u0001"), off = 0;
+      for(j = 0; j < parts.length; j++){
+        var u = parts[j], term = /[.!?…:]\s*$/.test(u) || j < parts.length - 1 || i < lines.length - 1;
+        if(u.trim()) out.push({ text: u, start: start + off, skip: false, terminated: term });
+        off += u.length;
+      }
+    }
+    return out;
+  }
+  function unitWords(t){ return wordsOf(t); }
+  function compactOf(t){ return String(t).toLowerCase().replace(/[\s.,;:!?]+/g, ""); }       // la formule telle qu'écrite (symboles compris), sans espaces ni ponctuation
+  function sameUnit(a, b){
+    if(a.skip || b.skip) return false;
+    if(a.compact === b.compact && a.compact.length >= 12) return true;                    // « Donc x² - 5x + 6 = (x - 2)(x - 3). » : peu de MOTS, beaucoup de math
+    var wa = a.words, wb = b.words;
+    if(wa.length < 3 || wb.length < 3) return false;
+    if(a.nums !== b.nums) return false;
+    if(a.key === b.key) return true;
+    var ratio = wa.length / Math.max(1, wb.length);
+    if(ratio < 0.7 || ratio > 1.43) return false;
+    return jaccard(wa, wb) >= 0.8;
+  }
+  /* findRepeat(text, { final }) → null | { start, units, from } : `start` = index (dans text) du début du PREMIER bloc répété
+     (c.-à-d. la 2ᵉ occurrence) : tout ce qui précède est la réponse, tout ce qui suit est du redémarrage. */
+  function findRepeat(text, o){
+    o = o || {};
+    var raw = String(text || "");
+    if(raw.length < 160) return null;
+    var units = splitUnits(raw), i, j;
+    if(!o.final && units.length && !units[units.length - 1].terminated) units.pop();         // la phrase en cours d'écriture ne compte pas
+    for(i = 0; i < units.length; i++){
+      var u = units[i];
+      u.words = unitWords(u.text); u.nums = numbersOf(u.text); u.key = u.words.join(" "); u.compact = compactOf(u.text);
+    }
+    var n = units.length;
+    for(i = 2; i < n; i++){
+      for(j = 0; j + 1 < i; j++){
+        // deux unités consécutives (i, i+1) répètent (j, j+1), avec j+1 < i : le bloc s'est vraiment RÉPÉTÉ plus loin
+        if(i + 1 >= n) break;
+        if(!sameUnit(units[i], units[j]) || !sameUnit(units[i + 1], units[j + 1])) continue;
+        var weight = units[i].compact.length + units[i + 1].compact.length;
+        if(weight < 50) continue;
+        // le redémarrage commence AVANT la paire reconnue : s'il en est à son j-ᵉ élément comme la 1ʳᵉ copie, il a débuté j unités plus haut
+        // (« Pour résoudre l'équation… » reformulé ne ressemble pas à l'original, mais « Donc… Ainsi… » si)
+        var r = i - j;
+        return { start: (r >= j + 1 && units[r].start > units[j].start) ? units[r].start : units[i].start, units: 2, from: units[j].start };
+      }
+    }
+    // une longue phrase vue trois fois
+    for(i = 0; i < n; i++){
+      if(units[i].skip || units[i].compact.length < 70) continue;
+      var c = 1, second = -1;
+      for(j = i + 1; j < n; j++) if(sameUnit(units[i], units[j])){ c++; if(second < 0) second = j; if(c >= 3) return { start: units[second].start, units: 1, from: units[i].start }; }
+    }
+    return null;
+  }
+  /* Une réponse coupée par la limite de génération (ou arrêtée pour boucle) se termine souvent EN PLEIN MILIEU d'une phrase (« … se factorise
+     l'équation x² - 5x + 6 = 0 en ( »). On retire ce QUEUE incomplète, et seulement elle : jamais une phrase ou une ligne de calcul complète. */
+  function trimIncompleteTail(text){
+    var t = String(text || "").replace(/\s+$/, "");
+    if(!t) return { text: t, trimmed: false };
+    var i, last = -1;
+    for(i = t.length - 1; i >= 0; i--){
+      var ch = t.charAt(i);
+      if(ch === "\n"){ last = i; break; }
+      if((ch === "." || ch === "!" || ch === "?" || ch === "…" || ch === ":" || ch === ";") && (i === t.length - 1 || /\s/.test(t.charAt(i + 1)))){ last = i; break; }
+    }
+    var tail = last < 0 ? t : t.slice(last + 1), keep = last < 0 ? "" : t.slice(0, last + 1);
+    if(!tail.trim()) return { text: t, trimmed: false };
+    var open = 0, k;
+    for(k = 0; k < tail.length; k++){ var c = tail.charAt(k); if(c === "(" || c === "[" || c === "{") open++; else if(c === ")" || c === "]" || c === "}") open--; }
+    var endsOpen = /[,(\[{=+\-−×*\/^:]\s*$/.test(tail) || /(?:^|\s)(?:le|la|les|l'|un|une|des|de|du|d'|en|et|ou|à|au|aux|par|pour|que|qui|donc|the|a|an|of|to|and|or|in|by|is)\s*$/i.test(tail);
+    var isFormulaLine = /=/.test(tail) && open === 0 && !endsOpen;
+    if((open > 0 || endsOpen) && !isFormulaLine && keep.replace(/\s/g, "").length >= 25) return { text: keep.replace(/\s+$/, ""), trimmed: true };
+    return { text: t, trimmed: false };
+  }
+  /* Mesures de répétition (diagnostic) : où, et combien. Aucune modification du texte. */
+  function repetitionStats(text){
+    var s = String(text || ""), units = splitUnits(s), i, j;
+    for(i = 0; i < units.length; i++){ units[i].words = unitWords(units[i].text); units[i].nums = numbersOf(units[i].text); units[i].key = units[i].words.join(" "); units[i].compact = compactOf(units[i].text); }
+    var dupUnits = 0, firstDupAt = null;
+    for(i = 1; i < units.length; i++){
+      if(units[i].skip || units[i].compact.length < 20) continue;
+      for(j = 0; j < i; j++) if(sameUnit(units[i], units[j]) && units[j].compact.length >= 20){ dupUnits++; if(firstDupAt === null) firstDupAt = units[i].start; break; }
+    }
+    var rp = findRepeat(s, { final: true });
+    var blocks = splitBlocks(s), keys = {}, dupBlocks = 0;
+    for(i = 0; i < blocks.length; i++){ var k = blocks[i].toLowerCase().replace(/\s+/g, " ").trim(); if(k.length < 30) continue; if(keys[k]) dupBlocks++; else keys[k] = 1; }
+    return { chars: s.length, units: units.length, duplicateUnits: dupUnits, duplicateBlocks: dupBlocks, firstDuplicateAt: firstDupAt, restartAt: rp ? rp.start : null, restartFrom: rp ? rp.from : null,
+             repeated: !!rp || dupBlocks > 0 || dupUnits >= 3 };
+  }
+
   /* ── 4. TYPOGRAPHIE (structure, jamais le sens) ──────────────────────────────
      Préserve : Markdown, listes, tableaux, blocs de code, formules, symboles. Espaces avant : ; ! ? NON touchés
      (typographie française légitime). */
@@ -261,12 +368,15 @@
   function createAssembler(o){
     o = o || {};
     var raw = "", reasoning = !!o.reasoning, mode = o.mode || "text";       // « text » : chat ; « light » : cours / JSON (reasoning + balises seulement)
-    var cumulative = 0, lastCheck = 0, loop = null, visCache = null, visLen = -1, t0 = now(), pushes = 0;
+    var cumulative = 0, lastCheck = 0, lastRepCheck = 0, loop = null, repeat = null, visCache = null, visLen = -1, t0 = now(), pushes = 0;
+    var deltaChars = 0, maxDelta = 0, sameRun = 0, maxSameRun = 0, prevDelta = null;      // statistiques de TRANSPORT (diagnostic) : le flux est-il sain ?
 
     function push(delta){
       delta = String(delta == null ? "" : delta);
       if(!delta) return { changed: false, loop: false };
-      pushes++;
+      pushes++; deltaChars += delta.length; if(delta.length > maxDelta) maxDelta = delta.length;
+      if(delta === prevDelta && delta.length >= 2){ sameRun++; if(sameRun > maxSameRun) maxSameRun = sameRun; } else sameRun = 0;
+      prevDelta = delta;
       /* WebLLM envoie des DELTAS (choices[0].delta.content, vérifié dans ai-host.js) : un jeton à la fois. Garde-fou : un « delta » qui recolle
          TOUT le texte déjà reçu puis y ajoute au moins 3 caractères (1 seulement au-delà de 16) est un texte CUMULÉ — impossible pour un vrai
          jeton, qui n'est jamais un préfixe du texte entier — : on remplace, on n'ajoute pas (sinon « A », « AB », « ABC » donnerait « AABABC »). */
@@ -277,6 +387,13 @@
         lastCheck = raw.length;
         var f = findLoop(raw);
         if(f){ loop = f; lp = true; }
+      }
+      /* Redémarrage de la démonstration (voir findRepeat) : contrôle plus coûteux, donc tous les 120 caractères ET seulement sur la réponse
+         visible (jamais sur le raisonnement). La génération est alors ARRÊTÉE : inutile de payer 400 jetons de plus pour les jeter. */
+      if(!loop && !repeat && mode === "text" && raw.length - lastRepCheck >= 120){
+        lastRepCheck = raw.length;
+        var rp = findRepeat(extract(trimPartial(raw), { reasoning: reasoning, final: false }).answer, { final: false });
+        if(rp){ repeat = rp; lp = true; }
       }
       return { changed: true, loop: lp };
     }
@@ -296,20 +413,30 @@
       var tp = now();
       var ex = extract(raw, { reasoning: reasoning, final: true, finishReason: info.finishReason });
       var text = ex.answer, flags = { reasoningStripped: !!(ex.reasoning || ex.tags), orphanClose: ex.orphanClose, truncatedThinking: ex.unfinished, tagsRemoved: 0,
-                                       specialTokensRemoved: 0, duplicatesRemoved: 0, loop: !!loop || !!info.loopAborted, loopCollapsed: false, cumulativeChunks: cumulative };
+                                       specialTokensRemoved: 0, duplicatesRemoved: 0, loop: !!loop || !!info.loopAborted, loopCollapsed: false, cumulativeChunks: cumulative,
+                                       repeatCollapsed: false, tailTrimmed: false };
       var sp = removeSpecial(text); text = sp.text; flags.specialTokensRemoved = sp.count;
       text = trimPartial(text, true);
       var leftover = text.match(THINK_TAG);
       if(leftover){ flags.tagsRemoved = leftover.length; text = text.replace(THINK_TAG, ""); }
+      var assembled = text.replace(/^\s+/, "");                   // STADE 2 : ce que le flux a réellement assemblé (raisonnement et balises retirés), AVANT tout nettoyage de fin
       if(mode === "text"){
         var cl = collapseLoop(text); if(cl.collapsed){ text = cl.text; flags.loop = true; flags.loopCollapsed = true; }
+        var rp = findRepeat(text, { final: true });                // le redémarrage de la démonstration : on GARDE la première occurrence
+        if(rp){ text = text.slice(0, rp.start).replace(/\s+$/, ""); flags.repeat = true; flags.repeatCollapsed = true; flags.loop = true; }
         var dd = dedupe(text); flags.duplicatesRemoved = dd.removed; text = dd.text;
+        // coupée (limite de génération) ou arrêtée pour répétition : la queue incomplète (« … en ( ») est retirée, jamais une phrase complète
+        if(info.finishReason === "length" || info.loopAborted || flags.repeatCollapsed || flags.loopCollapsed){
+          var tt = trimIncompleteTail(text); if(tt.trimmed){ text = tt.text; flags.tailTrimmed = true; }
+        }
         text = tidy(text);
       } else text = text.replace(/^\s+/, "").replace(/\s+$/, "");
-      return { text: text, raw: raw, reasoningChars: ex.reasoning.length, answerChars: text.length, rawChars: raw.length, state: ex.state, flags: flags, mode: mode, pushes: pushes,
+      return { text: text, raw: raw, assembled: assembled, reasoningChars: ex.reasoning.length, answerChars: text.length, rawChars: raw.length, state: ex.state, flags: flags, mode: mode, pushes: pushes,
+               chunks: { count: pushes, deltaChars: deltaChars, maxDeltaChars: maxDelta, longestIdenticalRun: maxSameRun, cumulative: cumulative, rawChars: raw.length },
+               repeatStages: { raw: repetitionStats(raw), assembled: repetitionStats(assembled), processed: repetitionStats(text) },
                processingMs: Math.round((now() - tp) * 100) / 100, streamMs: Math.round((tp - t0) * 10) / 10 };
     }
-    return { push: push, visible: visible, state: state, finish: finish, raw: function(){ return raw; } };
+    return { push: push, visible: visible, state: state, finish: finish, raw: function(){ return raw; }, repeatAt: function(){ return repeat ? repeat.start : null; } };
   }
 
   /* ── 8. CONTRÔLE QUALITÉ DÉTERMINISTE ────────────────────────────────────────
@@ -332,6 +459,8 @@
     }
     if(ctx.maxTokens && text.length > ctx.maxTokens * 6) issues.push({ code: "ANOMALOUS_LENGTH", severity: "warn" });
     if(flags.duplicatesRemoved) issues.push({ code: "DUPLICATE_REMOVED", severity: "info", count: flags.duplicatesRemoved });
+    if(flags.repeatCollapsed) issues.push({ code: "REPEAT_COLLAPSED", severity: "info" });
+    if(flags.tailTrimmed) issues.push({ code: "TAIL_TRIMMED", severity: "info" });
     if(flags.reasoningStripped) issues.push({ code: "REASONING_STRIPPED", severity: "info", orphanClose: !!flags.orphanClose, chars: proc.reasoningChars });
     var ok = true;
     for(var i = 0; i < issues.length; i++) if(issues[i].severity === "error") ok = false;
@@ -346,7 +475,7 @@
   }
 
   global.RevemOutput = {
-    extract: extract, trimPartial: trimPartial, removeSpecial: removeSpecial, findLoop: findLoop, collapseLoop: collapseLoop, tidy: tidy, dedupe: dedupe,
+    extract: extract, trimPartial: trimPartial, removeSpecial: removeSpecial, findLoop: findLoop, collapseLoop: collapseLoop, findRepeat: findRepeat, trimIncompleteTail: trimIncompleteTail, repetitionStats: repetitionStats, tidy: tidy, dedupe: dedupe,
     scriptStats: scriptStats, detectForeignScript: detectForeignScript, foreignAllowed: foreignAllowed,
     createAssembler: createAssembler, validate: validate, processComplete: processComplete,
   };
