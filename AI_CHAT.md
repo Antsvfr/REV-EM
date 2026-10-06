@@ -121,6 +121,8 @@ Consignes courtes, construites dynamiquement (le prompt système reste petit) :
   **économie** (concept → mécanisme → agents → effets ; corrélation ≠ causalité, court ≠ long
   terme), **mathématiques / statistiques** (jamais une formule seule, sauf réponse très courte demandée).
 
+> **Calcul déjà fait par le moteur mathématique** : `selectStrategy` est remplacée par `mathStrategy` (budget réduit, format imposé, température 0,3) — voir `AI_OUTPUT.md` §14 et `AI_MATH.md`.
+
 ## 7. Context Builder (`selectHistory`, `buildGeneralPrompt`)
 
 Priorité : question actuelle → sujet → **dernier échange complet** (la réponse à simplifier /

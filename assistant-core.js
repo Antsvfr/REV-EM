@@ -645,6 +645,42 @@
     return { lines: lines, profile: profile, temperature: temperature, topP: TOP_P[profile], maxTokens: maxTokens };
   }
 
+  /* ── 7bis. STRATÉGIE « CALCUL DÉJÀ FAIT PAR LE MOTEUR MATHÉMATIQUE » ──────────────────────────────────────
+     Quand math-engine.js a déjà calculé ET vérifié le résultat (bloc `math:*`), le modèle n'a plus qu'à EXPLIQUER : une réponse courte et
+     structurée. Le budget ordinaire d'une question d'exercice (600 jetons, « moderate, 120 to 220 words ») laissait un petit modèle terminer
+     sa démonstration puis la RECOMMENCER jusqu'à la limite, où il était coupé en pleine phrase (voir AI_OUTPUT.md « Répétition de la
+     démonstration »). Ici : budget proportionné, format imposé, interdiction de recommencer, température un peu plus haute que 0,2 (un
+     tirage quasi glouton est précisément ce qui fait boucler un petit modèle). Les chiffres viennent du moteur : rien à « chercher ». */
+  var MATH_MAX_TOKENS = {
+    rapide: { SHORT: 140, NORMAL: 240, DEEP: 420 },
+    avance: { SHORT: 180, NORMAL: 320, DEEP: 560 },
+    expert: { SHORT: 600, NORMAL: 800, DEEP: 1100 },                       // palier à raisonnement : les jetons de réflexion comptent aussi
+  };
+  var MATH_FORMAT_LINES = [
+    "A deterministic engine has ALREADY solved and verified this: do not solve it again, only explain it.",
+    "Format, followed exactly: (1) one short line naming the method; (2) the key equations, each written ONCE, one per line; (3) the result on its own line, copied exactly from the engine; (4) one short check that substitutes the values; then STOP.",
+    "Never restate the question; never repeat the method or the result after the check; no recap, no second version. About 80 to 130 words at most.",
+  ];
+  var MATH_REPORT_LINES = [
+    "The deterministic engine produced NO verified result for this problem.",
+    "In at most 5 short lines: say clearly that no verified result is available, explain the general method, and ask for what is missing if anything. Do not give a numerical answer. Then STOP.",
+  ];
+  /* Vocabulaire mathématique français naturel (relevé sur une vraie réponse : « se ajoutent », « points de racine », « se factorise l'équation en ») */
+  var MATH_LEXICON = {
+    fr: "French wording: « racines » or « solutions » (never « points de racine »); « la somme des racines vaut… », « le produit des racines vaut… »; « s'additionnent »; « On factorise donc… »; « un produit est nul si l'un de ses facteurs est nul »; « s'annule ». Never « se ajoutent ».",
+  };
+  function mathStrategy(strat, analysis, calc, opts){
+    var failed = /MATH ENGINE REPORT/.test(calc.header || "");
+    var depth = analysis.depth || "NORMAL", tk = tierKey(opts && opts.tier), reasoning = !!(opts && opts.reasoning);
+    var lines = (failed ? MATH_REPORT_LINES : MATH_FORMAT_LINES).slice();
+    if(analysis.flags && analysis.flags.reasoning && !failed) lines.push("The student asked for the steps: keep each step to one line.");
+    if(analysis.flags && analysis.flags.beginner && !failed) lines.push("Student level: beginner. Name each idea in plain words.");
+    if(reasoning) lines.push("Keep your private reasoning to a few lines before answering.");
+    var max = MATH_MAX_TOKENS[tk][depth] || MATH_MAX_TOKENS[tk].NORMAL;
+    if(failed) max = Math.min(max, reasoning ? 700 : 200);
+    return { lines: lines, profile: "mathExplain", temperature: reasoning ? Math.max(0.5, Math.min(0.6, strat.temperature)) : 0.3, topP: 0.9, maxTokens: Math.min(strat.maxTokens, max) };
+  }
+
   /* ── 8. SUJET ET HISTORIQUE ──────────────────────────────────────────────── */
   var TOPIC_PREFIX = /^(?:peux[- ]tu |pouvez[- ]vous |pourrais[- ]tu )?(?:m'?)?(?:expliquer?|explique(?:[- ]moi)?|definir|definis(?:[- ]moi)?|compare(?:r)?(?:[- ]moi)?|resume(?:r)?|donne(?:[- ]moi)?|qu'est[- ]?ce (?:que|qu')|c'est quoi|quelle est la difference entre|quelles sont les differences entre|quelle est la|quel est le|pourquoi|comment (?:fonctionne|marche|calculer|calcule[- ]t[- ]on)|what is|what are|explain|define|compare|summari[sz]e|why does|why do|why|how does|how do you|difference between|que es|explica|was ist|erklare|che cos'e|spiega)\s+/;
   function extractTopic(text){
@@ -785,10 +821,12 @@
     var analysis = o.analysis, question = String(o.question || "");
     var window_ = o.contextTokens || CONTEXT_TOKENS, reasoning = !!o.reasoning;
     var strat = selectStrategy(analysis, { tier: o.tier, reasoning: reasoning });
+    var mathBacked = !!(o.calc && /^math:/.test(o.calc.kind || ""));
+    if(mathBacked) strat = mathStrategy(strat, analysis, o.calc, { tier: o.tier, reasoning: reasoning });
     var maxTokens = strat.maxTokens;
     var lang = analysis.lang;
 
-    var sys = SYSTEM_BASE + "\n" + languageLine(lang, reasoning);
+    var sys = SYSTEM_BASE + "\n" + languageLine(lang, reasoning) + (mathBacked && MATH_LEXICON[lang] ? "\n" + MATH_LEXICON[lang] : "");
     var style = strat.lines.slice();
     var hist0 = selectHistory(o.history || [], analysis, 0);          // juste pour le sujet
     var topic = hist0.topic;
@@ -797,7 +835,7 @@
       var prevTopics = hist0.topics;
       topicLine = "Current topic of the conversation: « " + topic + " »" + (prevTopics.length > 1 ? " (earlier: " + prevTopics.slice(0, -1).join("; ") + ")" : "") + ".";
     }
-    var calcBlock = o.calc ? "VERIFIED CALCULATION (computed locally, exact):\n" + o.calc.block : "";
+    var calcBlock = o.calc ? (o.calc.header || "VERIFIED CALCULATION (computed locally, exact)") + ":\n" + o.calc.block : "";
 
     var knowText = "", knFit = null;
     function compose(styleLines){

@@ -19,9 +19,16 @@
    Ce n'est PAS ce qui garantit que index.html reste à jour — voir la
    stratégie « réseau d'abord » plus bas, qui s'en charge sans dépendre d'un
    humain qui penserait à incrémenter ce numéro à chaque déploiement. */
-const CACHE_VERSION = "rev-em-v10";
+const CACHE_VERSION = "rev-em-v11";
 const SHELL_CACHE = CACHE_VERSION + "-shell";
 const RUNTIME_CACHE = CACHE_VERSION + "-runtime";
+
+/* Dépendances LOURDES du moteur mathématique (vendor/ : Pyodide + SymPy ≈ 19 Mo, KaTeX). Elles ne sont JAMAIS préchargées à
+   l'installation (le préchargement est « tout ou rien » et pèserait sur chaque installation) : elles entrent dans ce cache
+   à leur première utilisation réelle, puis sont servies cache d'abord — hors ligne compris. Nom VOLONTAIREMENT indépendant de
+   CACHE_VERSION : monter la version de l'app ne doit pas re-télécharger 19 Mo. Le nom des fichiers vendor/ porte déjà leur version ;
+   changer de version d'une dépendance = changer MATH_CACHE (voir vendor/README.md). */
+const MATH_CACHE = "rev-em-math-v1";
 
 /* L'app shell : tout ce qu'il faut pour que l'application s'OUVRE hors
    ligne. Chaque chemin est relatif — jamais de "/" en tête — pour rester
@@ -51,6 +58,13 @@ const SHELL_URLS = [
   "./import-center.js",
   "./course-hub.js",
   "./revision-bank.js",
+  "./math-core.js",
+  "./math-fast.js",
+  "./math-verify.js",
+  "./math-engine.js",
+  "./math-cas-client.js",
+  "./math-cas-worker.js",
+  "./math-cas.py",
   "./ai-knowledge/index.json",
   "./ai-knowledge/topics.json",
   "./ai-knowledge/finance/npv.json",
@@ -104,7 +118,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
     await Promise.all(
-      keys.filter((k) => k !== SHELL_CACHE && k !== RUNTIME_CACHE).map((k) => caches.delete(k))
+      keys.filter((k) => k !== SHELL_CACHE && k !== RUNTIME_CACHE && k !== MATH_CACHE).map((k) => caches.delete(k))
     );
     await self.clients.claim();
   })());
@@ -155,6 +169,16 @@ async function staleWhileRevalidate(request, cacheName){
   return cached || (await network) || Response.error();
 }
 
+/* Cache d'abord, sans revalidation : pour des fichiers dont la version est dans leur nom (vendor/). Seules les réponses 200 entrent dans le cache. */
+async function cacheFirst(request, cacheName){
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  if(cached) return cached;
+  const fresh = await fetch(request);
+  if(fresh && fresh.status === 200) cache.put(request, fresh.clone());
+  return fresh;
+}
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 
@@ -188,7 +212,14 @@ self.addEventListener("fetch", (event) => {
      qui les charge. Ils dépendent les uns des autres (index.html ↔
      user-data.js…) : servir un ancien module à côté d'une page neuve casse
      le contrat entre les deux. Hors ligne, le cache reprend la main. */
-  if(sameOrigin && /\.js$/.test(url.pathname)){
+  /* vendor/ (Pyodide, SymPy, KaTeX) : cache d'abord dans MATH_CACHE (voir plus haut). Testé AVANT la règle « .js » : vendor/katex/katex.min.js
+     est un .js mais ne doit PAS être re-téléchargé à chaque visite. */
+  if(sameOrigin && /\/vendor\//.test(url.pathname)){
+    event.respondWith(cacheFirst(request, MATH_CACHE));
+    return;
+  }
+
+  if(sameOrigin && /\.(js|py)$/.test(url.pathname)){
     event.respondWith(networkFirst(request));
     return;
   }

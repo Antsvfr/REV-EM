@@ -106,6 +106,15 @@ qui n'ont pas encore configuré Supabase (voir `SETUP_SUPABASE.md`), et
 `cache.addAll()` échoue en bloc si une seule requête échoue — un fichier
 optionnel manquant n'a pas à faire échouer l'installation de tout le reste.
 
+### Le moteur mathématique : un cache à part (`rev-em-math-v1`)
+
+Les dépendances lourdes du moteur mathématique (`vendor/` : Pyodide + SymPy ≈ 20 Mo, KaTeX) **ne sont pas dans l'app shell** : le préchargement est « tout ou rien » et pèserait sur
+chaque installation de l'application. Elles entrent dans un cache **dédié**, `rev-em-math-v1`, **à leur première utilisation réelle**, et sont ensuite servies **cache d'abord** (leur version
+est dans leur nom de fichier). Ce cache est volontairement **indépendant de `CACHE_VERSION`** — monter la version de l'application ne doit pas re-télécharger 20 Mo — et `activate` le
+conserve explicitement. Les petits fichiers de l'application (`math-*.js`, `math-cas.py`, `math-cas-worker.js`) sont, eux, dans l'app shell (« réseau d'abord » pour `.js` et `.py`).
+Résultat mesuré dans un vrai Chromium (`tests/math-ui.test.mjs`, scénario 12) : après un premier calcul formel en ligne, le calcul formel et KaTeX **fonctionnent hors ligne**.
+Voir `AI_MATH.md` §9.
+
 ### Mise à jour — jamais imposée
 
 ```

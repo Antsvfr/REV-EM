@@ -190,7 +190,7 @@ try {
     await ask(page, "1 000 € placés à 5 % par an pendant 4 ans : combien obtient-on ?");
     const g = (await gens(page))[0];
     const d = await diag(page);
-    check("calcul : le résultat exact est fourni au modèle ; les connaissances ne sont pas ajoutées (inutiles, et plus lent)", /1 215,51/.test(g.messages[0].content) && !KN.test(g.messages[0].content) && d.knowledgeStatus === "skipped:calculation", d.knowledgeStatus);
+    check("calcul : le résultat exact est fourni au modèle ; les connaissances ne sont pas ajoutées (inutiles, et plus lent)", /MATH ENGINE RESULT/.test(g.messages[0].content) && /194481\/160/.test(g.messages[0].content) && /1215,51/.test(g.messages[0].content) && !KN.test(g.messages[0].content) && d.knowledgeStatus === "skipped:calculation", d.knowledgeStatus);
     await ctx.close();
   });
 

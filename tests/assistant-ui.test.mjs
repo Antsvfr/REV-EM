@@ -163,7 +163,9 @@ try {
     await script(page, [{ text: "On part de 1 000 €, on multiplie 4 fois par 1,05 : 1 215,51 €." }]);
     await ask(page, "1 000 € placés à 5 % par an pendant 4 ans : combien obtient-on ?");
     const g = (await gens(page))[0];
-    check("le bloc « VERIFIED CALCULATION » avec 1 215,51 est dans le prompt", /VERIFIED CALCULATION/.test(g.messages[0].content) && /result: FV = 1 215,51/.test(g.messages[0].content), g.messages[0].content.slice(0, 600));
+    /* Depuis le moteur mathématique (AI_MATH.md) le calcul est EXACT : 194481/160 (= 1215,50625), arrondi à 2 décimales seulement à l'affichage. */
+    const sys4 = g.messages[0].content;
+    check("le bloc « MATH ENGINE RESULT » exact (194481/160 = 1215,50625 ; arrondi 1215,51 €) est dans le prompt", /MATH ENGINE RESULT \(computed deterministically, verified exactly/.test(sys4) && /exact result: 194481\/160/.test(sys4) && /1215,50625/.test(sys4) && /1215,51/.test(sys4), sys4.slice(-700));
     eq("calcul : température 0,2", g.temperature, 0.2);
     eq("une seule génération pour tout le calcul", (await gens(page)).length, 1);
     await ctx.close();
@@ -262,7 +264,14 @@ try {
     eq("diagnostic : code EMPTY_RESPONSE", await page.evaluate(() => state.aiChat.diag.errorCode), "EMPTY_RESPONSE");
     // modèle non chargé
     await page.evaluate(() => { state.aiStatus = "idle"; render(); });
-    eq("modèle non chargé : la barre est désactivée (pas d'envoi dans le vide)", await page.$eval("#assistant-query-input", e => e.disabled), true);
+    /* Le moteur mathématique est déterministe : la barre reste utilisable sans modèle (un calcul est traité), mais une question qui n'est pas un calcul
+       reçoit l'erreur « modèle non prêt » et rien n'est envoyé au moteur IA (pas d'envoi dans le vide). */
+    eq("modèle non chargé : la barre reste active (calculs déterministes)", await page.$eval("#assistant-query-input", e => e.disabled), false);
+    const nGen = (await gens(page)).length;
+    await page.fill("#assistant-query-input", "Qu'est-ce que le TRI ?");
+    await page.click("#assistant-query-btn");
+    await page.waitForTimeout(200);
+    check("…une question hors calcul : erreur « modèle non prêt », aucune génération lancée", (await page.$$(".ai-error")).length > 0 && (await gens(page)).length === nGen);
     eq("aucune erreur JavaScript", page.errors, []);
     await ctx.close();
   });

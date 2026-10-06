@@ -192,9 +192,81 @@ async function device(browser, db) {
   if (process.env.DEBUG_CONSOLE) page.on("console", m => console.log("  [page]", m.text().slice(0, 300)));
   await page.goto(APP);
   await page.waitForTimeout(1200);
+  await clearMigratedSubject(page);
   return { ctx, page, errors };
 }
 const dumpDb = (page) => page.evaluate(() => JSON.parse(JSON.stringify(globalThis.__DB)));
+
+/* Cette suite vérifie la synchronisation multi-appareils/multi-comptes
+   (conflits, isolation, mode hors-ligne) avec des données ENTIÈREMENT
+   simulées (CREATE_DATA remplace state.userSubjects/userChapters) : elle
+   compte des lignes exactes envoyées à Supabase. Depuis la conversion de
+   « Analyse de marché » (migrateAnalyseMarcheToUserSubject, au premier
+   chargement de CHAQUE compte/espace), toute connexion ou déconnexion —
+   qui recharge l'état depuis le bon espace via loadAllData(), voir
+   handleAuthUserChange() — fait réapparaître cette matière réelle pour le
+   compte qui vient de devenir actif. On la retire après CHAQUE appel à
+   device()/signIn()/signOut()/reloadDevice() (sans jamais toucher au
+   mécanisme de migration lui-même) pour garder ces scénarios de
+   synchronisation focalisés sur leurs propres données ; la synchronisation
+   réelle de « Analyse de marché » elle-même est vérifiée par
+   tests/analyse-marche-migration.test.mjs. */
+async function clearMigratedSubject(page){
+  await page.evaluate(() => {
+    /* migrateAnalyseMarcheToUserSubject (comme tout appel nu à une fonction
+       déclarée au premier niveau d'un script classique) est aussi accessible
+       en window.migrateAnalyseMarcheToUserSubject — la même liaison. La
+       neutraliser ainsi empêche, pour toute la durée de vie de CETTE page,
+       qu'un futur rechargement de compte (connexion/déconnexion, qui rappelle
+       loadAllData()) ne la fasse réapparaître ENTRE deux instants observés
+       par le test — y compris via le cycle de synchronisation automatique,
+       plus rapide qu'un simple nettoyage après coup. Un vrai page.reload()
+       l'exécute à nouveau depuis zéro ; voir reloadDevice(), qui la
+       neutralise de nouveau juste après : dans cette seule fenêtre (entre le
+       rechargement et ce nettoyage), la migration a pu tourner UNE fois et
+       être poussée vers le double de Supabase par la synchronisation
+       automatique — on la retire donc aussi de globalThis.__DB, pour ne
+       jamais laisser une migration déjà envoyée fausser un compte de lignes.
+       Les state.userSubjects/userChapters ne sont réécrits (saveUserSubjects/
+       saveUserChapters, qui marquent une écriture "à envoyer") que s'il y
+       avait réellement quelque chose à retirer : sinon, inutile de créer une
+       écriture en attente qui n'a pas lieu d'être. */
+    window.migrateAnalyseMarcheToUserSubject = () => {};
+    const beforeS = state.userSubjects.length, beforeC = state.userChapters.length;
+    state.userSubjects = state.userSubjects.filter(s => s.id !== "analyse-marche");
+    state.userChapters = state.userChapters.filter(c => c.subjectId !== "analyse-marche");
+    if(state.userSubjects.length !== beforeS) saveUserSubjects();
+    if(state.userChapters.length !== beforeC) saveUserChapters();
+    if(globalThis.__DB && globalThis.__DB.tables && globalThis.__DB.tables.subjects){
+      const rowIds = new Set(globalThis.__DB.tables.subjects.filter(r => r.local_id === "analyse-marche").map(r => r.id));
+      globalThis.__DB.tables.subjects = globalThis.__DB.tables.subjects.filter(r => r.local_id !== "analyse-marche");
+      if(globalThis.__DB.tables.chapters){
+        globalThis.__DB.tables.chapters = globalThis.__DB.tables.chapters.filter(r => !rowIds.has(r.subject_id) && !/^am[1-5]$/.test(r.local_id || ""));
+      }
+    }
+  });
+}
+async function signIn(page, id, mail, wait = 1200){
+  await page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [id, mail]);
+  await page.waitForTimeout(wait);
+  await clearMigratedSubject(page);
+}
+async function signOut(page, wait = 600){
+  await page.evaluate(() => globalThis.__signOut());
+  await page.waitForTimeout(wait);
+  await clearMigratedSubject(page);
+}
+async function reloadDevice(page, opts){
+  await page.reload(opts);
+  await page.waitForTimeout(opts && opts.wait || 1200);
+  await clearMigratedSubject(page);
+  // Un vrai rechargement ré-exécute les scripts : la neutralisation posée par
+  // clearMigratedSubject() arrive après coup, donc la migration a pu tourner
+  // une fois et marquer "subjects"/"chapters" à envoyer avant d'être retirée
+  // ici — laisser le temps à CE cycle de synchronisation de se terminer avant
+  // que le test ne lise l'indicateur/la file d'attente.
+  await page.waitForTimeout(900);
+}
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
@@ -243,8 +315,7 @@ try {
     await d.page.evaluate(CREATE_DATA, "a");
     await d.page.waitForTimeout(400);
 
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1200);
+    await signIn(d.page, USER_A, "a@test.invalid");
 
     const modal = await d.page.evaluate(() => {
       const m = document.querySelector(".modal--confirm");
@@ -293,8 +364,7 @@ try {
     }));
     eq("il ne contient rien au départ", avant, { subjects: 0, chapters: 0 });
 
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1800);
+    await signIn(d.page, USER_A, "a@test.invalid", 1800);
 
     /* Aucune modale : cet appareil n'a rien à envoyer, il n'y a rien à arbitrer. */
     const modale = await d.page.evaluate(() => !!document.querySelector(".modal--confirm"));
@@ -329,8 +399,7 @@ try {
   let dbAfterEdit = null;
   await scenario("4. une modification faite ici se retrouve là-bas", async () => {
     const d1 = await device(browser, dbAfterA);
-    await d1.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d1.page.waitForTimeout(1500);
+    await signIn(d1.page, USER_A, "a@test.invalid", 1500);
 
     await d1.page.evaluate(() => {
       const ch = state.userChapters[0];
@@ -346,8 +415,7 @@ try {
     await d1.ctx.close();
 
     const d2 = await device(browser, dbAfterEdit);
-    await d2.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d2.page.waitForTimeout(1800);
+    await signIn(d2.page, USER_A, "a@test.invalid", 1800);
     const seen = await d2.page.evaluate(() => ({
       titre: state.userChapters[0] && state.userChapters[0].title,
       revise: state.userChapters[0] && state.userChapters[0].markedReviewed,
@@ -365,16 +433,13 @@ try {
      ====================================================================== */
   await scenario("5. B ne voit jamais les données de A", async () => {
     const d = await device(browser, dbAfterEdit);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1600);
+    await signIn(d.page, USER_A, "a@test.invalid", 1600);
     const vuParA = await d.page.evaluate(() => state.userChapters.map(c => c.title));
     eq("A voit les siennes", vuParA, ["Chapitre révisé"]);
 
     /* Déconnexion, puis connexion de B SUR LE MÊME APPAREIL. */
-    await d.page.evaluate(() => globalThis.__signOut());
-    await d.page.waitForTimeout(1200);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_B, "b@test.invalid"]);
-    await d.page.waitForTimeout(1600);
+    await signOut(d.page, 1200);
+    await signIn(d.page, USER_B, "b@test.invalid", 1600);
 
     const vuParB = await d.page.evaluate(() => ({
       subjects: state.userSubjects.map(s => s.name),
@@ -396,10 +461,8 @@ try {
     if (modalB) await d.page.click('[data-ds-confirm="yes"]');
     await d.page.waitForTimeout(1500);
 
-    await d.page.evaluate(() => globalThis.__signOut());
-    await d.page.waitForTimeout(1000);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1800);
+    await signOut(d.page, 1000);
+    await signIn(d.page, USER_A, "a@test.invalid", 1800);
     const retourA = await d.page.evaluate(() => state.userChapters.map(c => c.title));
     eq("A retrouve exactement les siennes", retourA, ["Chapitre révisé"]);
 
@@ -416,15 +479,13 @@ try {
      ====================================================================== */
   await scenario("6. la déconnexion n'efface qu'après avoir enregistré", async () => {
     const d = await device(browser, dbAfterEdit);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1600);
+    await signIn(d.page, USER_A, "a@test.invalid", 1600);
 
     const avant = await d.page.evaluate((uid) =>
       localStorage.getItem("revisions-etude-marche:u." + uid + ".user-chapters") !== null, USER_A);
     check("le cache du compte existe pendant la session", avant, avant);
 
-    await d.page.evaluate(() => globalThis.__signOut());
-    await d.page.waitForTimeout(1500);
+    await signOut(d.page, 1500);
 
     const apres = await d.page.evaluate((uid) => ({
       cache: localStorage.getItem("revisions-etude-marche:u." + uid + ".user-chapters"),
@@ -440,8 +501,7 @@ try {
       (db.tables.chapters || []).filter(r => r.user_id === USER_A).map(r => r.title), ["Chapitre révisé"]);
 
     /* Se reconnecter les fait revenir. */
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1800);
+    await signIn(d.page, USER_A, "a@test.invalid", 1800);
     eq("et elles reviennent à la reconnexion",
       await d.page.evaluate(() => state.userChapters.map(c => c.title)), ["Chapitre révisé"]);
     eq("aucune erreur JavaScript", d.errors, []);
@@ -455,8 +515,7 @@ try {
     const d = await device(browser);
     await d.page.evaluate(CREATE_DATA, "refus");
     await d.page.waitForTimeout(400);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_B, "b@test.invalid"]);
-    await d.page.waitForTimeout(1200);
+    await signIn(d.page, USER_B, "b@test.invalid");
     await d.page.click('[data-ds-confirm="no"]');
     await d.page.waitForTimeout(800);
 
@@ -484,8 +543,7 @@ try {
     check("l'indicateur existe", cache.present, cache);
     check("mais reste caché sans compte", cache.cache === true, cache);
 
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1800);
+    await signIn(d.page, USER_A, "a@test.invalid", 1800);
     const idle = await d.page.evaluate(() => {
       const el = document.getElementById("cloud-indicator");
       return { cache: el.hidden, classe: el.className };
@@ -611,8 +669,7 @@ try {
      ====================================================================== */
   await scenario("11. rien de secret n'est exposé ni stocké", async () => {
     const d = await device(browser, dbAfterEdit);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1600);
+    await signIn(d.page, USER_A, "a@test.invalid", 1600);
 
     const s = await d.page.evaluate(() => {
       const dump = [];
@@ -641,8 +698,7 @@ try {
      ====================================================================== */
   await scenario("12. changer d'adresse passe par Supabase, et ne ment pas", async () => {
     const d = await device(browser, dbAfterEdit);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1600);
+    await signIn(d.page, USER_A, "a@test.invalid", 1600);
 
     await d.page.evaluate(() => { switchTab("myspace"); openAccountEditModal(); });
     await d.page.waitForTimeout(500);
@@ -694,8 +750,7 @@ try {
   };
   const signedInDevice = async (db) => {
     const d = await device(browser, db);
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(1800);
+    await signIn(d.page, USER_A, "a@test.invalid", 1800);
     return d;
   };
   const subjectsInDb = (page) => page.evaluate(() => (globalThis.__DB.tables.subjects || []).map(r => r.name).sort());
@@ -723,8 +778,7 @@ try {
        que ce soit. Seule la file persistée dans le stockage local survit —
        c'est précisément ce que ce scénario protège. */
     if (variante.startsWith("app tuée")) await d.page.evaluate(() => cloud.dispose());
-    await d.page.reload();
-    await d.page.waitForTimeout(2600);
+    await reloadDevice(d.page, { wait: 2600 });
     const apres = await d.page.evaluate(() => ({
       local: state.userSubjects.map(s => s.name).sort(),
       file: cloudPendingOf(LyonAuth.state.user.id),
@@ -781,8 +835,7 @@ try {
     await page.goto(APP);
     await page.waitForTimeout(800);
     await page.evaluate(() => sessionStorage.setItem("__NET_DOWN", "1"));
-    await page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await page.waitForTimeout(1500);
+    await signIn(page, USER_A, "a@test.invalid", 1500);
     const echec = await page.evaluate(() => ({
       classe: document.getElementById("cloud-indicator").className,
       toast: [...document.querySelectorAll(".toast")].map(x => x.textContent.trim()).join(" | "),
@@ -845,8 +898,7 @@ try {
     const avantA = await d.page.evaluate(() => state.userSubjects.map(s => s.name));
     eq("A voit ses matières", avantA, ["Matière a"]);
 
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_B, "b@test.invalid"]);
-    await d.page.waitForTimeout(2200);
+    await signIn(d.page, USER_B, "b@test.invalid", 2200);
     const b = await d.page.evaluate(() => ({
       leaks: window.__leaks,
       subjects: state.userSubjects.length, answered: state.dash.totalAnswered,
@@ -863,13 +915,11 @@ try {
 
     await d.page.evaluate(() => { ((tag)=>{ state.userSubjects = [{ id: 'subj_'+tag, name: 'Matière '+tag, semesterId: (SEMESTERS[0]||{}).id, color: '#E31C3D' }]; saveUserSubjects(); })('b'); });
     await d.page.waitForTimeout(1500);
-    await d.page.evaluate(() => globalThis.__signOut());
-    await d.page.waitForTimeout(1500);
+    await signOut(d.page, 1500);
     const invite = await d.page.evaluate(() => ({ subjects: state.userSubjects.length, tab: state.tab }));
     eq("déconnecté : espace invité vide", invite.subjects, 0);
 
-    await d.page.evaluate(([id, mail]) => globalThis.__signInAs(id, mail), [USER_A, "a@test.invalid"]);
-    await d.page.waitForTimeout(2200);
+    await signIn(d.page, USER_A, "a@test.invalid", 2200);
     const a2 = await d.page.evaluate(() => ({
       subjects: state.userSubjects.map(s => s.name), leaks: window.__leaks,
     }));
@@ -897,6 +947,15 @@ try {
       const seen = [];
       const t0 = performance.now();
       const iv = setInterval(() => {
+        // Retire « Analyse de marché » (migrateAnalyseMarcheToUserSubject, voir
+        // clearMigratedSubject côté Node) dès qu'elle apparaît pendant cette
+        // fenêtre d'observation : ce scénario vérifie l'ISOLATION de compte
+        // (jamais l'espace invité pendant le rechargement), pas l'interaction
+        // avec cette matière, déjà couverte par analyse-marche-migration.test.mjs.
+        if (typeof state !== "undefined" && state.userSubjects) {
+          state.userSubjects = state.userSubjects.filter(s => s.id !== "analyse-marche");
+          state.userChapters = state.userChapters.filter(c => c.subjectId !== "analyse-marche");
+        }
         const sp = !!document.getElementById("boot-splash");
         seen.push({ splash: sp, n: state.userSubjects.length });
         if (performance.now() - t0 > 1800) { clearInterval(iv); resolve(seen); }

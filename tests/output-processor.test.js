@@ -307,5 +307,51 @@ function stream(chunks, o, fin) {
   check("aucun remplacement de vocabulaire (pas de table de mots à « corriger »)", !/finance|obligation|écart|mesyre/i.test(src));
 }
 
+/* ── 14. Répétition de la démonstration (cas réel : x² - 5x + 6 = 0) ─────────────────────────────────────── */
+{
+  console.log("\n── 14. redémarrage de la démonstration, queue coupée, chunks ──");
+  const a = "Pour résoudre x² - 5x + 6 = 0, on factorise le trinôme. On cherche deux nombres de somme 5 et de produit 6 : ce sont 2 et 3.\n\nDonc x² - 5x + 6 = (x - 2)(x - 3). Ainsi (x - 2)(x - 3) = 0, donc x = 2 ou x = 3.\n\nVérification : 2² - 5×2 + 6 = 0 et 3² - 5×3 + 6 = 0.";
+  const b = "Pour résoudre l'équation x² - 5x + 6 = 0, on la factorise. On cherche deux nombres dont la somme vaut 5 et le produit vaut 6 : ce sont 2 et 3.\n\nDonc x² - 5x + 6 = (x - 2)(x - 3). Ainsi (x - 2)(x - 3) = 0, donc x = 2 ou x = 3.\n\nVérification : 2² - 5×2 + 6 = 0 et 3² - 5×3 + 6 = 0.";
+  const tail = "Par (x - 2)(x - 3) = ... se factorise l'équation x² - 5x + 6 = 0 en (";
+  const raw = a + "\n\n" + b + "\n\n" + a + "\n\n" + tail;
+  const rp = O.findRepeat(a + "\n\n" + b, { final: true });
+  check("findRepeat : le redémarrage (reformulé) est trouvé, et il COMMENCE à sa tête (pas au milieu)", rp && rp.start === (a + "\n\n").length, rp);
+  check("findRepeat : une réponse sans répétition → null", O.findRepeat(a, { final: true }) === null);
+  const chunks = []; for (let i = 0; i < raw.length; i += 7) chunks.push(raw.slice(i, i + 7));
+  const asm = O.createAssembler({ mode: "text" });
+  let at = null, n = 0; for (const c of chunks) { n += c.length; const r = asm.push(c); if (r.loop && at === null) at = n; }
+  check("flux : le redémarrage est détecté PENDANT le flux (avant la fin), pour arrêter la génération", at !== null && at < raw.length * 0.7, [at, raw.length]);
+  const proc = asm.finish({ finishReason: "length", loopAborted: true });
+  check("résultat : la démonstration n'apparaît QU'UNE fois", (proc.text.match(/donc x = 2 ou x = 3/g) || []).length === 1 && proc.text.indexOf("Pour résoudre l'équation") < 0, proc.text);
+  check("résultat : aucune queue coupée « en ( »", !/en \($/.test(proc.text) && !/se factorise l'équation/.test(proc.text));
+  check("résultat : la vérification finale est conservée", /Vérification : 2²/.test(proc.text));
+  check("drapeaux : repeatCollapsed, loop", proc.flags.repeatCollapsed === true && proc.flags.loop === true);
+  check("stades : la répétition est présente dans le BRUT et absente du résultat traité", proc.repeatStages.raw.repeated === true && proc.repeatStages.processed.repeated === false, proc.repeatStages);
+  check("assembled = brut sans balises (même répétition : le bug n'est pas dans l'assemblage)", proc.assembled.length === raw.length && proc.repeatStages.assembled.repeated === true);
+  eq("statistiques de chunks : tout le flux est compté, aucun chunk cumulatif", [proc.chunks.deltaChars, proc.chunks.cumulative, proc.chunks.rawChars], [raw.length, 0, raw.length]);
+  // queue coupée seule (pas de répétition) : retirée ; une ligne de calcul complète n'est JAMAIS retirée
+  const t1 = O.processComplete("On factorise : (x - 2)(x - 3) = 0. Donc x = 2 ou x = 3. Par ce résultat, on obtient en (", { mode: "text" }), t2 = O.createAssembler({ mode: "text" });
+  t2.push("On factorise : (x - 2)(x - 3) = 0. Donc x = 2 ou x = 3. Par ce résultat, on obtient en (");
+  check("coupée par la limite : la queue incomplète est retirée, les phrases complètes restent", t2.finish({ finishReason: "length" }).text === "On factorise : (x - 2)(x - 3) = 0. Donc x = 2 ou x = 3.", t2.finish({ finishReason: "length" }).text);
+  const t3 = O.createAssembler({ mode: "text" }); t3.push("On factorise : (x - 2)(x - 3) = 0. Donc x = 2 ou x = 3");
+  eq("terminée normalement (finish_reason stop) : RIEN n'est retiré", t3.finish({ finishReason: "stop" }).text, "On factorise : (x - 2)(x - 3) = 0. Donc x = 2 ou x = 3");
+  const t4 = O.createAssembler({ mode: "text" }); t4.push("Le résultat est cohérent. Donc x = 2 ou x = 3");
+  eq("coupée MAIS sur une ligne de calcul complète : rien n'est retiré", t4.finish({ finishReason: "length" }).text, "Le résultat est cohérent. Donc x = 2 ou x = 3");
+  // répétitions LÉGITIMES : jamais supprimées
+  const legit = "Résolvons 2x + 4 = 10. On soustrait 4 : 2x = 6. On divise par 2 : x = 3.\n\nRésolvons maintenant 3x + 5 = 20. On soustrait 5 : 3x = 15. On divise par 3 : x = 5.\n\n- Étape 1 : isoler x\n- Étape 2 : isoler x\n\nConclusion : x = 3 pour la première équation et x = 5 pour la seconde.";
+  eq("deux exercices de même structure mais de nombres différents : intacts", O.processComplete(legit, { mode: "text" }).text, legit);
+  const verif = "Le taux de variation se calcule ainsi : (valeur finale - valeur initiale) / valeur initiale. Ici : (120 - 100) / 100 = 0,2. Donc le taux de variation est de 20 %.\n\nVérification : 100 × 1,2 = 120. Le résultat est cohérent : une hausse de 20 %.";
+  eq("une vérification qui réutilise les valeurs : intacte", O.processComplete(verif, { mode: "text" }).text, verif);
+  const code = "Voici le code :\n```\nx = 2\nx = 2\nx = 2\nx = 2\n```\nFin de la démonstration, rien de plus à ajouter ici.";
+  eq("bloc de code répétitif : jamais touché", O.processComplete(code, { mode: "text" }).text, code);
+  // transport : un flux CUMULATIF (« A », « AB », « ABC ») ne doit pas devenir « AABABC »
+  const cum = O.createAssembler({ mode: "text" }); let acc = ""; for (const w of "Pour résoudre cette équation on factorise le trinôme puis on annule chaque facteur".split(" ")) { acc += (acc ? " " : "") + w; cum.push(acc); }
+  const cf = cum.finish({ finishReason: "stop" });
+  check("flux cumulatif : traité comme cumulatif (texte final propre, drapeau compté)", cf.text === acc && cf.chunks.cumulative > 0, [cf.text, cf.chunks]);
+  const same = O.createAssembler({ mode: "text" }); for (let i = 0; i < 12; i++) same.push("ab");
+  check("statistique : 12 deltas identiques consécutifs sont comptés (signature d'un chunk rejoué)", same.finish({}).chunks.longestIdenticalRun >= 10);
+  check("repetitionStats : situe le premier doublon", O.repetitionStats(raw).restartAt === (a + "\n\n").length && O.repetitionStats(a).repeated === false);
+}
+
 console.log("\n" + pass + " vérifications réussies, " + fail + " échec(s).");
 process.exit(fail ? 1 : 0);

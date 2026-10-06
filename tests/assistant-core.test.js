@@ -328,5 +328,36 @@ const PREV = { hasAnswer: true };
   eq("12 cas A–L présents", A.CASES.map(c => c.id).join(""), "ABCDEFGHIJKL");
 }
 
+/* ── Stratégie « calcul déjà fait par le moteur mathématique » (répétition de la démonstration) ───────────── */
+{
+  console.log("\n── stratégie math ──");
+  const block = "problem: x^2 - 5x + 6 = 0  [équation]\nexact result: x = 2 ; x = 3\nverification: VERIFIED (exact method)";
+  const hdr = "MATH ENGINE RESULT (computed deterministically, verified exactly — authoritative)";
+  const build = (q, o) => { const an = A.analyzeQuestion(q, { lang: "fr" }); return A.buildGeneralPrompt(Object.assign({ question: q, analysis: an, history: [], tier: "avance", reasoning: false, contextTokens: 4096 }, o || {})); };
+  const calc = { kind: "math:equation", resultText: "", block, header: hdr };
+  const withMath = build("résous x² - 5x + 6 = 0", { calc }), without = build("résous x² - 5x + 6 = 0", {});
+  check("résultat vérifié fourni : budget NORMAL réduit (≤ 320 jetons au lieu de 600)", withMath.params.maxTokens <= 320 && without.params.maxTokens === 600, [withMath.params.maxTokens, without.params.maxTokens]);
+  check("…température 0,3 (≠ 0,2 quasi glouton, qui fait boucler un petit modèle)", withMath.params.temperature === 0.3, withMath.params.temperature);
+  check("…profil « mathExplain »", withMath.meta.profile === "mathExplain");
+  const sys = withMath.messages[0].content;
+  check("format imposé : une ligne de méthode, équations UNE fois, résultat copié, vérification courte, puis STOP", /followed exactly/.test(sys) && /ONCE/.test(sys) && /then STOP/.test(sys));
+  check("interdictions : ne pas reposer la question, ne pas répéter après la vérification", /Never restate the question/.test(sys) && /never repeat the method or the result after the check/.test(sys));
+  check("le modèle sait que le moteur a DÉJÀ résolu : pas de nouveau calcul", /ALREADY solved and verified/.test(sys));
+  check("l'ancienne consigne « solve step by step, give the result, then check » n'est plus là", !/solve step by step/.test(sys));
+  check("français naturel : lexique (« racines », « s'additionnent », « On factorise donc »)", /racines/.test(sys) && /s'additionnent/.test(sys) && /On factorise donc/.test(sys) && /Never « se ajoutent »/.test(sys));
+  check("le lexique n'est PAS ajouté hors calcul mathématique", !/s'additionnent/.test(without.messages[0].content));
+  check("en-tête MATH ENGINE conservé", sys.indexOf(hdr) > 0);
+  const tiers = ["rapide", "avance", "expert"].map(t => build("résous x² - 5x + 6 = 0", { calc, tier: t }).params.maxTokens);
+  check("rapide < avancé ; expert (raisonnement) garde de la place", tiers[0] < tiers[1] && tiers[2] >= tiers[1], tiers);
+  const short = build("2x + 4 = 10", { calc }).params.maxTokens, deep = build("explique en détail pas à pas la résolution de x² - 5x + 6 = 0", { calc }).params.maxTokens;
+  check("question courte < normale < détaillée", short <= withMath.params.maxTokens && withMath.params.maxTokens <= deep, [short, withMath.params.maxTokens, deep]);
+  const rep = build("calcule 5/0", { calc: { kind: "math:arith", resultText: "", block: "reason: division par zéro", header: "MATH ENGINE REPORT (authoritative)" } });
+  check("calcul impossible : réponse très courte, aucun chiffre à donner", rep.params.maxTokens <= 200 && /NO verified result/.test(rep.messages[0].content), rep.params.maxTokens);
+  const plain = build("explique moi l'écart type", {});
+  check("question de cours (sans moteur) : budget et température inchangés (600 / 0,5)", plain.params.maxTokens === 600 && plain.params.temperature === 0.5, plain.params);
+  const legacy = build("1000 € à 5 % pendant 4 ans", { calc: { kind: "compound", resultText: "x", block: "FV = 1 215,51" } });
+  check("ancien calcul local (kind sans « math: ») : stratégie ordinaire inchangée", legacy.meta.profile !== "mathExplain");
+}
+
 console.log("\n" + pass + " vérifications réussies, " + fail + " échec(s).");
 process.exit(fail ? 1 : 0);

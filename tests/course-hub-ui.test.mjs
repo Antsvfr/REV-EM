@@ -147,7 +147,7 @@ try {
     });
     await page.click("#import-confirm-generate-btn");
     await page.waitForSelector("#course-hub", { timeout: 15000 });
-    const r = await page.evaluate(() => ({ view: state.library.view, tab: state.tab, chapterId: state.library.chapterId, real: state.userChapters[0].id }));
+    const r = await page.evaluate(() => ({ view: state.library.view, tab: state.tab, chapterId: state.library.chapterId, real: state.userChapters[state.userChapters.length - 1].id }));
     eq("on est sur la page du chapitre importé (pas sur un écran passif)", [r.tab, r.view], ["library", "chapterDetail"]);
     eq("c'est bien le chapitre créé par l'import (identifiant stable)", r.chapterId, r.real);
     eq("les cinq accès sont là, dans l'ordre", await page.$$eval("[data-hub-open]", e => e.map(x => x.dataset.hubOpen)), ["fiche", "summary", "quiz", "quizflash", "flashcards", "questions"]);
