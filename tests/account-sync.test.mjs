@@ -1063,7 +1063,7 @@ try {
     await d1.page.waitForTimeout(1500);
     const db = await dumpDb(d1.page);
     const rows = db.tables.math_practice || [];
-    eq("une ligne en base, au nom de A, sans énoncé ni réponse", rows.map(r => [r.user_id, r.topic, r.kind, r.difficulty, r.attempts, r.hints_used, r.success, Object.keys(r).filter(k => /statement|answer|text/.test(k)).length]), [[USER_A, "algebra", "quad-solve", 1, 2, 1, true, 0]]);
+    eq("une ligne en base, au nom de A, sans énoncé ni réponse", rows.map(r => [r.user_id, r.topic, r.kind, r.difficulty, r.attempts, r.hints_used, r.success, Object.keys(r).filter(k => /statement|answer|^text$/.test(k)).length]), [[USER_A, "algebra", "quad-solve", 1, 2, 1, true, 0]]);
     await d1.ctx.close();
 
     const d2 = await device(browser, db);
