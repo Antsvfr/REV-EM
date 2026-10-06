@@ -5,7 +5,7 @@ description: Moteur mathématique déterministe de REV-EM (math-core/fast/verify
 
 # REV-EM Math Engine
 
-Lire d'abord `AI_MATH.md` (architecture, mesures, limites). Principe non négociable :
+Lire d'abord `AI_MATH.md` (architecture, mesures, limites) et, pour le tuteur (exercices, indices, suivi, journal Supabase), `MATH_TUTOR.md`. Principe non négociable :
 **le LLM n'est ni une calculatrice ni un CAS.** Un résultat mathématique n'est jamais fiable parce que WebLLM l'a produit.
 
 ## Règles

@@ -50,6 +50,7 @@ un état normal du produit, pas un cas dégradé.
 | `index.html` | +≈330 | le branchement : hook sur `lsSet`, hydratation, migration, indicateur |
 | `auth.js` | +≈150 | renvoi d'e-mail, changement d'adresse, nouveau mot de passe, lecture du lien |
 | `supabase/migrations/005_user_sync.sql` | 150 | les clés naturelles qui rendent l'écriture idempotente |
+| `supabase/migrations/006_math_practice.sql` | 110 | `math_practice` : journal d'exercices du tuteur Maths & Stats (un exercice terminé = une ligne ; maîtrise recalculée, jamais stockée) |
 | `supabase/tests/00_diagnostic.sql` | ~120 | en lecture seule : où en est une base, et quoi exécuter ensuite |
 | `tests/user-data.test.mjs` | ~560 | le moteur contre un **PostgreSQL réel**, RLS comprise |
 | `tests/real-sdk-sync.test.mjs` | le **SDK Supabase officiel** dans Chromium, contre un serveur HTTP simulé (GoTrue + PostgREST, règle « seules mes lignes ») : nouvel appareil, reconnexion, F5, bidirectionnel, A ≠ B, réseau, hydratation | le serveur (pas un vrai Supabase) |

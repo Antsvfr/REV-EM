@@ -166,7 +166,7 @@ try {
     /* Depuis le moteur mathématique (AI_MATH.md) le calcul est EXACT : 194481/160 (= 1215,50625), arrondi à 2 décimales seulement à l'affichage. */
     const sys4 = g.messages[0].content;
     check("le bloc « MATH ENGINE RESULT » exact (194481/160 = 1215,50625 ; arrondi 1215,51 €) est dans le prompt", /MATH ENGINE RESULT \(computed deterministically, verified exactly/.test(sys4) && /exact result: 194481\/160/.test(sys4) && /1215,50625/.test(sys4) && /1215,51/.test(sys4), sys4.slice(-700));
-    eq("calcul : température 0,2", g.temperature, 0.2);
+    eq("calcul : température 0,3 (stratégie math dédiée, AI_OUTPUT §14)", g.temperature, 0.3);
     eq("une seule génération pour tout le calcul", (await gens(page)).length, 1);
     await ctx.close();
   });

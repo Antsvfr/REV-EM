@@ -27,7 +27,7 @@ JS autonomes chargés en `<script>` classique, dans cet ordre :
 → `smart-revision.js` → `statistics.js` → `planning.js` →
 `content-sources.js` → `sync-engine.js` → `source-adapters.js` →
 `user-data.js` → `command-center.js` → `quick-actions.js` →
-`subject-search.js` → `ai-engine.js` → `knowledge-engine.js` → `output-processor.js` → `assistant-core.js` → `import-center.js` → `course-hub.js` → `revision-bank.js` → `math-core.js` → `math-fast.js` → `math-verify.js` → `math-engine.js` → `math-cas-client.js` → le script principal d'`index.html`.
+`subject-search.js` → `ai-engine.js` → `knowledge-engine.js` → `output-processor.js` → `assistant-core.js` → `import-center.js` → `course-hub.js` → `revision-bank.js` → `math-core.js` → `math-fast.js` → `math-verify.js` → `math-engine.js` → `math-tutor.js` → `math-cas-client.js` → le script principal d'`index.html`.
 `math-cas-worker.js` (Pyodide + SymPy, `vendor/`) est lui aussi un Worker de module créé
 à la demande par `math-cas-client.js` (voir `AI_MATH.md`).
 `ai-worker.js` (qui importe `ai-host.js`, lui-même `ai-engine.js`) est chargé
@@ -37,7 +37,7 @@ Aucun de ces modules ne modifie ce découpage sans raison réelle.
 
 **Le même patron revient partout : un moteur pur, un branchement.**
 `smart-revision.js`, `statistics.js`, `command-center.js`,
-`quick-actions.js`, `subject-search.js`, `ai-engine.js`, `knowledge-engine.js`, `output-processor.js`, `assistant-core.js`, `import-center.js`, `course-hub.js`, `revision-bank.js` et les modules `math-*.js` ne connaissent ni le DOM, ni
+`quick-actions.js`, `subject-search.js`, `ai-engine.js`, `knowledge-engine.js`, `output-processor.js`, `assistant-core.js`, `import-center.js`, `course-hub.js`, `revision-bank.js` et les modules `math-*.js` (dont `math-tutor.js`, le tuteur Maths & Stats) ne connaissent ni le DOM, ni
 `state`, ni la navigation — ils reçoivent des données et rendent un résultat. Ce qui
 sait lire `state` et où mènent les choses vit dans `index.html`. C'est ce
 qui permet de tester ces moteurs sous Node, sans navigateur, en quelques
@@ -151,7 +151,7 @@ modifier du code dans son domaine, pas après :
 | `learning-modes` | on touche à un mode de révision (quiz/flashcards/oral/examen) |
 | `course-library-import` | on touche à la bibliothèque, aux cours, à l'import, à la page d'un cours (lire aussi `IMPORT_CENTER.md`, `COURSE_HUB.md` et `REVISION_BANK.md`) |
 | `smart-revision` | on touche à `smart-revision.js` ou aux recommandations |
-| `revem-math` | calculs, problèmes de maths dans le chat, `math-*.js`, `math-cas.py`, `vendor/`, KaTeX (lire aussi `AI_MATH.md`) |
+| `revem-math` | calculs, problèmes de maths dans le chat, `math-*.js`, `math-cas.py`, `vendor/`, KaTeX, tuteur Maths & Stats (lire aussi `AI_MATH.md` et `MATH_TUTOR.md`) |
 | `ai-system` | on touche à l'assistant IA, à WebLLM, à `ai-engine.js`, `assistant-core.js`, `knowledge-engine.js`, `output-processor.js`, `ai-host.js` ou `ai-worker.js` (lire aussi `AI_AUDIT.md`, `AI_CHAT.md`, `AI_KNOWLEDGE.md` et `AI_OUTPUT.md`) |
 | `revem-architecture` | toute modification touchant plusieurs systèmes (structure, Supabase, stockage, synchro, compatibilité macOS) |
 | `revem-ai` | Questions libres, WebLLM, prompts, mémoire de conversation, contexte, paliers Rapide/Avancé/Expert, erreurs IA |

@@ -215,7 +215,7 @@ begin
     from unnest(array['subjects','chapters','documents','planning_events','exam_history',
                       'preferences','progress','question_stats','badges','ai_cards',
                       'course_notes','ai_history','user_stats','daily_stats','activities',
-                      'chapter_visits','study_plans','profiles']) as t(name)
+                      'chapter_visits','study_plans','math_practice','profiles']) as t(name)
    where not exists (
      select 1 from pg_class c join pg_namespace ns on ns.oid = c.relnamespace
       where ns.nspname = 'public' and c.relname = t.name and c.relrowsecurity);
@@ -227,7 +227,7 @@ begin
   select count(*) into cnt
     from unnest(array['subjects','chapters','documents','planning_events','exam_history',
                       'progress','question_stats','badges','ai_cards','course_notes',
-                      'user_stats','daily_stats','activities','chapter_visits','study_plans']) as t(name)
+                      'user_stats','daily_stats','activities','chapter_visits','study_plans','math_practice']) as t(name)
    where (select count(*) from pg_policies p
            where p.schemaname = 'public' and p.tablename = t.name) < 4;
   k := k + 1;
@@ -239,7 +239,7 @@ begin
    where p.schemaname = 'public'
      and p.tablename in ('subjects','chapters','documents','planning_events','exam_history',
                          'progress','question_stats','badges','ai_cards','course_notes',
-                         'user_stats','daily_stats','activities','chapter_visits','study_plans')
+                         'user_stats','daily_stats','activities','chapter_visits','study_plans','math_practice')
      and coalesce(p.qual, '') !~ 'auth\.uid\(\)'
      and coalesce(p.with_check, '') !~ 'auth\.uid\(\)';
   k := k + 1;

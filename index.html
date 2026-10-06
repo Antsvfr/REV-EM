@@ -4310,6 +4310,80 @@
   .mx-tex .katex{ font-size:1em; }
   .mx-tex-block .katex-display{ margin:.2em 0; }
   .mx-tex-block .katex-display > .katex{ text-align:left; }
+
+  /* ── Tuteur Maths & Stats : Résoudre · Expliquer · M'entraîner. Formules d'abord, très lisibles ; couleur + texte + icône, jamais la couleur seule. ── */
+  .mt-card{ min-width:0; }
+  .mt-sub{ margin-top:0; }
+  .mt-tabs{ display:flex; gap:4px; padding:4px; background: var(--surface-2); border:1px solid var(--border); border-radius: var(--radius-md); margin-bottom:16px; }
+  .mt-tab{ flex:1 1 0; min-height:44px; border:0; background:transparent; border-radius: var(--radius-sm); font-family:"Inter",sans-serif; font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink-soft); cursor:pointer; transition: background .15s var(--ease), color .15s var(--ease); padding:8px 12px; }
+  .mt-tab:hover{ color: var(--ink); }
+  .mt-tab.is-active{ background: var(--surface); color: var(--red-dark); box-shadow: var(--shadow-sm); }
+  .mt-tab:focus-visible, .mt-segbtn:focus-visible, .mt-act:focus-visible{ outline:2px solid var(--red); outline-offset:2px; }
+  .mt-panel{ min-width:0; }
+  .mt-hint{ margin:0 0 12px; font-size: var(--text-metadata); color: var(--ink-soft); line-height:1.6; }
+  .mt-note{ margin:8px 0 0; font-size: var(--text-metadata); color: var(--text-muted); line-height:1.5; }
+  .mt-qform{ margin:0; }
+  .mt-examples{ margin-top:12px; }
+  .mt-controls{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:16px 20px; align-items:end; margin-bottom:8px; }
+  .mt-field{ min-width:0; }
+  .mt-field .ai-select{ width:100%; min-height:44px; }
+  .mt-go .btn{ width:100%; min-height:44px; }
+  .mt-lbl{ display:block; font-size: var(--text-label); text-transform:uppercase; letter-spacing:.06em; color: var(--text-muted); margin-bottom:4px; }
+  .mt-seg{ display:flex; flex-wrap:wrap; gap:4px; padding:3px; background: var(--surface-2); border:1px solid var(--border); border-radius: var(--radius-sm); }
+  .mt-segbtn{ flex:1 1 auto; min-height:44px; border:0; background:transparent; border-radius:6px; font-family:"Inter",sans-serif; font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink-soft); cursor:pointer; padding:6px 10px; transition: background .15s var(--ease), color .15s var(--ease); }
+  .mt-segbtn.is-active{ background: var(--surface); color: var(--red-dark); box-shadow: var(--shadow-sm); }
+  .mt-detail{ margin-top:12px; max-width:420px; }
+  .mt-suggest{ margin-top:4px; }
+  .mt-ex{ margin-top:20px; padding:20px; background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-md); min-width:0; }
+  .mt-ex-meta{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .mt-chip{ font-size: var(--text-label); font-weight: var(--weight-semibold); padding:2px 10px; border-radius:999px; background: var(--surface-2); border:1px solid var(--border); color: var(--ink-soft); }
+  .mt-chip-ok{ background: var(--success-wash); border-color:transparent; color: var(--success); }
+  .mt-ex-title{ margin:0 0 4px; font-size: var(--text-label); text-transform:uppercase; letter-spacing:.08em; color: var(--text-muted); font-weight: var(--weight-semibold); }
+  .mt-ex-intro{ margin:0 0 8px; font-size:1.05rem; line-height:1.55; color: var(--ink); }
+  .mt-formula{ margin:6px 0; padding:12px 16px; background: var(--surface-2); border-radius: var(--radius-sm); overflow-x:auto; overflow-y:hidden; max-width:100%; font-size:1.2em; }
+  .mt-formula .katex-display{ margin:0; }
+  .mt-formula .katex-display > .katex{ text-align:left; }
+  .mt-formula-text{ font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,serif; white-space:pre-wrap; font-size:1.1em; }
+  .mt-answer{ margin-top:16px; }
+  .mt-answer .ai-queryrow input{ font-size:1.05rem; }
+  .mt-fmt{ margin:6px 0 0; font-size: var(--text-label); color: var(--text-muted); }
+  .mt-feedback{ margin-top:12px; min-height:0; display:flex; align-items:flex-start; gap:8px; font-size: var(--text-metadata); line-height:1.5; }
+  .mt-feedback:empty{ display:none; }
+  .mt-feedback.is-ok, .mt-feedback.is-no, .mt-feedback.is-info{ padding:10px 14px; border-radius: var(--radius-sm); border-left:3px solid var(--border); }
+  .mt-feedback.is-ok{ background: var(--success-wash); border-left-color: var(--success); color: var(--ink); font-weight: var(--weight-semibold); }
+  .mt-feedback.is-no{ background: var(--warning-wash); border-left-color: var(--warning); color: var(--ink); }
+  .mt-feedback.is-info{ background: var(--info-wash); border-left-color: var(--info); color: var(--ink); }
+  .mt-fb-icon{ font-weight:700; flex:0 0 auto; }
+  .mt-shown{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
+  .mt-block{ padding:12px 16px; border:1px solid var(--border); border-left:3px solid var(--info); border-radius: var(--radius-sm); background: var(--surface); }
+  .mt-block p{ margin:0 0 6px; font-size: var(--text-metadata); line-height:1.6; }
+  .mt-blabel{ font-size: var(--text-label); text-transform:uppercase; letter-spacing:.06em; font-weight: var(--weight-semibold); color: var(--text-muted); margin-bottom:4px; }
+  .mt-solution{ border-left-color: var(--success); }
+  .mt-answerline{ font-size:1.1rem; margin:4px 0 8px; }
+  .mt-lines{ display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+  .mt-line{ font-family:"Cambria Math","STIX Two Math","Latin Modern Math",Georgia,serif; font-size:1.02rem; padding:4px 10px; background: var(--surface-2); border-radius:6px; overflow-x:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .mt-expl{ margin-top:16px; padding:16px; border:1px solid var(--border); border-left:3px solid var(--success); border-radius: var(--radius-sm); }
+  .mt-sec-title{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink); margin-bottom:8px; }
+  .mt-ex-line{ margin:6px 0; font-size: var(--text-metadata); line-height:1.6; }
+  .mt-verified{ color: var(--success); }
+  .mt-actions{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:16px; }
+  .mt-act{ min-height:44px; }
+  .mt-prog{ margin-top:28px; padding-top:20px; border-top:1px solid var(--border); }
+  .mt-prow{ display:grid; grid-template-columns: minmax(110px, 170px) 1fr 52px; gap:4px 12px; align-items:center; margin:10px 0; }
+  .mt-pname{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); color: var(--ink); }
+  .mt-pbar{ height:8px; background: var(--surface-2); border-radius:999px; overflow:hidden; border:1px solid var(--border); }
+  .mt-pbar > span{ display:block; height:100%; background: var(--red); border-radius:999px; }
+  .mt-pnum{ font-size: var(--text-metadata); font-weight: var(--weight-semibold); text-align:right; font-variant-numeric: tabular-nums; }
+  .mt-pmeta{ grid-column: 1 / -1; font-size: var(--text-label); color: var(--text-muted); }
+  @media (max-width:680px){
+    .mt-ex{ padding:16px 12px; }
+    .mt-controls{ grid-template-columns:1fr; }
+    .mt-prow{ grid-template-columns: 1fr 48px; }
+    .mt-pname{ grid-column:1 / -1; }
+    .mt-act{ flex:1 1 calc(50% - 8px); }
+    .mt-tab{ padding:8px 6px; }
+  }
+  @media (prefers-reduced-motion: reduce){ .mt-tab, .mt-segbtn{ transition:none; } }
   .ai-msg-actions{ display:flex; flex-wrap:wrap; gap:12px; margin-top:2px; }
   .ai-quickrow{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
   .ai-quickrow .btn-text{ min-height:36px; padding:4px 8px; }
@@ -5326,6 +5400,10 @@
 <script src="math-fast.js"></script>
 <script src="math-verify.js"></script>
 <script src="math-engine.js"></script>
+<!-- TUTEUR MATHS & STATS (M'ENTRAÎNER) : générateur d'exercices déterministe (8 domaines × 3 niveaux, contexte école de commerce), chaque énoncé recalculé
+     par le Fast Engine avant d'être proposé, réponses comparées MATHÉMATIQUEMENT (MathVerifier), indices 1-2-3, séance, suivi et maîtrise. Pur : ni DOM, ni
+     state, ni WebLLM. Voir MATH_TUTOR.md. -->
+<script src="math-tutor.js"></script>
 <script src="math-cas-client.js"></script>
 
 <script>
@@ -6426,6 +6504,7 @@ let state = {
   aiFiles: [],
   aiError: null,
   aiHistory: [],
+  mathPractice: [],       // journal du tuteur Maths & Stats : [{ts, topic, kind, difficulty, context, attempts, hintsUsed, success, solutionShown}]
 
   // --- suivi par question (nouveau moteur de maîtrise) ---
   qstats: {},   // { uid: {seen, correct, wrong, streak, last, lastDate, history[], theme} }
@@ -6851,6 +6930,8 @@ const KEY_DOCUMENTS = "documents";
 const KEY_AIBUBBLE = "ai-bubble-pos";
 const KEY_COURSE_DATA = "course-data";
 const KEY_STUDY_PLAN = "study-plan";
+const KEY_MATH_PRACTICE = "math-practice";      // journal d'exercices du tuteur Maths & Stats (synchronisé : user-data.js, migration 006)
+const KEY_MATH_PREFS = "math-tutor-prefs";       // domaine / difficulté / contexte choisis : confort local, JAMAIS synchronisé
 
 const memoryFallback = {};   // utilisé si localStorage est indisponible
 let storageAvailable = true;
@@ -7010,6 +7091,7 @@ function cloudSnapshot(){
       lastSyncAt: state.planning.lastSyncAt,
     },
     aiHistory: state.aiHistory,
+    mathPractice: state.mathPractice,
     documents: state.documents,
     studyPlan: state.studyPlan,
     dash: state.dash,
@@ -7040,6 +7122,7 @@ function cloudApplySnapshot(snap){
     if(has("aiCards")){ state.aiCards = snap.aiCards; lsSet(KEY_AICARDS, state.aiCards); }
     if(has("courseData")){ state.courseData = snap.courseData; lsSet(KEY_COURSE_DATA, state.courseData); }
     if(has("aiHistory")){ state.aiHistory = snap.aiHistory; lsSet(KEY_AI, state.aiHistory); }
+    if(has("mathPractice")){ state.mathPractice = mtSanitizeLog(snap.mathPractice); lsSet(KEY_MATH_PRACTICE, state.mathPractice); mtRefreshProgress(); }
     if(has("documents")){ state.documents = snap.documents; lsSet(KEY_DOCUMENTS, state.documents); }
     if(has("studyPlan")){ state.studyPlan = snap.studyPlan; lsSet(KEY_STUDY_PLAN, state.studyPlan); }
 
@@ -7541,6 +7624,8 @@ async function loadAllData(){
   state.progress      = await loadKey(KEY_QUIZ, {});
   state.flashProgress = await loadKey(KEY_FLASH, {});
   state.aiHistory     = await loadKey(KEY_AI, []);
+  state.mathPractice  = mtSanitizeLog(await loadKey(KEY_MATH_PRACTICE, []));
+  mtResetUi();
   // NB: pas de "if(dash){...}" — chaque champ doit être réinitialisé à sa
   // valeur par défaut même quand `dash` est null (aucune donnée sauvegardée
   // dans cet espace), sinon loadAllData() appelé une deuxième fois (voir
@@ -7619,7 +7704,7 @@ async function loadAllData(){
 function resetUserStateInMemory(){
   stateNamespace = "\u0000";
   cloudAwaitingChoice = null;
-  state.progress = {}; state.flashProgress = {}; state.aiHistory = [];
+  state.progress = {}; state.flashProgress = {}; state.aiHistory = []; state.mathPractice = []; mtResetUi();
   state.qstats = {}; state.badges = {}; state.aiCards = {};
   state.userSubjects = []; state.userChapters = [];
   state.documents = []; state.courseData = {}; state.studyPlan = null;
@@ -7670,7 +7755,7 @@ function storageNamespacedKeys(){
   return [
     KEY_QUIZ, KEY_FLASH, KEY_AI, KEY_DASH, KEY_QSTATS, KEY_EXAM, KEY_AICARDS,
     KEY_BADGES, KEY_USER_SUBJECTS, KEY_USER_CHAPTERS, KEY_PLANNING, KEY_DOCUMENTS,
-    KEY_COURSE_DATA, KEY_AIBUBBLE, KEY_AIMODEL, KEY_STUDY_PLAN, KEY_SYNC_PENDING,
+    KEY_COURSE_DATA, KEY_AIBUBBLE, KEY_AIMODEL, KEY_STUDY_PLAN, KEY_SYNC_PENDING, KEY_MATH_PRACTICE, KEY_MATH_PREFS,
   ];
 }
 
@@ -17072,6 +17157,298 @@ function aiMathPracticeAction(kind){
 }
 
 function aiChatFresh(){ return { practice: null, mathLive: null, mathPending: false, phase: "IDLE", topic: "", domain: "", qualityNote: null, lastOutput: null, lang: null, diag: null, suggestions: [], tierHint: null, error: null, regens: 0, copied: false, truncated: false }; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+   TUTEUR MATHS & STATS — Résoudre · Expliquer · M'entraîner
+   ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   RÔLES (jamais inversés) :
+     Math Engine (math-engine.js + math-tutor.js) = la VÉRITÉ calculatoire : il résout, vérifie chaque énoncé d'exercice, compare la réponse de l'élève.
+     WebLLM = la PÉDAGOGIE : il explique un résultat DÉJÀ validé ; il n'est jamais consulté pour savoir si une réponse est juste.
+   Tout M'ENTRAÎNER fonctionne sans IA : exercice, réponse, indices, méthode, solution, explication déterministe, suivi.
+   L'état de l'interface (`mtUi`) est en mémoire : l'exercice en cours se régénère à l'identique depuis sa graine, il n'est jamais stocké.
+   Ce qui est stocké (et synchronisé, voir user-data.js) = le JOURNAL des exercices TERMINÉS : `state.mathPractice`. Voir MATH_TUTOR.md.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════ */
+const RTutor = RMath ? RMath.tutor : null;
+const MT_MODES = ["solve", "explain", "practice"], MT_DETAILS = ["short", "standard", "detailed"];
+function mtDefaults(){ return { mode: "solve", detail: "standard", solveInput: "", explainInput: "", domain: "algebra", level: 0, context: "pure", ex: null, session: null, input: "", feedback: null, shown: [], avoid: [], failed: false, fallback: false, lastAnswer: "", aiAsked: false }; }
+let mtUi = mtDefaults();
+function mtLoadPrefs(){
+  const p = lsGet(KEY_MATH_PREFS); if(!p || typeof p !== "object") return;
+  if(MT_MODES.indexOf(p.mode) >= 0) mtUi.mode = p.mode;
+  if(MT_DETAILS.indexOf(p.detail) >= 0) mtUi.detail = p.detail;
+  if(RTutor && RTutor.DOMAINS.indexOf(p.domain) >= 0) mtUi.domain = p.domain;
+  if(p.level === 0 || p.level === 1 || p.level === 2) mtUi.level = p.level;
+  if(p.context === "business") mtUi.context = "business";
+}
+function mtSavePrefs(){ lsSet(KEY_MATH_PREFS, { mode: mtUi.mode, detail: mtUi.detail, domain: mtUi.domain, level: mtUi.level, context: mtUi.context }); }
+function mtResetUi(){ mtUi = mtDefaults(); mtLoadPrefs(); }
+
+/* Le journal : jamais de valeur inventée, jamais d'entrée d'un thème inconnu, un seul exercice par instant (unique user_id + ts côté base). */
+function mtSanitizeLog(list){
+  if(!Array.isArray(list)) return [];
+  if(!RTutor) return list;
+  const seen = new Set(), out = [];
+  list.forEach(e => {
+    if(!e || !isFinite(Number(e.ts)) || RTutor.DOMAINS.indexOf(e.topic) < 0) return;
+    const r = RTutor.record(e); if(seen.has(r.ts)) return; seen.add(r.ts); out.push(r);
+  });
+  out.sort((a, b) => a.ts - b.ts);
+  return out.slice(-400);
+}
+function mtLogEntry(entry){
+  if(!entry) return;
+  while(state.mathPractice.some(x => x.ts === entry.ts)) entry.ts++;
+  state.mathPractice.push(entry);
+  if(state.mathPractice.length > 400) state.mathPractice = state.mathPractice.slice(-400);
+  lsSet(KEY_MATH_PRACTICE, state.mathPractice);
+}
+function mtFinishCurrent(abandoned){
+  const S = mtUi.session; if(!S || S.logged) return;
+  const e = S.entry(Date.now(), { abandoned: !!abandoned });
+  if(e){ S.logged = true; mtLogEntry(e); }
+}
+function mtRefreshProgress(){ if(document.getElementById("mt-root")) mtRerender(); }
+
+const mtLang = () => ((window.LyonI18n && LyonI18n.getLang) ? LyonI18n.getLang() : "fr");
+const mtAiReady = () => state.aiStatus === "ready" && aiEngineReady();
+const mtLevelName = l => t("mt.level." + RTutor.LEVELS[l]);
+
+/* ── HTML ── */
+function mtFormulaHtml(f){
+  if(f.latex) return `<div class="mt-formula">${mathTex(f.latex, f.text, true)}</div>`;
+  return `<div class="mt-formula mt-formula-text">${escapeHtml(f.text)}</div>`;
+}
+function mtLinesHtml(lines){ return `<div class="mt-lines">${lines.map(l => `<div class="mt-line">${escapeHtml(l)}</div>`).join("")}</div>`; }
+function mtTabsHtml(){
+  return `<div class="mt-tabs" role="tablist" aria-label="${escapeHtml(t("mt.modes_aria"))}">${MT_MODES.map(m =>
+    `<button type="button" class="mt-tab${mtUi.mode === m ? " is-active" : ""}" role="tab" id="mt-tab-${m}" aria-selected="${mtUi.mode === m}" aria-controls="mt-panel" tabindex="${mtUi.mode === m ? 0 : -1}" data-mt-mode="${m}">${escapeHtml(t("mt.mode." + m))}</button>`).join("")}</div>`;
+}
+function mtExamplesHtml(kind, n){
+  let h = "";
+  for(let i = 1; i <= n; i++){ const txt = t("mt." + kind + ".ex" + i); h += `<button type="button" class="ai-suggestion-chip mt-example" data-mt-example="${kind}" data-text="${mathAttr(txt)}">${escapeHtml(txt)}</button>`; }
+  return `<div class="ai-suggestions mt-examples">${h}</div>`;
+}
+function mtAskFormHtml(kind){
+  const busy = state.aiBusy || aiEngineBusy(), val = kind === "solve" ? mtUi.solveInput : mtUi.explainInput;
+  const needAi = kind === "explain" && !mtAiReady();
+  return `<form class="mt-qform" data-mt-form="${kind}" novalidate>
+      <div class="ai-queryrow"><label class="sr-only" for="mt-${kind}-input">${escapeHtml(t("mt." + kind + ".placeholder"))}</label>
+        <input type="text" class="ai-select" id="mt-${kind}-input" autocomplete="off" spellcheck="false" placeholder="${mathAttr(t("mt." + kind + ".placeholder"))}" value="${mathAttr(val)}">
+        <button type="submit" class="btn red" id="mt-${kind}-btn" ${busy || needAi ? "disabled" : ""}>${escapeHtml(t("mt." + kind + ".btn"))}</button></div>
+    </form>`;
+}
+function mtSolveHtml(){
+  return `<p class="mt-hint">${escapeHtml(t("mt.solve.hint"))}</p>${mtAskFormHtml("solve")}${mtExamplesHtml("solve", 4)}<p class="ai-hint mt-note">${escapeHtml(t("mt.solve.note"))}</p>`;
+}
+function mtExplainHtml(){
+  const seg = MT_DETAILS.map(d => `<button type="button" role="radio" aria-checked="${mtUi.detail === d}" class="mt-segbtn${mtUi.detail === d ? " is-active" : ""}" data-mt-detail="${d}">${escapeHtml(t("mt.detail." + d))}</button>`).join("");
+  return `<p class="mt-hint">${escapeHtml(t("mt.explain.hint"))}</p>${mtAskFormHtml("explain")}
+    <div class="mt-field mt-detail"><span class="mt-lbl" id="mt-detail-lbl">${escapeHtml(t("mt.detail.label"))}</span><div class="mt-seg" role="radiogroup" aria-labelledby="mt-detail-lbl">${seg}</div></div>
+    ${mtExamplesHtml("explain", 4)}${mtAiReady() ? "" : `<p class="ai-hint mt-note">${escapeHtml(t("mt.explain.needs_ai"))}</p>`}`;
+}
+
+function mtControlsHtml(){
+  const dom = RTutor.DOMAINS.map(d => `<option value="${d}" ${mtUi.domain === d ? "selected" : ""}>${escapeHtml(t("mt.domain." + d))}</option>`).join("");
+  const lvl = [0, 1, 2].map(l => `<button type="button" role="radio" aria-checked="${mtUi.level === l}" class="mt-segbtn${mtUi.level === l ? " is-active" : ""}" data-mt-level="${l}">${escapeHtml(mtLevelName(l))}</button>`).join("");
+  const ctx = RTutor.CONTEXTS.map(c => `<button type="button" role="radio" aria-checked="${mtUi.context === c}" class="mt-segbtn${mtUi.context === c ? " is-active" : ""}" data-mt-context="${c}">${escapeHtml(t("mt.context." + c))}</button>`).join("");
+  const sug = RTutor.suggestLevel(RTutor.progress(state.mathPractice).topics[mtUi.domain], mtUi.level);
+  const sugHtml = (sug.reason === "up" || sug.reason === "down")
+    ? `<p class="mt-note mt-suggest">${escapeHtml(t("mt.progress.suggest_" + sug.reason, { level: mtLevelName(sug.level) }))} <button type="button" class="btn-text" data-mt-level="${sug.level}">${escapeHtml(mtLevelName(sug.level))}</button></p>` : "";
+  return `<div class="mt-controls">
+      <div class="mt-field"><label class="mt-lbl" for="mt-domain">${escapeHtml(t("mt.practice.domain_label"))}</label><select id="mt-domain" class="ai-select">${dom}</select></div>
+      <div class="mt-field"><span class="mt-lbl" id="mt-ctx-lbl">${escapeHtml(t("mt.practice.context_label"))}</span><div class="mt-seg" role="radiogroup" aria-labelledby="mt-ctx-lbl">${ctx}</div></div>
+      <div class="mt-field"><span class="mt-lbl" id="mt-level-lbl">${escapeHtml(t("mt.practice.level_label"))}</span><div class="mt-seg" role="radiogroup" aria-labelledby="mt-level-lbl">${lvl}</div></div>
+      <div class="mt-field mt-go"><button type="button" class="btn red" id="mt-new">${escapeHtml(t(mtUi.ex ? "mt.practice.new" : "mt.practice.start"))}</button></div>
+    </div>${sugHtml}`;
+}
+function mtFmtHint(ex){
+  const a = ex.answer; let s = t("mt.fmt." + a.type);
+  if(a.unit === "%") s += " " + t("mt.fmt.unit_pct"); else if(a.unit === "€") s += " " + t("mt.fmt.unit_eur"); else if(a.unit === "k€") s += " " + t("mt.fmt.unit_keur");
+  return s;
+}
+function mtShownHtml(){
+  return mtUi.shown.map(b => {
+    if(b.type === "hint"){
+      const h = b.hint, label = t("mt.hint." + h.type);
+      return `<div class="mt-block mt-hintblock"><div class="mt-blabel">${escapeHtml(label)}</div>${h.type === "start" ? mtLinesHtml(h.lines) : `<p>${escapeHtml(h.text)}</p>`}</div>`;
+    }
+    if(b.type === "method") return `<div class="mt-block"><div class="mt-blabel">${escapeHtml(t("mt.method.title"))}</div><p>${escapeHtml(b.method.text)}</p>${mtLinesHtml(b.method.lines)}</div>`;
+    if(b.type === "solution") return `<div class="mt-block mt-solution"><div class="mt-blabel">${escapeHtml(t("mt.solution.title"))}</div><div class="mt-answerline"><span class="mt-lbl">${escapeHtml(t("mt.solution.answer"))}</span> <strong>${escapeHtml(b.solution.answer)}</strong></div>${mtLinesHtml(b.solution.lines)}<p class="mt-note">${escapeHtml(t("mt.solution.note"))}</p></div>`;
+    return "";
+  }).join("");
+}
+function mtFeedbackHtml(){
+  const f = mtUi.feedback; if(!f) return `<div id="mt-feedback" class="mt-feedback" role="status" aria-live="polite"></div>`;
+  const cls = f.success ? "is-ok" : (f.verdict === "invalid" || f.verdict === "empty" || f.verdict === "unsure" ? "is-info" : "is-no");
+  return `<div id="mt-feedback" class="mt-feedback ${cls}" role="status" aria-live="polite"><span class="mt-fb-icon" aria-hidden="true">${f.success ? "✓" : (cls === "is-no" ? "•" : "?")}</span><span>${escapeHtml(f.text)}</span></div>`;
+}
+function mtExplanationHtml(){
+  const S = mtUi.session; if(!S || S.status !== "solved") return "";
+  const e = S.explanation(), aiOk = mtAiReady();
+  return `<div class="mt-expl"><div class="mt-sec-title">${escapeHtml(t("mt.expl.title"))}</div>
+      <p class="mt-ex-line"><span class="mt-lbl">${escapeHtml(t("mt.expl.concept"))}</span> ${escapeHtml(e.concept)}</p>
+      <p class="mt-ex-line"><span class="mt-lbl">${escapeHtml(t("mt.expl.method"))}</span> ${escapeHtml(e.method)}</p>
+      <div class="mt-ex-line"><span class="mt-lbl">${escapeHtml(t("mt.expl.steps"))}</span>${mtLinesHtml(e.steps)}</div>
+      <p class="mt-note mt-verified"><span aria-hidden="true">✓</span> ${escapeHtml(t("mt.expl.verified"))}</p>
+    </div>`;
+}
+function mtActionsHtml(){
+  const S = mtUi.session; if(!S) return "";
+  const btn = (act, label, extra) => `<button type="button" class="btn${act === "another" ? " red" : " outline"} mt-act" data-mt-act="${act}" ${extra || ""}>${escapeHtml(label)}</button>`;
+  const a = S.actions(), out = [];
+  if(a.indexOf("hint") >= 0) out.push(btn("hint", t("mt.act.hint"), `aria-label="${mathAttr(t("mt.act.hint") + " — " + t("mt.act.hints_left", { n: 3 - S.hintsUsed }))}"`) );
+  if(a.indexOf("retry") >= 0) out.push(btn("retry", t("mt.act.retry")));
+  if(a.indexOf("method") >= 0) out.push(btn("method", t("mt.act.method")));
+  if(S.status === "open"){ out.push(S.canShowSolution() ? btn("solution", t("mt.act.solution")) : `<button type="button" class="btn outline mt-act" data-mt-act="solution" disabled title="${mathAttr(t("mt.act.try_first"))}">${escapeHtml(t("mt.act.solution"))}</button>`); }
+  if(a.indexOf("explain_ai") >= 0 && mtUi.ex){ const ok = mtAiReady(); out.push(`<button type="button" class="btn outline mt-act" data-mt-act="explain_ai" ${ok && !(state.aiBusy || aiEngineBusy()) ? "" : "disabled"} ${ok ? "" : `title="${mathAttr(t("mt.expl.ai_unavailable"))}"`}>${escapeHtml(t("mt.act.explain_ai"))}</button>`); }
+  if(a.indexOf("another") >= 0) out.push(btn("another", t("mt.practice.another")));
+  const note = S.status === "open" && S.hintsUsed > 0 && S.hintsUsed < 3 ? `<span class="mt-note">${escapeHtml(t("mt.act.hints_left", { n: 3 - S.hintsUsed }))}</span>` : "";
+  const aiNote = a.indexOf("explain_ai") >= 0 && !mtAiReady() ? `<p class="mt-note">${escapeHtml(t("mt.expl.ai_unavailable"))}</p>` : (mtUi.aiAsked ? `<p class="mt-note">${escapeHtml(t("mt.expl.ai_below"))}</p>` : "");
+  return `<div class="mt-actions">${out.join("")}${note}</div>${aiNote}`;
+}
+function mtExerciseHtml(){
+  if(mtUi.failed) return `<p class="ai-error" role="alert">${escapeHtml(t("mt.practice.failed"))}</p>`;
+  const ex = mtUi.ex, S = mtUi.session;
+  if(!ex) return `<p class="mt-hint">${escapeHtml(t("mt.practice.empty"))}</p>`;
+  const open = S.status === "open";
+  return `<div class="mt-ex" id="mt-ex">
+      <div class="mt-ex-meta"><span class="mt-chip">${escapeHtml(t("mt.domain." + ex.domain))}</span><span class="mt-chip">${escapeHtml(mtLevelName(ex.level))}</span><span class="mt-chip">${escapeHtml(t("mt.context." + ex.context))}</span><span class="mt-chip mt-chip-ok" title="${mathAttr(t("mt.practice.verified"))}"><span aria-hidden="true">✓</span> ${escapeHtml(t("mt.practice.verified"))}</span></div>
+      ${ex.contextFallback ? `<p class="mt-note">${escapeHtml(t("mt.practice.fallback"))}</p>` : ""}
+      <h3 class="mt-ex-title">${escapeHtml(t("mt.practice.exercise"))}</h3>
+      <p class="mt-ex-intro">${escapeHtml(ex.statement.intro)}</p>
+      ${ex.statement.formulas.map(mtFormulaHtml).join("")}
+      <form class="mt-answer" data-mt-form="answer" novalidate>
+        <label class="mt-lbl" for="mt-input">${escapeHtml(t("mt.practice.answer_label"))}</label>
+        <div class="ai-queryrow"><input type="text" class="ai-select" id="mt-input" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text" placeholder="${mathAttr(t("mt.practice.placeholder"))}" value="${mathAttr(mtUi.input)}" ${open ? "" : "readonly"} aria-describedby="mt-fmt">
+          <button type="submit" class="btn red" id="mt-check" ${open ? "" : "disabled"}>${escapeHtml(t("mt.practice.check"))}</button></div>
+        <p class="mt-fmt" id="mt-fmt">${escapeHtml(mtFmtHint(ex))}</p>
+      </form>
+      ${mtFeedbackHtml()}
+      <div class="mt-shown">${mtShownHtml()}</div>
+      ${mtExplanationHtml()}
+      ${mtActionsHtml()}
+    </div>`;
+}
+function mtProgressHtml(){
+  const p = RTutor.progress(state.mathPractice);
+  if(!p.total.exercises) return `<div class="mt-prog"><div class="mt-sec-title">${escapeHtml(t("mt.progress.title"))}</div><p class="mt-note">${escapeHtml(t("mt.progress.empty"))}</p></div>`;
+  const rows = RTutor.DOMAINS.filter(d => p.topics[d].exercises > 0).map(d => {
+    const x = p.topics[d], m = x.mastery === null ? 0 : x.mastery, weak = x.confidence === "low" || x.confidence === "insufficient";
+    const name = t("mt.domain." + d);
+    return `<div class="mt-prow"><div class="mt-pname">${escapeHtml(name)}</div>
+        <div class="mt-pbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${m}" aria-label="${mathAttr(name + " — " + t("mt.progress.mastery"))}"><span style="width:${m}%"></span></div>
+        <div class="mt-pnum">${m} %</div>
+        <div class="mt-pmeta">${escapeHtml(t("mt.progress.exercises", { n: x.exercises }))} · ${escapeHtml(t("mt.progress.success", { n: x.success }))} · ${escapeHtml(t("mt.progress.hints", { n: x.hintsUsed }))}${weak ? ` · <em>${escapeHtml(t("mt.progress.conf_low"))}</em>` : ""}</div></div>`;
+  }).join("");
+  return `<div class="mt-prog"><div class="mt-sec-title">${escapeHtml(t("mt.progress.title"))}</div>${rows}<p class="mt-note">${escapeHtml(t("mt.progress.note"))}</p></div>`;
+}
+function mtPracticeHtml(){ return `${mtControlsHtml()}${mtExerciseHtml()}${mtProgressHtml()}`; }
+function mtInnerHtml(){
+  const body = mtUi.mode === "solve" ? mtSolveHtml() : (mtUi.mode === "explain" ? mtExplainHtml() : mtPracticeHtml());
+  return `${mtTabsHtml()}<div class="mt-panel" id="mt-panel" role="tabpanel" aria-labelledby="mt-tab-${mtUi.mode}">${body}</div>`;
+}
+function mtCardHtml(){
+  if(!RTutor || !RMath) return "";
+  return `<div class="dash-section mt-card" id="mt-card"><div class="section-title">${escapeHtml(t("mt.title"))}</div><p class="ai-intro mt-sub">${escapeHtml(t("mt.subtitle"))}</p><div id="mt-root">${mtInnerHtml()}</div></div>`;
+}
+/* Remplacement CIBLÉ (pas de render() de toute la page : l'élève garde sa saisie, son défilement et son focus). */
+function mtRerender(focusSel){
+  const root = document.getElementById("mt-root"); if(!root) return;
+  root.innerHTML = mtInnerHtml();
+  mathHydrate();
+  if(focusSel){ const el = root.querySelector(focusSel); if(el){ try{ el.focus({ preventScroll: false }); }catch(e){ el.focus(); } } }
+}
+
+/* ── ACTIONS ── */
+function mtNewExercise(){
+  mtFinishCurrent(true);
+  const ex = RTutor.generate({ domain: mtUi.domain, level: mtUi.level, context: mtUi.context, lang: mtLang(), avoid: mtUi.avoid });
+  mtUi.input = ""; mtUi.feedback = null; mtUi.shown = []; mtUi.aiAsked = false; mtUi.lastAnswer = "";
+  if(!ex.ok){ mtUi.ex = null; mtUi.session = null; mtUi.failed = true; mtRerender(); return; }
+  mtUi.failed = false; mtUi.ex = ex; mtUi.session = RTutor.session(ex); mtUi.avoid = [ex.signature].concat(mtUi.avoid).slice(0, 12);
+  mtRerender("#mt-input");
+}
+function mtSubmitAnswer(){
+  const S = mtUi.session; if(!S || S.status !== "open") return;
+  const r = S.answer(mtUi.input); if(!r.ok) return;
+  mtUi.lastAnswer = mtUi.input;
+  mtUi.feedback = { success: r.result.success, verdict: r.result.verdict, text: t("mt.fb." + r.key, { v: mtUi.ex.expectedText.replace(/\s*\(.*\)\s*$/, "") }) };
+  if(S.status !== "open") mtFinishCurrent(false);
+  mtRerender(S.status === "open" ? "#mt-input" : "#mt-feedback");
+}
+function mtAct(act){
+  const S = mtUi.session;
+  if(act === "another"){ mtNewExercise(); return; }
+  if(!S) return;
+  if(act === "retry"){ mtUi.input = ""; mtUi.feedback = null; mtRerender("#mt-input"); return; }
+  if(act === "hint"){ const r = S.hint(); if(r.ok) mtUi.shown.push({ type: "hint", hint: r.hint }); mtRerender(); return; }
+  if(act === "method"){ const r = S.showMethod(); if(r.ok) mtUi.shown.push({ type: "method", method: r.method }); mtRerender(); return; }
+  if(act === "solution"){
+    const r = S.showSolution();
+    if(r.ok){ mtUi.shown.push({ type: "solution", solution: r.solution }); mtUi.feedback = null; mtFinishCurrent(false); }
+    mtRerender(); return;
+  }
+  if(act === "explain_ai") mtExplainAI();
+}
+/* L'IA EXPLIQUE un exercice dont le moteur a déjà validé la réponse : elle reçoit l'énoncé, la réponse vérifiée et les étapes du moteur,
+   avec la consigne de ne rien recalculer. Elle ne décide jamais si la réponse de l'élève est juste (c'est déjà fait, sans elle). */
+function mtExplainAI(){
+  const S = mtUi.session, ex = mtUi.ex;
+  if(!S || S.status === "open" || !ex || !mtAiReady() || state.aiBusy || aiEngineBusy()) return;
+  const blk = RTutor.aiBlock(ex, mtUi.lastAnswer, S.last ? S.last.verdict : null), nl = blk.indexOf("\n");
+  const calc = { kind: "math:practice", resultText: ex.expectedText, header: blk.slice(0, nl).replace(/:\s*$/, ""), block: blk.slice(nl + 1), steps: ex.steps.slice(0, 6), values: null };
+  mtUi.aiAsked = true; mtRerender();
+  aiGeneralAsk(t("mt.expl.ai_question") + " " + ex.statement.text, { forced: { intent: "EXPLANATION", needsHistory: false }, calc: calc, tutor: { mode: "practice-explain" } });
+  mtScrollToPanel();
+}
+function mtScrollToPanel(){
+  setTimeout(() => { const el = document.querySelector(".ai-panel"); if(el && el.scrollIntoView){ const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches; el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" }); } }, 60);
+}
+function mtAsk(kind){
+  const text = (kind === "solve" ? mtUi.solveInput : mtUi.explainInput).trim();
+  if(!text || state.aiBusy || aiEngineBusy()) return;
+  if(kind === "explain" && !mtAiReady()) return;
+  aiGeneralAsk(text, { tutor: { mode: kind, detail: mtUi.detail } });
+  mtScrollToPanel();
+}
+function mtAttachEvents(){
+  const card = document.getElementById("mt-card"); if(!card) return;
+  mathHydrate();
+  card.addEventListener("click", ev => {
+    const el = ev.target.closest("[data-mt-mode],[data-mt-detail],[data-mt-example],[data-mt-level],[data-mt-context],[data-mt-act],#mt-new");
+    if(!el || el.disabled) return;
+    if(el.dataset.mtMode){ mtUi.mode = el.dataset.mtMode; mtSavePrefs(); mtRerender("#mt-tab-" + mtUi.mode); return; }
+    if(el.dataset.mtDetail){ mtUi.detail = el.dataset.mtDetail; mtSavePrefs(); mtRerender("[data-mt-detail=\"" + mtUi.detail + "\"]"); return; }
+    if(el.dataset.mtExample){ const kind = el.dataset.mtExample; if(kind === "solve") mtUi.solveInput = el.dataset.text; else mtUi.explainInput = el.dataset.text; mtRerender("#mt-" + kind + "-input"); return; }
+    if(el.dataset.mtLevel !== undefined){ mtUi.level = Number(el.dataset.mtLevel); mtSavePrefs(); mtRerender("[data-mt-level=\"" + mtUi.level + "\"]"); return; }
+    if(el.dataset.mtContext){ mtUi.context = el.dataset.mtContext; mtSavePrefs(); mtRerender("[data-mt-context=\"" + mtUi.context + "\"]"); return; }
+    if(el.id === "mt-new"){ mtNewExercise(); return; }
+    if(el.dataset.mtAct) mtAct(el.dataset.mtAct);
+  });
+  card.addEventListener("change", ev => {
+    if(ev.target && ev.target.id === "mt-domain" && RTutor.DOMAINS.indexOf(ev.target.value) >= 0){ mtUi.domain = ev.target.value; mtSavePrefs(); mtRerender("#mt-domain"); }
+  });
+  card.addEventListener("input", ev => {
+    const id = ev.target && ev.target.id;
+    if(id === "mt-solve-input") mtUi.solveInput = ev.target.value;
+    else if(id === "mt-explain-input") mtUi.explainInput = ev.target.value;
+    else if(id === "mt-input") mtUi.input = ev.target.value;
+  });
+  card.addEventListener("submit", ev => {
+    const f = ev.target.closest("[data-mt-form]"); if(!f) return;
+    ev.preventDefault();
+    const kind = f.dataset.mtForm;
+    if(kind === "answer") mtSubmitAnswer(); else mtAsk(kind);
+  });
+  card.addEventListener("keydown", ev => {                                  // flèches ← → entre les onglets (WAI-ARIA tabs)
+    const tab = ev.target.closest && ev.target.closest("[role=tab]"); if(!tab || (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft")) return;
+    const i = MT_MODES.indexOf(mtUi.mode), n = MT_MODES[(i + (ev.key === "ArrowRight" ? 1 : MT_MODES.length - 1)) % MT_MODES.length];
+    mtUi.mode = n; mtSavePrefs(); mtRerender("#mt-tab-" + n); ev.preventDefault();
+  });
+}
+/* Aide de diagnostic (console / tests) : le journal et la maîtrise calculée. Jamais affichée dans l'interface. */
+window.revemMathTutor = { progress: () => RTutor ? RTutor.progress(state.mathPractice) : null, log: () => state.mathPractice.slice(), ui: () => mtUi };
+
 /* La conversation en cours est-elle une conversation « Mode Général » ? (le premier message la marque ;
    tout autre mode crée un fil sans cette marque : aucune réinitialisation à faire ailleurs.) */
 function aiIsGeneral(){ const th = state.aiThread; return !!(RAssist && th.length && th[0].meta && th[0].meta.general); }
@@ -17115,7 +17492,7 @@ function aiGeneralPaint(text){
   });
 }
 
-/* opts : { regenerate, forced:{intent, followType} (suggestion cliquée) } */
+/* opts : { regenerate, forced:{intent, followType} (suggestion cliquée), calc (bloc moteur fourni par le tuteur Maths), tutor:{mode:"solve"|"explain"|"practice-explain", detail} } */
 async function aiGeneralAsk(text, opts){
   opts = opts || {};
   if(!RAssist) return false;
@@ -17134,6 +17511,9 @@ async function aiGeneralAsk(text, opts){
   state.aiAction = "personal"; state.aiMode = "text"; state.aiPersonalIntent = null; state.aiPersonalQuery = ""; state.aiFollow = "";
   state.aiContextLabel = t("assistant.mode_general");
   const chat = state.aiChat, thread = state.aiThread;
+  /* Tuteur Maths : le bloc du moteur et le mode (expliquer…) sont mémorisés avec la conversation, pour que « Régénérer » refasse la MÊME explication. */
+  const tutorOpt = opts.regenerate ? (chat.tutorOpt || null) : (opts.tutor || null), tutorCalc = opts.regenerate ? (chat.tutorCalc || null) : (opts.calc || null);
+  if(!opts.regenerate){ chat.tutorOpt = tutorOpt; chat.tutorCalc = tutorCalc; }
 
   let history, userMsg = null;
   if(opts.regenerate){
@@ -17151,7 +17531,7 @@ async function aiGeneralAsk(text, opts){
   const local = RAssist.localAnswer(analysis);
   /* MOTEUR MATHÉMATIQUE : une réponse d'élève en mode exercice, ou un vrai problème de calcul, passe AVANT le modèle (déterministe, sans WebLLM). */
   const practiceAttempt = !!(RMath && !local && !opts.forced && !opts.regenerate && state.aiChat.practice && !MATH_COMMAND_RE.test(question) && !/\?\s*$/.test(question));
-  const mathProblem = (RMath && !local && !practiceAttempt && !opts.forced) ? mathProblemFor(question, analysis) : null;
+  const mathProblem = (RMath && !local && !practiceAttempt && !opts.forced && !tutorCalc) ? mathProblemFor(question, analysis) : null;
   const mathLocalOk = practiceAttempt || !!mathProblem;
   const ready = state.aiStatus === "ready" && aiEngineReady();
   if(!ready && !local && !mathLocalOk){
@@ -17201,7 +17581,7 @@ async function aiGeneralAsk(text, opts){
 
   const tier = state.aiTier || "avance";
   const reasoning = !!(AIE.TIERS[tier] && AIE.TIERS[tier].reasoning);
-  let calc = (!mathPb && analysis.intent === "CALCULATION") ? RAssist.localCalculation(question, analysis.lang) : null;
+  let calc = tutorCalc || ((!mathPb && analysis.intent === "CALCULATION") ? RAssist.localCalculation(question, analysis.lang) : null);   // opts.calc : exercice du tuteur dont le moteur a DÉJÀ validé la réponse (l'IA explique)
   let windowTokens = RAssist.CONTEXT_TOKENS;
   const signal = { cancelled: false };
   aiCurrentSignal = signal;
@@ -17258,7 +17638,7 @@ async function aiGeneralAsk(text, opts){
     }
   } else diag.knowledgeStatus = kMode === "off" ? "off" : "not-needed";
   const build = () => {
-    const p = RAssist.buildGeneralPrompt({ question, analysis, history, tier, reasoning, calc, contextTokens: windowTokens, knowledge });
+    const p = RAssist.buildGeneralPrompt({ question, analysis, history, tier, reasoning, calc, contextTokens: windowTokens, knowledge, tutor: tutorOpt });
     if(chat.regens) p.params.temperature = Math.min(0.95, p.params.temperature + 0.12 * chat.regens);     // une régénération doit pouvoir répondre autrement
     return p;
   };
@@ -18225,6 +18605,7 @@ function renderAI(){
     ${aiStatusHtml()}
     ${aiDiagnosticPanelHtml()}
     ${renderAssistantHeroHtml()}
+    ${mtCardHtml()}
     <div class="section-title" style="margin-top:24px;">${t("assistant.more_actions")}</div>
     <div class="ai-actiongrid">
       ${Object.entries(AI_ACTIONS).map(([k,a])=>{
@@ -18375,6 +18756,7 @@ function attachAIEvents(){
   mathHydrate();
 
   attachAssistantHeroEvents();
+  mtAttachEvents();
 
   document.querySelectorAll("[data-aiaction]").forEach(btn=>{
     if(btn.disabled) return;

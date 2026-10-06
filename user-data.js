@@ -825,6 +825,53 @@
     },
   };
 
+  /* Journal d'exercices du tuteur Maths & Stats (migration 006). UNE ligne = UN exercice terminé : thème, difficulté, essais, indices, réussite.
+     Jamais l'énoncé ni la réponse de l'élève. Domaine « journal » (keyCol null) : on ajoute, on n'efface jamais — deux appareils hors ligne ne
+     s'écrasent pas, et la MAÎTRISE est recalculée depuis ce journal (math-tutor.js), jamais stockée. Les colonnes portent des CHECK : on
+     ne pousse que des valeurs qui les respectent (une ligne invalide est ÉCARTÉE, elle ne fait pas échouer tout le lot). */
+  const MATH_TOPICS = ["algebra", "functions", "derivatives", "integrals", "probability", "statistics", "matrices", "finance"];
+  const MATH_PRACTICE = {
+    name: "mathPractice",
+    table: "math_practice",
+    keyCol: null,
+    conflict: "user_id,ts",
+    rows(snap, userId){
+      return (snap.mathPractice || [])
+        .map(e => {
+          if (!e || !isFinite(Number(e.ts))) return null;
+          const at = Number(e.ts);
+          if (!isFinite(new Date(at).getTime())) return null;
+          const diff = Math.round(Number(e.difficulty));
+          if (MATH_TOPICS.indexOf(e.topic) === -1 || !(diff >= 0 && diff <= 2)) return null;
+          const kind = String(e.kind || "");
+          if (!kind || kind.length > 64) return null;
+          return {
+            user_id: userId,
+            ts: new Date(at).toISOString(),
+            topic: e.topic,
+            kind: kind,
+            difficulty: diff,
+            context: e.context === "business" ? "business" : "pure",
+            attempts: Math.max(0, Math.min(99, Math.round(Number(e.attempts) || 0))),
+            hints_used: Math.max(0, Math.min(3, Math.round(Number(e.hintsUsed) || 0))),
+            success: !!e.success,
+            solution_shown: !!e.solutionShown,
+          };
+        })
+        .filter(Boolean);
+    },
+    apply(rows, patch){
+      patch.mathPractice = (rows || [])
+        .map(r => ({
+          ts: ms(r.ts) || 0, topic: r.topic, kind: r.kind, difficulty: Number(r.difficulty) || 0, context: r.context === "business" ? "business" : "pure",
+          attempts: Number(r.attempts) || 0, hintsUsed: Number(r.hints_used) || 0, success: !!r.success, solutionShown: !!r.solution_shown,
+        }))
+        .filter(e => e.ts > 0)
+        .sort((a, b) => a.ts - b.ts)
+        .slice(-400);                                // l'appareil garde les 400 derniers exercices ; la base garde tout
+    },
+  };
+
   /* L'ordre compte : les matières d'abord (les chapitres et les documents ont
      besoin de leur uuid), puis tout le reste. */
   const DOMAINS = [
@@ -832,7 +879,7 @@
     QUIZ_PROGRESS, FLASH_PROGRESS, QSTATS,
     EXAM_HISTORY, BADGES, AI_CARDS, COURSE_NOTES,
     PLANNING_EVENTS, AI_HISTORY, PREFERENCES, DOCUMENTS, STUDY_PLAN,
-    USER_STATS, DAILY_STATS, ACTIVITIES, CHAPTER_VISITS,
+    USER_STATS, DAILY_STATS, ACTIVITIES, CHAPTER_VISITS, MATH_PRACTICE,
   ];
   const BY_NAME = {};
   DOMAINS.forEach(d => { BY_NAME[d.name] = d; });
@@ -856,6 +903,7 @@
     "documents":        ["documents"],
     "study-plan":       ["studyPlan"],
     "dashboard-stats":  ["userStats", "dailyStats", "activities", "chapterVisits"],
+    "math-practice":    ["mathPractice"],
     "ai-bubble-pos":    ["prefs"],
     "ai-model-choice":  ["prefs"],
   };

@@ -681,6 +681,40 @@
     return { lines: lines, profile: "mathExplain", temperature: reasoning ? Math.max(0.5, Math.min(0.6, strat.temperature)) : 0.3, topP: 0.9, maxTokens: Math.min(strat.maxTokens, max) };
   }
 
+  /* ── 7ter. MODE « EXPLIQUER » DU TUTEUR MATHS & STATS ─────────────────────────────────────────────────────────
+     L'élève veut COMPRENDRE (pas obtenir un résultat) : intuition, définition, méthode, formule, exemple, interprétation — dans cet ordre,
+     avec un niveau de détail réglable (concis / standard / détaillé). Si le moteur de calcul a déjà résolu un problème, le résultat reste
+     la vérité : le modèle explique, il ne recalcule pas. Les libellés de section sont dans la langue de l'élève. */
+  var TUTOR_LABELS = {
+    fr: ["Intuition", "Définition", "Méthode", "Formule", "Exemple", "Interprétation"],
+    en: ["Intuition", "Definition", "Method", "Formula", "Example", "Interpretation"],
+    es: ["Intuición", "Definición", "Método", "Fórmula", "Ejemplo", "Interpretación"],
+    de: ["Intuition", "Definition", "Methode", "Formel", "Beispiel", "Interpretation"],
+    it: ["Intuizione", "Definizione", "Metodo", "Formula", "Esempio", "Interpretazione"],
+  };
+  var TUTOR_MAX_TOKENS = {
+    rapide: { short: 200, standard: 420, detailed: 640 },
+    avance: { short: 260, standard: 560, detailed: 900 },
+    expert: { short: 800, standard: 1400, detailed: 2000 },
+  };
+  var TUTOR_DETAIL_LINES = {
+    short: "Detail level: concise. Give ONLY the intuition (one sentence), the definition, the formula (symbols named) and one tiny example. About 80 words.",
+    standard: "Detail level: standard. Cover the six sections, each in one to three short sentences. About 180 words.",
+    detailed: "Detail level: detailed. Cover the six sections; in 'Example' work one small numeric example step by step; in 'Interpretation' say what the result means for a decision. About 330 words.",
+  };
+  function tutorExplainStrategy(strat, analysis, tutor, opts){
+    var detail = TUTOR_DETAIL_LINES[tutor.detail] ? tutor.detail : "standard", lang = analysis.lang, tk = tierKey(opts && opts.tier), reasoning = !!(opts && opts.reasoning);
+    var labels = (TUTOR_LABELS[lang] || TUTOR_LABELS.fr).map(function(l){ return "**" + l + "**"; }).join(" · ");
+    var lines = [];
+    if(opts && opts.mathBacked) lines.push("A deterministic engine has ALREADY solved and verified the problem: its result below is certain. Do not recompute it and state it only once; explain the ideas around it.");
+    lines.push("You are a patient maths and statistics tutor for a business-school student. Explain with these labelled sections, in this order, each label in bold on its own line: " + labels + ".");
+    lines.push("Start from the intuition, never from the formula. Name every symbol of a formula. Write each formula once.");
+    lines.push(TUTOR_DETAIL_LINES[detail]);
+    lines.push("Stop after the last section: no recap, no repetition, no closing question.");
+    if(reasoning) lines.push("Keep your private reasoning to a few lines before answering.");
+    return { lines: lines, profile: "tutorExplain", temperature: reasoning ? Math.max(0.5, Math.min(0.6, strat.temperature)) : 0.4, topP: 0.9, maxTokens: TUTOR_MAX_TOKENS[tk][detail] };
+  }
+
   /* ── 8. SUJET ET HISTORIQUE ──────────────────────────────────────────────── */
   var TOPIC_PREFIX = /^(?:peux[- ]tu |pouvez[- ]vous |pourrais[- ]tu )?(?:m'?)?(?:expliquer?|explique(?:[- ]moi)?|definir|definis(?:[- ]moi)?|compare(?:r)?(?:[- ]moi)?|resume(?:r)?|donne(?:[- ]moi)?|qu'est[- ]?ce (?:que|qu')|c'est quoi|quelle est la difference entre|quelles sont les differences entre|quelle est la|quel est le|pourquoi|comment (?:fonctionne|marche|calculer|calcule[- ]t[- ]on)|what is|what are|explain|define|compare|summari[sz]e|why does|why do|why|how does|how do you|difference between|que es|explica|was ist|erklare|che cos'e|spiega)\s+/;
   function extractTopic(text){
@@ -823,10 +857,12 @@
     var strat = selectStrategy(analysis, { tier: o.tier, reasoning: reasoning });
     var mathBacked = !!(o.calc && /^math:/.test(o.calc.kind || ""));
     if(mathBacked) strat = mathStrategy(strat, analysis, o.calc, { tier: o.tier, reasoning: reasoning });
+    var tutorExplain = !!(o.tutor && o.tutor.mode === "explain");
+    if(tutorExplain) strat = tutorExplainStrategy(strat, analysis, o.tutor, { tier: o.tier, reasoning: reasoning, mathBacked: mathBacked });
     var maxTokens = strat.maxTokens;
     var lang = analysis.lang;
 
-    var sys = SYSTEM_BASE + "\n" + languageLine(lang, reasoning) + (mathBacked && MATH_LEXICON[lang] ? "\n" + MATH_LEXICON[lang] : "");
+    var sys = SYSTEM_BASE + "\n" + languageLine(lang, reasoning) + ((mathBacked || tutorExplain) && MATH_LEXICON[lang] ? "\n" + MATH_LEXICON[lang] : "");
     var style = strat.lines.slice();
     var hist0 = selectHistory(o.history || [], analysis, 0);          // juste pour le sujet
     var topic = hist0.topic;

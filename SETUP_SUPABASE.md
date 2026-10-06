@@ -216,7 +216,7 @@ Supabase**, que le code ne peut pas faire à ta place.
 supabase/tests/00_diagnostic.sql
 ```
 
-Il liste les six migrations, dit lesquelles sont déjà appliquées, et te donne
+Il liste les sept migrations, dit lesquelles sont déjà appliquées, et te donne
 la liste exacte de celles qu'il te reste à exécuter. Il signale aussi le seul
 point destructif du schéma : si ta table `profiles` date de la v1 et contient
 encore une colonne `user_code`, `000_schema.sql` la **supprimera** avec son
@@ -232,6 +232,7 @@ Puis, SQL Editor → coller et exécuter, l'un après l'autre :
 | `supabase/migrations/003_sync_layer.sql` | index d'import non partiels, journal |
 | `supabase/migrations/004_oauth_hardening.sql` | durcissement OAuth |
 | **`supabase/migrations/005_user_sync.sql`** | **les clés naturelles qui rendent l'écriture multi-appareils idempotente** |
+| `supabase/migrations/006_math_practice.sql` | `math_practice` : journal d'exercices du tuteur Maths & Stats (RLS stricte, jamais l'énoncé ni la réponse de l'élève) |
 
 Toutes sont idempotentes : tu peux les relancer, y compris celles déjà
 passées, sans créer de doublon (vérifié — tables, index et policies restent

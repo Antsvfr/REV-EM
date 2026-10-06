@@ -68,7 +68,7 @@ const FAKE_SDK = `
     ai_cards: ["user_id","builtin_chapter_id"], course_notes: ["user_id","event_id"],
     ai_history: ["user_id"], preferences: ["user_id"], study_plans: ["user_id"],
     user_stats: ["user_id"], daily_stats: ["user_id","day"],
-    activities: ["user_id","ts"], chapter_visits: ["user_id","chapter_key"],
+    activities: ["user_id","ts"], chapter_visits: ["user_id","chapter_key"], math_practice: ["user_id","ts"],
     profiles: ["id"],
   };
   /* Persistance à travers un rechargement de l'onglet (F5 / réouverture) :
@@ -1052,6 +1052,33 @@ try {
     check("celui de l'autre compte est INTACT (il peut contenir du travail non envoyé)", rst.bIntact && rst.bFile, rst);
     check("la langue de l'appareil est conservée", rst.langue, rst);
     await d.ctx.close();
+  });
+
+  /* ======================================================================
+     22. TUTEUR MATHS & STATS — le journal voyage, et ne va jamais chez un autre compte
+     ====================================================================== */
+  await scenario("22. journal du tuteur Maths & Stats : appareil 2 le retrouve, le compte B ne le voit jamais", async () => {
+    const d1 = await signedInDevice(dbAfterA);
+    await d1.page.evaluate(() => { mtLogEntry(RevemMath.tutor.record({ ts: 1790000000000, topic: "algebra", kind: "quad-solve", difficulty: 1, attempts: 2, hintsUsed: 1, success: true })); });
+    await d1.page.waitForTimeout(1500);
+    const db = await dumpDb(d1.page);
+    const rows = db.tables.math_practice || [];
+    eq("une ligne en base, au nom de A, sans énoncé ni réponse", rows.map(r => [r.user_id, r.topic, r.kind, r.difficulty, r.attempts, r.hints_used, r.success, Object.keys(r).filter(k => /statement|answer|text/.test(k)).length]), [[USER_A, "algebra", "quad-solve", 1, 2, 1, true, 0]]);
+    await d1.ctx.close();
+
+    const d2 = await device(browser, db);
+    await signIn(d2.page, USER_A, "a@test.invalid", 1800);
+    const seen = await d2.page.evaluate(() => ({ log: window.revemMathTutor.log().map(e => [e.topic, e.kind, e.attempts, e.hintsUsed, e.success]), m: window.revemMathTutor.progress().topics.algebra.mastery }));
+    eq("l'appareil 2 retrouve l'exercice terminé", seen.log, [["algebra", "quad-solve", 2, 1, true]]);
+    check("…et sa maîtrise est recalculée (jamais stockée)", seen.m > 0 && seen.m < 100, seen);
+    await signOut(d2.page, 1200);
+    await signIn(d2.page, USER_B, "b@test.invalid", 1600);
+    const b = await d2.page.evaluate(() => { switchTab("ai"); return { log: window.revemMathTutor.log().length, keys: Object.keys(localStorage).filter(k => /math-practice$/.test(k) && k.indexOf("u.11111111") >= 0).length }; });
+    await d2.page.waitForTimeout(300);
+    eq("B ne voit aucun exercice de A (journal vide)", b.log, 0);
+    check("l'écran de B n'affiche aucune progression de A", !/Ma progression en maths[\s\S]*Algèbre/.test(await d2.page.innerText("#mt-card")), "");
+    eq("aucune erreur JavaScript", d2.errors, []);
+    await d2.ctx.close();
   });
 
 } catch (e) {
