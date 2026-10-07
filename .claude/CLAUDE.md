@@ -27,7 +27,7 @@ JS autonomes chargés en `<script>` classique, dans cet ordre :
 → `smart-revision.js` → `statistics.js` → `planning.js` →
 `content-sources.js` → `sync-engine.js` → `source-adapters.js` →
 `user-data.js` → `command-center.js` → `quick-actions.js` →
-`subject-search.js` → `ai-engine.js` → `knowledge-engine.js` → `output-processor.js` → `assistant-core.js` → `import-center.js` → `course-hub.js` → `revision-bank.js` → `math-core.js` → `math-fast.js` → `math-verify.js` → `math-engine.js` → `math-cas-client.js` → le script principal d'`index.html`.
+`subject-search.js` → `ai-engine.js` → `knowledge-engine.js` → `output-processor.js` → `assistant-core.js` → `import-center.js` → `course-hub.js` → `connected-apps.js` → `revision-bank.js` → `math-core.js` → `math-fast.js` → `math-verify.js` → `math-engine.js` → `math-cas-client.js` → le script principal d'`index.html`.
 `math-cas-worker.js` (Pyodide + SymPy, `vendor/`) est lui aussi un Worker de module créé
 à la demande par `math-cas-client.js` (voir `AI_MATH.md`).
 `ai-worker.js` (qui importe `ai-host.js`, lui-même `ai-engine.js`) est chargé

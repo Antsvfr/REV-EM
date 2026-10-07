@@ -5316,6 +5316,9 @@
 <!-- Logique PURE du Hub de révision d'un cours (états des ressources, file séquentielle,
      référence stable courseId/chapterId/subjectId). Ni DOM, ni state, ni WebLLM. Voir COURSE_HUB.md. -->
 <script src="course-hub.js"></script>
+<!-- Logique PURE de « Réglages › Applications connectées » (liaison REV-EM ⇄ LexNote : modèle d'affichage, URL sûre, paramètre de retour).
+     Ni DOM, ni state, ni réseau, ni jeton. Voir INTEGRATION_LEXNOTE.md. -->
+<script src="connected-apps.js"></script>
 <!-- Logique PURE de la BANQUE de révision d'un cours et du SESSION BUILDER (Fisher-Yates, choix mélangés,
      couverture par concept, jamais deux sessions identiques). Ni DOM, ni state, ni WebLLM. Voir REVISION_BANK.md. -->
 <script src="revision-bank.js"></script>
@@ -7623,6 +7626,7 @@ function resetUserStateInMemory(){
   state.qstats = {}; state.badges = {}; state.aiCards = {};
   state.userSubjects = []; state.userChapters = [];
   state.documents = []; state.courseData = {}; state.studyPlan = null;
+  state.lexnote = { conn: null, error: null, busy: null, loaded: false, toast: null };   // la liaison d'un compte n'est jamais visible depuis un autre
   Object.assign(state.dash, {
     totalAnswered: 0, totalCorrect: 0, dailyStats: {}, activityDates: [],
     timeSpentSeconds: 0, recentActivity: [], recentChapters: [], wrongQuestions: {},
@@ -16308,6 +16312,8 @@ Object.assign(state, {
   // Jamais persisté : la connexion fait autorité côté Supabase, cet objet
   // n'est qu'un cache d'affichage rechargé à chaque ouverture de session.
   brightspace: { connection: null, busy: null, progress: null, lastResult: null, error: null, check: null },
+  // --- applications connectées (LexNote) : jamais persisté, rechargé depuis le serveur à chaque ouverture ---
+  lexnote: { conn: null, error: null, busy: null, loaded: false, toast: null },
   // --- état d'interface du formulaire de compte ("Mon espace") ---
   /* linkResult : ce que le lien reçu par e-mail vient de produire
      ("confirmed" | "recovery" | "email_changed" | "expired"), afin de le DIRE
@@ -20322,6 +20328,161 @@ function resetAllData(){
   });
 }
 
+/* ============================================================
+   20ter. APPLICATIONS CONNECTÉES — LexNote
+   ------------------------------------------------------------
+   REV-EM et LexNote restent deux applications INDÉPENDANTES (deux projets Supabase, deux comptes, aucun UUID partagé).
+   La liaison est explicite, décidée par l'étudiant, et passe uniquement par les Edge Functions :
+     • integration-link     → actions de l'étudiant (démarrer, vérifier, déconnecter), avec SON jeton ;
+     • integration-gateway  → serveur ↔ serveur, signée (jamais appelée d'ici).
+   Aucun secret inter-applications n'existe dans le navigateur. La logique d'affichage pure : connected-apps.js.
+   ============================================================ */
+function lnAvailable(){
+  return !!(window.LyonAuth && LyonAuth.available && LyonAuth.client && LyonAuth.state.status === "signed-in" && window.RevemLinks);
+}
+
+async function lnInvoke(action, body){
+  const { data, error } = await LyonAuth.client.functions.invoke("integration-link", { body: Object.assign({ action: action }, body || {}) });
+  if(error){
+    let payload = null;
+    try{ payload = await error.context.json(); }catch(e){}
+    const code = payload && payload.error && payload.error.code;
+    const err = new Error(code || "UNAVAILABLE");
+    err.code = code || "UNAVAILABLE";
+    throw err;
+  }
+  if(data && data.ok === false){ const e = new Error(data.error && data.error.code); e.code = data.error && data.error.code; throw e; }
+  return data;
+}
+
+/* Revérifie la connexion AUPRÈS DU SERVEUR (qui interroge LexNote) : « Connecté » n'est affiché que si les deux côtés le confirment. */
+async function lnLoad(opts){
+  if(!lnAvailable()) return;
+  opts = opts || {};
+  if(state.lexnote.busy) return;
+  const userAtStart = currentAuthId();
+  state.lexnote.busy = "checking"; state.lexnote.error = null;
+  if(opts.render !== false && state.tab === "settings") render();
+  try{
+    const res = await lnInvoke("status", { probe: opts.probe !== false });
+    if(currentAuthId() !== userAtStart) return;            // changement de compte pendant l'appel : on jette le résultat
+    state.lexnote.conn = res.state; state.lexnote.error = null;
+  }catch(e){
+    if(currentAuthId() !== userAtStart) return;
+    state.lexnote.conn = null; state.lexnote.error = { code: e.code || "UNAVAILABLE" };
+  }finally{
+    if(currentAuthId() === userAtStart){ state.lexnote.busy = null; state.lexnote.loaded = true; if(state.tab === "settings") render(); }
+  }
+}
+
+async function lnConnect(){
+  if(!lnAvailable() || state.lexnote.busy) return;
+  state.lexnote.busy = "connecting"; state.lexnote.error = null; render();
+  try{
+    const res = await lnInvoke("start");
+    const url = RevemLinks.safeConfirmUrl(res.confirmUrl);
+    if(!url) throw Object.assign(new Error("INTERNAL"), { code: "INTERNAL" });
+    window.location.assign(url);                           // même onglet : LexNote renvoie ensuite ici avec ?lexnote_link=connected
+  }catch(e){
+    state.lexnote.busy = null;
+    state.lexnote.error = { code: e.code || "UNAVAILABLE" };
+    render();
+  }
+}
+
+async function lnDisconnect(){
+  if(!lnAvailable() || state.lexnote.busy) return;
+  if(!confirm(t("lnk.confirm_disconnect"))) return;
+  state.lexnote.busy = "disconnecting"; state.lexnote.error = null; render();
+  try{
+    const res = await lnInvoke("revoke");
+    state.lexnote.conn = res.state;
+    showToast(t("lnk.disconnected_toast"));
+  }catch(e){
+    state.lexnote.error = { code: e.code || "UNAVAILABLE" };
+  }finally{
+    state.lexnote.busy = null; render();
+  }
+}
+
+/* Retour de LexNote : ?lexnote_link=connected. Le paramètre est retiré de l'URL ; il ne prouve RIEN (falsifiable) :
+   l'état est revérifié côté serveur avant tout affichage « Connecté ». REV-EM n'a pas de routeur d'URL — c'est le mécanisme minimal. */
+function lnHandleReturn(){
+  if(!window.RevemLinks) return;
+  const r = RevemLinks.parseReturn(window.location.search);
+  if(r.status === null) return;
+  try{ window.history.replaceState({}, "", window.location.pathname + r.cleanSearch + window.location.hash); }catch(e){}
+  state.tab = "settings";
+  lnLoad({ probe: true, render: false }).then(()=>{
+    if(state.lexnote.conn && state.lexnote.conn.state === "CONNECTED" && state.lexnote.conn.verified) showToast(t("lnk.success_toast"));
+    render();
+  });
+}
+
+function lnFmtDate(iso){
+  if(!iso) return "—";
+  try{ return new Date(iso).toLocaleDateString(currentLocaleTag(), { day: "numeric", month: "long", year: "numeric" }); }catch(e){ return "—"; }
+}
+
+function renderConnectedApps(){
+  let body;
+  if(!lnAvailable()){
+    body = `<p class="meta">${t("lnk.requires_account")}</p>`;
+  } else {
+    const ln = state.lexnote;
+    const view = RevemLinks.describe(ln.conn, ln.error);
+    const act = RevemLinks.actions(view);
+    let badge, msg = "";
+    if(ln.busy === "connecting"){ badge = `<span class="src-state">${t("lnk.connecting")}</span>`; }
+    else if(ln.busy === "checking" && !ln.loaded){ badge = `<span class="src-state">${t("lnk.checking")}</span>`; }
+    else if(view.kind === "connected"){
+      badge = `<span class="src-state src-ok" data-testid="lnk-status">${t("lnk.connected")}</span>`;
+      msg = `<p class="meta">${t("lnk.connected_since", { date: escapeHtml(lnFmtDate(view.since)) })} ${t("lnk.privacy")}</p>`;
+    } else if(view.kind === "not_connected"){
+      badge = `<span class="src-state" data-testid="lnk-status">${t("lnk.not_connected")}</span>`;
+      msg = `<p class="section-sub">${t("lnk.pitch")}</p>`;
+    } else if(view.kind === "pending"){
+      badge = `<span class="src-state" data-testid="lnk-status">${t("lnk.pending")}</span>`;
+      msg = `<p class="meta">${t("lnk.pending_desc")}</p>`;
+    } else if(view.kind === "revoked"){
+      badge = `<span class="src-state src-warn-state" data-testid="lnk-status">${t("lnk.revoked")}</span>`;
+      msg = `<p class="meta">${t(view.by === "partner" ? "lnk.revoked_by_partner" : "lnk.revoked_by_self", { date: escapeHtml(lnFmtDate(view.at)) })} ${t("lnk.no_data_deleted")}</p>`;
+    } else if(view.kind === "error"){
+      badge = `<span class="src-state src-warn-state" data-testid="lnk-status">${t("lnk.error")}</span>`;
+      msg = `<p class="meta src-warn">${t("lnk.error_" + view.reason)}</p>`;
+    } else {
+      badge = `<span class="src-state">${t("lnk.checking")}</span>`;
+    }
+    /* Échec d'une ACTION (connecter, déconnecter) alors qu'un état est déjà affiché : on le dit, sans écraser cet état. */
+    if(ln.error && view.kind !== "error") msg += `<p class="meta src-warn" role="alert" data-testid="lnk-action-error">${t("lnk.error_" + RevemLinks.errorReason(ln.error.code))}</p>`;
+    const busy = !!ln.busy;
+    const btns = [];
+    if(act.connect) btns.push(`<button class="btn red small" id="lnk-connect-btn" ${busy ? "disabled" : ""}>${t(view.kind === "revoked" ? "lnk.reconnect" : "lnk.connect")}</button>`);
+    if(act.disconnect) btns.push(`<button class="btn-text" id="lnk-disconnect-btn" ${busy ? "disabled" : ""}>${t("lnk.disconnect")}</button>`);
+    if(act.verify) btns.push(`<button class="btn-text" id="lnk-verify-btn" ${busy ? "disabled" : ""}>${t("lnk.verify")}</button>`);
+    body = `<div class="src-row">${badge}</div>${msg}<div class="src-actions">${btns.join("")}</div>`;
+  }
+  return `<div class="dash-section src-section" id="connected-apps" data-testid="connected-apps">
+    <div class="section-title">${t("lnk.title")}</div>
+    <p class="dash-empty" style="margin-top:0;">${t("lnk.intro")}</p>
+    <div class="src-card" data-testid="lnk-lexnote">
+      <div class="src-head"><span class="src-name">LexNote</span></div>
+      ${body}
+    </div>
+  </div>`;
+}
+
+function attachConnectedAppsEvents(){
+  const c = document.getElementById("lnk-connect-btn");
+  if(c) c.addEventListener("click", lnConnect);
+  const d = document.getElementById("lnk-disconnect-btn");
+  if(d) d.addEventListener("click", lnDisconnect);
+  const v = document.getElementById("lnk-verify-btn");
+  if(v) v.addEventListener("click", ()=> lnLoad({ probe: true }));
+  // Première ouverture des Réglages : vérification réelle auprès du serveur (une fois par session de compte).
+  if(lnAvailable() && !state.lexnote.loaded && !state.lexnote.busy) lnLoad({ probe: true });
+}
+
 function renderSettings(){
   const curLang = window.LyonI18n ? LyonI18n.getLang() : "fr";
   const langOption = (code, flagEmoji, key, fallback) => `<button type="button" class="btn ${curLang===code?"red":"outline"} small" data-settings-lang="${code}" aria-current="${curLang===code?"true":"false"}">${flagEmoji} ${t(key) || fallback}</button>`;
@@ -20340,6 +20501,8 @@ function renderSettings(){
         ${langOption("it","🇮🇹","lang.it","Italiano")}
       </div>
     </div>
+
+    ${renderConnectedApps()}
 
     <div class="dash-section">
       <div class="section-title">${t("settings.backup_title")}</div>
@@ -20373,6 +20536,7 @@ function renderSettings(){
 
 function attachSettingsEvents(){
   const statusEl = () => document.getElementById("settings-status");
+  attachConnectedAppsEvents();
 
   document.querySelectorAll("[data-settings-lang]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
@@ -24091,6 +24255,13 @@ if(window.LyonAuth && typeof bsHandleOAuthReturn === "function"){
       bsHandleOAuthReturn();
       bsLoadConnection().then(()=>{ if(state.tab === "fiches") render(); });
     }
+  });
+}
+
+// Retour de LexNote (?lexnote_link=connected) : traité une fois, quand l'authentification est rétablie — la liaison est rattachée au compte.
+if(window.LyonAuth){
+  LyonAuth.onChange(function lnOnce(){
+    if(LyonAuth.state.status === "signed-in" && !lnOnce.done){ lnOnce.done = true; lnHandleReturn(); }
   });
 }
 
