@@ -7800,6 +7800,7 @@ window.revemSyncDiagnostic = async function(){
   const rows = await LyonUserData.diagnose(LyonAuth.client, id, cloudSnapshot(), { builtinSubjects: SUBJECTS.map(b => ({ id: b.id, name: b.name })) });
   console.info("[REV-EM Sync] état :", JSON.stringify(syncState), "· file :", JSON.stringify(cloudPendingOf(id)));
   console.table(rows);
+  if(cloudState.errors && cloudState.errors.length) console.table(cloudState.errors.map(e => ({ domain: e.domain, table: e.table, op: e.op, code: e.code, message: e.error, hint: e.hint || e.details || "" })));
   return rows;
 };
 
