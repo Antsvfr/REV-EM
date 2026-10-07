@@ -1,0 +1,22 @@
+{
+  "name": "@revem-lexnote/integration-contract",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Contrat d'intégration REV-EM × LexNote : schémas versionnés (Zod), liens profonds, jeton de lancement signé. AUCUNE donnée métier, AUCUN secret.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

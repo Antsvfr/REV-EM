@@ -51,6 +51,13 @@ principe d'isolation que les moteurs purs, mais pour une raison
 différente (un service worker ne PEUT pas partager le contexte de la
 page). Voir `PWA.md`.
 
+## Intégration avec LexNote (application indépendante)
+
+REV-EM et LexNote restent deux produits séparés (dépôts, bases, authentification). Tout échange passe par le contrat
+versionné `integration-contract/` (schémas Zod, liens profonds, jeton de lancement Ed25519) et la migration
+`007_lexnote_links.sql` — voir `INTEGRATION_REVEM_LEXNOTE.md` (propriété des données, sécurité, ce qui est fait ou non).
+Jamais d'identifiant d'utilisateur, d'e-mail ou de donnée de cours dans une URL ; jamais de lecture de la base de l'autre application.
+
 ## Règles de modification du code
 
 - **Analyser avant de modifier.** Toujours lire le code concerné et

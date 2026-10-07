@@ -39,7 +39,9 @@ with attendu(rang, fichier, repere, description) as (
     (5, '005_user_sync.sql',      'index uq_subjects_user_local',
         'les clés naturelles du multi-appareils — sans elles, la synchronisation ne peut pas être idempotente'),
     (6, '006_math_practice.sql',  'table public.math_practice',
-        'journal d''exercices du tuteur Maths & Stats (suivi : essais, indices, réussite, maîtrise calculée)')
+        'journal d''exercices du tuteur Maths & Stats (suivi : essais, indices, réussite, maîtrise calculée)'),
+    (7, '007_lexnote_links.sql',  'table public.lexnote_links',
+        'socle d''intégration LexNote (liens pseudonymes + intentions de lancement) — facultatif : rien ne casse sans elle')
 ),
 etat as (
   select a.*,
@@ -54,6 +56,7 @@ etat as (
            when 5 then exists (select 1 from pg_indexes
                                 where schemaname = 'public' and indexname = 'uq_subjects_user_local')
            when 6 then to_regclass('public.math_practice') is not null
+           when 7 then to_regclass('public.lexnote_links') is not null
          end as applique
     from attendu a
 )
@@ -70,7 +73,7 @@ select rang                                        as "n",
 -- ----------------------------------------------------------------------------
 with attendu(rang, fichier) as (
   values (0, '000_schema.sql'), (1, '001_brightspace.sql'), (2, '002_centralisation.sql'),
-         (3, '003_sync_layer.sql'), (4, '004_oauth_hardening.sql'), (5, '005_user_sync.sql'), (6, '006_math_practice.sql')
+         (3, '003_sync_layer.sql'), (4, '004_oauth_hardening.sql'), (5, '005_user_sync.sql'), (6, '006_math_practice.sql'), (7, '007_lexnote_links.sql')
 ),
 etat as (
   select a.rang, a.fichier,
@@ -85,6 +88,7 @@ etat as (
            when 5 then exists (select 1 from pg_indexes
                                 where schemaname = 'public' and indexname = 'uq_subjects_user_local')
            when 6 then to_regclass('public.math_practice') is not null
+           when 7 then to_regclass('public.lexnote_links') is not null
          end as applique
     from attendu a
 ),
