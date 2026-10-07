@@ -53,6 +53,10 @@ aiTransport = {
 state.aiStatus = "ready"; state.aiTier = "avance"; state.aiModelId = "Phi-4-mini-instruct-q4f16_1-MLC";
 `;
 
+async function toMath(page) {
+  if (await page.evaluate(() => matchMedia("(max-width: 900px)").matches)) { await page.click(".aiw-sidebtn"); await page.waitForTimeout(260); }   // tablette / mobile : la navigation est un tiroir
+  await page.click("[data-aiw-space=math]"); await page.waitForTimeout(200);
+}
 async function open(opts) {
   opts = opts || {};
   const ctx = await browser.newContext({ viewport: opts.viewport || { width: 1280, height: 900 } });
@@ -64,12 +68,13 @@ async function open(opts) {
   if (opts.ai !== false) await page.evaluate(FAKE);
   await page.evaluate(() => { switchTab("ai"); });
   await page.waitForTimeout(250);
+  if (opts.space !== "chat") { await toMath(page); }      // AI Workspace V2 : Maths & Stats s'ouvre en UN clic dans la zone centrale
   return { ctx, page };
 }
 const idle = (page) => page.waitForFunction(() => !state.aiBusy, null, { timeout: 30000 }).then(() => page.waitForTimeout(150));
 const T = (page) => page.evaluate(() => ({ gens: window.__T ? window.__T.gens : [], generates: window.__T ? window.__T.sent.filter(m => m.type === "GENERATE").length : 0 }));
 const UI = (page) => page.evaluate(() => { const u = window.revemMathTutor.ui(); return { mode: u.mode, kind: u.ex && u.ex.kind, domain: u.ex && u.ex.domain, level: u.ex && u.ex.level, context: u.ex && u.ex.context, lang: u.ex && u.ex.lang, expectedText: u.ex && u.ex.expectedText, example: u.ex && u.ex.example, status: u.session && u.session.status, attempts: u.session && u.session.attempts, hints: u.session && u.session.hintsUsed, fallback: u.ex && u.ex.contextFallback }; });
-const mtText = (page) => page.innerText("#mt-card");
+const mtText = (page) => page.innerText("#aiw-scroll");
 const feedback = (page) => page.$eval("#mt-feedback", e => e.innerText).catch(() => "");
 async function setup(page, domain, level, context) {
   await page.click("#mt-tab-practice");
@@ -91,9 +96,11 @@ try {
   await scenario("1. la carte « Maths & Stats » : Résoudre · Expliquer · M'entraîner", async () => {
     const { ctx, page } = await open();
     const txt = await mtText(page);
-    check("titre « Maths & Stats » et les trois modes demandés", /Maths & Stats/.test(txt) && /Résoudre/.test(txt) && /Expliquer/.test(txt) && /M'entraîner/.test(txt), txt.slice(0, 200));
-    eq("rôles ARIA : une tablist, 3 onglets, un seul sélectionné", await page.evaluate(() => [document.querySelectorAll("#mt-card [role=tablist]").length, document.querySelectorAll("#mt-card [role=tab]").length, document.querySelectorAll("#mt-card [role=tab][aria-selected=true]").length]), [1, 3, 1]);
-    eq("mode par défaut : Résoudre ; le panneau est relié à son onglet (aria-labelledby)", await page.evaluate(() => [window.revemMathTutor.ui().mode, document.getElementById("mt-panel").getAttribute("aria-labelledby")]), ["solve", "mt-tab-solve"]);
+    const head = await page.innerText(".aiw-head"), bar = await page.innerText("#mt-bar");
+    check("en-tête « Maths & Stats » et les trois modes demandés (sélecteur compact)", /Maths & Stats/.test(head) && /Résoudre/.test(bar) && /Expliquer/.test(bar) && /M'entraîner/.test(bar), { head, bar });
+    check("le point d'entrée Maths & Stats n'est plus une carte posée sous la conversation (plus de #mt-card)", !(await page.$("#mt-card")));
+    eq("rôles ARIA : une tablist, 3 onglets, un seul sélectionné", await page.evaluate(() => [document.querySelectorAll("#aiw [role=tablist]").length, document.querySelectorAll("#aiw [role=tab]").length, document.querySelectorAll("#aiw [role=tab][aria-selected=true]").length]), [1, 3, 1]);
+    eq("mode par défaut : Résoudre ; le panneau central est relié à son onglet (tabpanel + aria-labelledby)", await page.evaluate(() => [window.revemMathTutor.ui().mode, document.getElementById("aiw-scroll").getAttribute("role"), document.getElementById("aiw-scroll").getAttribute("aria-labelledby")]), ["solve", "tabpanel", "mt-tab-solve"]);
     await page.click("#mt-tab-explain"); eq("onglet Expliquer : sélecteur de niveau de détail (concis / standard / détaillé)", await page.$$eval("[data-mt-detail]", e => e.map(x => x.innerText)), ["Concis", "Standard", "Détaillé"]);
     await page.click("#mt-tab-practice"); check("onglet M'entraîner : domaine, difficulté, contexte, bouton de départ", !!(await page.$("#mt-domain")) && (await page.$$("[data-mt-level]")).length === 3 && (await page.$$("[data-mt-context]")).length === 2 && !!(await page.$("#mt-new")));
     eq("les 8 domaines demandés sont proposés", await page.$$eval("#mt-domain option", o => o.map(x => x.value)), ["algebra", "functions", "derivatives", "integrals", "probability", "statistics", "matrices", "finance"]);
@@ -154,7 +161,7 @@ try {
     const tx = (await mtText(page)).toLowerCase();
     check("les trois indices s'empilent dans l'ordre : concept → méthode → début du calcul", tx.indexOf("indice 1 · le concept") > 0 && tx.indexOf("indice 1 · le concept") < tx.indexOf("indice 2 · la méthode") && tx.indexOf("indice 2 · la méthode") < tx.indexOf("indice 3 · début du calcul"), tx.slice(0, 900));
     check("   après 3 indices : plus de bouton « Indice »", !(await page.$('[data-mt-act="hint"]')));
-    check("   l'indice 3 n'est PAS la réponse finale", !(await page.$eval(".mt-hintblock:last-child", e => e.innerText)).includes(u.expectedText));
+    check("   l'indice 3 n'est PAS la réponse finale", !(await page.$$eval(".mt-hintblock", els => els[els.length - 1].innerText)).includes(u.expectedText));
     await page.click('[data-mt-act="method"]'); await page.waitForTimeout(80);
     const m = await page.$$eval(".mt-block", e => e.map(x => x.innerText));
     const lastStep = await page.evaluate(() => { const st = window.revemMathTutor.ui().ex.steps; return st[st.length - 1]; });
@@ -223,15 +230,15 @@ try {
   /* ═══ 6. RÉSOUDRE — Math Engine d'abord, WebLLM pour expliquer ═══ */
   await scenario("6. Résoudre : le moteur calcule et vérifie ; l'IA explique (un seul appel) ; sans IA le résultat s'affiche quand même", async () => {
     const { ctx, page } = await open();
-    await page.fill("#mt-solve-input", "x² - 5x + 6 = 0"); await page.press("#mt-solve-input", "Enter"); await idle(page);
+    await page.fill("#assistant-query-input", "x² - 5x + 6 = 0"); await page.press("#assistant-query-input", "Enter"); await idle(page);
     const cards = await page.$$eval(".mx-card", e => e.map(x => x.innerText));
-    check("la carte du moteur : x = 2 ; x = 3, vérifiée exactement, AVANT l'explication", cards.length === 1 && /x=2,x=3/.test(cards[0]) && /VÉRIFIÉ \(EXACT\)/i.test(cards[0]), cards);
+    check("la carte du moteur : x = 2 ; x = 3, vérifiée exactement, AVANT l'explication", cards.length === 1 && /x=2,x=3/.test(cards[0]) && /Vérifié \(exact\)/i.test(cards[0]), cards);
     const t = await T(page);
     checkMock("une seule génération, avec le bloc « MATH ENGINE RESULT » (le modèle explique, il ne calcule pas)", t.generates === 1 && /MATH ENGINE RESULT/.test(t.gens[0].system) && /ALREADY solved/.test(t.gens[0].system), t.gens[0] && t.gens[0].system.slice(-500));
     checkMock("budget borné et température basse (stratégie « calcul déjà fait »)", t.gens[0].maxTokens <= 320 && t.gens[0].temperature === 0.3, t.gens[0]);
     await ctx.close();
     const off = await open({ ai: false });
-    await off.page.fill("#mt-solve-input", "2x + 4 = 10"); await off.page.press("#mt-solve-input", "Enter"); await off.page.waitForTimeout(700);
+    await off.page.fill("#assistant-query-input", "2x + 4 = 10"); await off.page.press("#assistant-query-input", "Enter"); await off.page.waitForTimeout(700);
     check("SANS modèle IA : le résultat vérifié (x = 3) s'affiche quand même", /x=3/.test(await off.page.$$eval(".mx-card", e => e.map(x => x.innerText).join("\n"))), await off.page.innerText("#content").then(s => s.slice(0, 300)));
     eq("aucune erreur JavaScript (avec ou sans IA)", [page.errors, off.page.errors], [[], []]);
     await off.ctx.close();
@@ -244,13 +251,13 @@ try {
     const budgets = {};
     for (const d of ["short", "standard", "detailed"]) {
       await page.click(`[data-mt-detail="${d}"]`);
-      await page.fill("#mt-explain-input", "l'écart-type"); await page.press("#mt-explain-input", "Enter"); await idle(page);
+      await page.fill("#assistant-query-input", "l'écart-type"); await page.press("#assistant-query-input", "Enter"); await idle(page);
       const t = await T(page), g = t.gens[t.gens.length - 1];
       budgets[d] = g.maxTokens;
       checkMock("détail « " + d + " » : consignes Intuition · Définition · Méthode · Formule · Exemple · Interprétation, ordre imposé, arrêt après la dernière section", /\*\*Intuition\*\* · \*\*Définition\*\* · \*\*Méthode\*\* · \*\*Formule\*\* · \*\*Exemple\*\* · \*\*Interprétation\*\*/.test(g.system) && /Stop after the last section/.test(g.system) && new RegExp("Detail level: " + (d === "short" ? "concise" : d)).test(g.system), g.system.slice(-700));
     }
     checkMock("le niveau de détail règle la longueur : concis < standard < détaillé (jetons autorisés)", budgets.short < budgets.standard && budgets.standard < budgets.detailed, budgets);
-    check("sans modèle : « Expliquer » est désactivé avec une consigne claire", await (async () => { const o = await open({ ai: false }); await o.page.click("#mt-tab-explain"); const r = await o.page.evaluate(() => [document.getElementById("mt-explain-btn").disabled, /charge un modèle/.test(document.getElementById("mt-card").innerText)]); await o.ctx.close(); return r[0] && r[1]; })());
+    check("sans modèle : « Expliquer » est désactivé avec une consigne claire", await (async () => { const o = await open({ ai: false }); await o.page.click("#mt-tab-explain"); const r = await o.page.evaluate(() => [document.getElementById("assistant-query-btn").disabled, /charge un modèle/.test(document.getElementById("aiw-scroll").innerText)]); await o.ctx.close(); return r[0] && r[1]; })());
     await ctx.close();
   });
 
@@ -287,7 +294,7 @@ try {
     await page.click("#mt-tab-practice");
     check("le bloc progression : Statistiques 100 %, 3 exercices, 3 réussis, 0 indice", /Statistiques[\s\S]*100 %/.test(await mtText(page)) && /3 exercice\(s\)[\s\S]*3 réussi\(s\)[\s\S]*0 indice\(s\)/.test(await mtText(page)));
     check("barre de progression accessible (role=progressbar, valeur annoncée)", await page.$eval('.mt-pbar[role="progressbar"]', e => e.getAttribute("aria-valuenow") === "100" && /Statistiques/.test(e.getAttribute("aria-label"))));
-    await page.reload(); await page.waitForTimeout(1000); await page.evaluate(() => switchTab("ai")); await page.waitForTimeout(300);
+    await page.reload(); await page.waitForTimeout(1000); await page.evaluate(() => switchTab("ai")); await page.waitForTimeout(300); await toMath(page);
     eq("après rechargement : le journal est restauré depuis l'espace local", await page.evaluate(() => window.revemMathTutor.log().length), 3);
     check("   et la progression est toujours affichée (maîtrise recalculée, jamais stockée)", /Statistiques[\s\S]*100 %/.test(await mtText(page)));
     eq("   le journal ne contient jamais l'énoncé ni la réponse de l'élève", await page.evaluate(() => Object.keys(window.revemMathTutor.log()[0]).sort()), ["attempts", "context", "difficulty", "hintsUsed", "kind", "solutionShown", "success", "topic", "ts"]);
@@ -302,12 +309,11 @@ try {
     const want = { en: ["Solve", "Explain", "Practise"], es: ["Resolver", "Explicar", "Practicar"], de: ["Lösen", "Erklären", "Üben"], it: ["Risolvere", "Spiegare", "Esercitarmi"], fr: ["Résoudre", "Expliquer", "M'entraîner"] };
     for (const lang of ["en", "es", "de", "it", "fr"]) {
       await page.evaluate(l => LyonI18n.setLang(l), lang); await page.evaluate(() => switchTab("ai")); await page.waitForTimeout(250);
-      const tabs = await page.$$eval("#mt-card [role=tab]", e => e.map(x => x.innerText));
+      const tabs = await page.$$eval("#mt-bar [role=tab]", e => e.map(x => x.innerText));
       await page.click("#mt-tab-practice"); await page.selectOption("#mt-domain", "finance"); await page.click('[data-mt-level="1"]'); await page.click('[data-mt-context="business"]'); await page.click("#mt-new");
       const u = await UI(page), tx = await mtText(page);
       check(lang + " : onglets « " + want[lang].join(" · ") + " », énoncé généré dans la langue (" + u.lang + "), aucune clé « mt.* » brute", JSON.stringify(tabs) === JSON.stringify(want[lang]) && u.lang === lang && !/\bmt\.[a-z]+\.[a-z_]+/.test(tx), { tabs, lang: u.lang, raw: tx.match(/\bmt\.[a-z]+\.[a-z_]+/) });
       await page.click("#mt-tab-solve");
-      await page.fill("#mt-solve-input", "");
     }
     await ctx.close();
   });
@@ -317,9 +323,9 @@ try {
     const { ctx, page } = await open({ viewport: { width: 390, height: 844 } });
     await setup(page, "finance", 2, "business"); await page.click("#mt-new"); await page.waitForTimeout(500);
     const m = await page.evaluate(() => {
-      const els = [...document.querySelectorAll("#mt-card .mt-tab, #mt-card #mt-new, #mt-card #mt-check, #mt-card .mt-segbtn, #mt-card .mt-act")].filter(e => e.offsetParent);
+      const els = [...document.querySelectorAll("#aiw .mt-tab, #aiw #mt-new, #aiw #mt-check, #aiw .mt-segbtn, #aiw .mt-act")].filter(e => e.offsetParent);
       const small = els.filter(e => e.getBoundingClientRect().height < 43.5).map(e => e.id || e.className + ":" + Math.round(e.getBoundingClientRect().height));
-      const card = document.getElementById("mt-card").getBoundingClientRect();
+      const card = document.getElementById("aiw").getBoundingClientRect();
       return { sw: document.documentElement.scrollWidth, iw: window.innerWidth, small, cardRight: Math.round(card.right), n: els.length };
     });
     check("aucun défilement horizontal de la page (scrollWidth ≤ largeur)", m.sw <= m.iw, m);
@@ -327,21 +333,22 @@ try {
     await page.screenshot({ path: process.env.MT_SHOT_DIR ? process.env.MT_SHOT_DIR + "/mt-mobile.png" : "/dev/null" }).catch(() => {});
     await page.fill("#mt-input", "12"); await page.waitForTimeout(50);
     check("le champ de réponse est utilisable au clavier mobile (pas de zoom forcé : taille de police ≥ 16 px)", await page.$eval("#mt-input", e => parseFloat(getComputedStyle(e).fontSize) >= 16));
-    await page.evaluate(() => { const u = window.revemMathTutor.ui(); u.solveInput = '"><img src=x onerror="window.__xss=1">'; u.mode = "solve"; mtRerender(); });
+    await page.evaluate(() => { const u = window.revemMathTutor.ui(); u.mode = "solve"; state.aiPersonalQuery = '"><img src=x onerror="window.__xss=1">'; render(); });
     await page.waitForTimeout(200);
-    eq("une saisie hostile est échappée : aucun script exécuté, la valeur reste du texte", await page.evaluate(() => [window.__xss === undefined, document.getElementById("mt-solve-input").value.startsWith('"><img')]), [true, true]);
+    eq("une saisie hostile est échappée : aucun script exécuté, la valeur reste du texte", await page.evaluate(() => [window.__xss === undefined, document.getElementById("assistant-query-input").value.startsWith('"><img')]), [true, true]);
     eq("aucune erreur JavaScript", page.errors, []);
     await ctx.close();
   });
 
   /* ═══ 12. NON-RÉGRESSION VOISINE ═══ */
   await scenario("12. non-régression : l'assistant, le chat et la progression existants fonctionnent comme avant", async () => {
-    const { ctx, page } = await open();
+    const { ctx, page } = await open({ space: "chat" });                                   // la discussion générale n'utilise AUCUN mode tuteur
     await page.fill("#assistant-query-input", "c'est quoi l'inflation ?"); await page.click("#assistant-query-btn"); await idle(page);
     const t = await T(page);
     checkMock("une question libre non mathématique : 1 génération, profil ordinaire (pas de stratégie math, pas de sections du tuteur)", t.generates === 1 && !/ALREADY solved/.test(t.gens[0].system) && !/\*\*Intuition\*\*/.test(t.gens[0].system), t.gens[0].system.slice(-300));
-    check("la carte Maths & Stats reste affichée sous le fil de conversation", !!(await page.$("#mt-card")) && (await page.$$(".ai-bubble.assistant")).length >= 1);
     eq("« Régénérer » ne garde pas de mode tuteur d'une question précédente", await page.evaluate(() => [state.aiChat.tutorOpt, state.aiChat.tutorCalc]), [null, null]);
+    await toMath(page);
+    check("passer à Maths & Stats : l'espace change, la réponse reste dans la même conversation", await page.evaluate(() => document.getElementById("aiw").dataset.space === "math") && (await page.$$("#aiw-col .ai-bubble.assistant")).length >= 1);
     for (const tab of ["home", "stats", "smart", "planning"]) { await page.evaluate(x => { try { switchTab(x); } catch (e) {} }, tab); await page.waitForTimeout(120); }
     eq("les autres pages se rendent sans erreur", page.errors, []);
     await ctx.close();

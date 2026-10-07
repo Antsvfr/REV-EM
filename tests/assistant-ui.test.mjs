@@ -179,7 +179,7 @@ try {
     await page.fill("#assistant-query-input", "Explique-moi la VAN");
     await page.click("#assistant-query-btn");
     await page.waitForSelector("#assistant-stop-btn");
-    eq("pendant la génération : « Envoyer » devient « Arrêter »", (await page.innerText("#assistant-stop-btn")).trim(), "Arrêter");
+    eq("pendant la génération : « Envoyer » devient « Arrêter » (bouton icône, nom accessible)", await page.getAttribute("#assistant-stop-btn", "aria-label"), "Arrêter");
     check("un bouton Arrêter est aussi dans la conversation", (await page.$$("#ai-stop-btn")).length === 1);
     await page.waitForFunction(() => document.getElementById("ai-stream") && /mot3/.test(document.getElementById("ai-stream").innerText), null, { timeout: 4000 });
     await page.click("#assistant-stop-btn");
@@ -329,7 +329,7 @@ try {
     const d = await page.evaluate(() => state.aiChat.diag);
     check("modèle, intention, profondeur, contexte, historique, temps, finishReason", d.tier === "avance" && d.intent === "COMPARISON" && d.depth && d.promptTokens > 0 && d.historyUsed === 0 && d.prepMs >= 0 && d.ttftMs === 12 && d.finishReason === "stop" && d.llmCalls === 1, d);
     eq("la conversation ne montre aucune de ces informations", /COMPARISON|promptTokens|TTFT/.test(await page.innerText(".ai-thread")), false);
-    await page.evaluate(() => { document.getElementById("ai-diag-panel").open = true; });
+    await page.evaluate(() => { aiwOpenDiag(); document.getElementById("ai-diag-panel").open = true; });
     const txt = await page.innerText("#ai-diag-panel");
     check("le panneau de diagnostic les affiche", /questionIntent : COMPARISON/.test(txt) && /TTFT\(engine\) : 12 ms/.test(txt) && /finishReason : stop/.test(txt) && /llmCalls : 1/.test(txt), txt.slice(-700));
     check("aucune question ni réponse dans le diagnostic", !/Compare VAN et TRI|Une réponse de test/.test(txt));
@@ -350,7 +350,7 @@ try {
     await idle(page);
     const g2 = await gens(page);
     check("l'action « Expliquer une notion » fonctionne comme avant (consigne historique, 250 mots)", /Maximum 250 mots/.test(g2[g2.length - 1].messages[0].content), g2[g2.length - 1].messages[0].content.slice(-200));
-    await page.evaluate(() => { aiClearThread(); });
+    await page.evaluate(() => { aiClearThread(); state.aiAction = null; render(); });          // retour au mode « Discuter » (un outil sélectionné reste actif tant que l'élève ne change pas de mode)
     await ask(page, "Explique-moi les types d'examen de gestion");
     eq("« examen » seul ne bascule plus sur le planning de l'étudiant", await page.evaluate(() => aiIsGeneral()), true);
     eq("aucune erreur JavaScript", page.errors, []);

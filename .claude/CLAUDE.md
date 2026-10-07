@@ -152,7 +152,7 @@ modifier du code dans son domaine, pas après :
 | `course-library-import` | on touche à la bibliothèque, aux cours, à l'import, à la page d'un cours (lire aussi `IMPORT_CENTER.md`, `COURSE_HUB.md` et `REVISION_BANK.md`) |
 | `smart-revision` | on touche à `smart-revision.js` ou aux recommandations |
 | `revem-math` | calculs, problèmes de maths dans le chat, `math-*.js`, `math-cas.py`, `vendor/`, KaTeX, tuteur Maths & Stats (lire aussi `AI_MATH.md` et `MATH_TUTOR.md`) |
-| `ai-system` | on touche à l'assistant IA, à WebLLM, à `ai-engine.js`, `assistant-core.js`, `knowledge-engine.js`, `output-processor.js`, `ai-host.js` ou `ai-worker.js` (lire aussi `AI_AUDIT.md`, `AI_CHAT.md`, `AI_KNOWLEDGE.md` et `AI_OUTPUT.md`) |
+| `ai-system` | on touche à l'assistant IA, à WebLLM, à `ai-engine.js`, `assistant-core.js`, `knowledge-engine.js`, `output-processor.js`, `ai-host.js` ou `ai-worker.js` (lire aussi `AI_AUDIT.md`, `AI_CHAT.md`, `AI_KNOWLEDGE.md`, `AI_OUTPUT.md` et, pour la page « Assistant IA » elle-même — sidebar, en-tête, saisie, panneaux d'état et de diagnostic, mode concentration — `AI_WORKSPACE.md`) |
 | `revem-architecture` | toute modification touchant plusieurs systèmes (structure, Supabase, stockage, synchro, compatibilité macOS) |
 | `revem-ai` | Questions libres, WebLLM, prompts, mémoire de conversation, contexte, paliers Rapide/Avancé/Expert, erreurs IA |
 | `revem-knowledge-quality` | on crée, modifie, valide ou injecte des connaissances (`ai-knowledge/`) : provenance, `verified`, retrieval |

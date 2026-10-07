@@ -1076,7 +1076,7 @@ try {
     const b = await d2.page.evaluate(() => { switchTab("ai"); return { log: window.revemMathTutor.log().length, keys: Object.keys(localStorage).filter(k => /math-practice$/.test(k) && k.indexOf("u.11111111") >= 0).length }; });
     await d2.page.waitForTimeout(300);
     eq("B ne voit aucun exercice de A (journal vide)", b.log, 0);
-    check("l'écran de B n'affiche aucune progression de A", !/Ma progression en maths[\s\S]*Algèbre/.test(await d2.page.innerText("#mt-card")), "");
+    check("l'écran de B n'affiche aucune progression de A", !/Ma progression en maths[\s\S]*Algèbre/.test(await d2.page.innerText("#aiw")), "");
     eq("aucune erreur JavaScript", d2.errors, []);
     await d2.ctx.close();
   });
