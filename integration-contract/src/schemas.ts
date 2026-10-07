@@ -85,7 +85,12 @@ export const StudyArtifactReference = strict({
 });
 export type StudyArtifactReference = z.infer<typeof StudyArtifactReference>;
 
-/* Le LIEN entre un utilisateur REV-EM et une installation LexNote.
+/* ⚠️ ÉVOLUTION PRÉVUE (voir INTEGRATION_REVEM_LEXNOTE.md §11) : la cible est une liaison UTILISATEUR ↔ UTILISATEUR,
+   pas installation ↔ installation. La forme ci-dessous (peer.externalReference) est conservée comme fondation ; elle sera
+   resserrée quand LexNote aura ses comptes. « Installation » n'est PAS l'architecture définitive. Aucune version de
+   production n'émet encore ce schéma : il peut être corrigé sans changer integrationVersion.
+
+   Le LIEN entre un utilisateur REV-EM et une installation LexNote.
    LexNote n'a pas de compte : `peer` désigne l'AUTRE application par une référence opaque.
    Côté REV-EM : peer = installation LexNote. Côté LexNote : peer = linkId pseudonyme REV-EM
    (jamais l'identifiant d'authentification, jamais l'e-mail). */

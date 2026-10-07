@@ -1,5 +1,25 @@
 # Intégration REV-EM × LexNote — étape 1 : architecture et contrat
 
+> ## ⚠️ STATUT ACTUEL — décisions du propriétaire (révisées après l'audit)
+>
+> **Conservé comme fondation documentée :** ce document, `integration-contract/`, les schémas Zod versionnés,
+> le principe de jetons courts signés **Ed25519**, la séparation des responsabilités REV-EM / LexNote.
+>
+> **Révisé :** le **lien par installation n'est PAS l'architecture définitive**. La cible est
+> **utilisateur REV-EM ↔ liaison explicite ↔ utilisateur LexNote**, jamais *installation ↔ installation locale*.
+> Les comptes LexNote, la synchronisation multi-appareils et la séparation stricte des données par utilisateur sont
+> des fonctionnalités **prioritaires** (plus de « V6 hypothétique »).
+>
+> **Suspendu :** l'étape 2 (appairage, Edge Functions de lancement, routes de connexion). **Rien** de ce qui reste à
+> construire ne doit dépendre de l'absence actuelle de comptes LexNote.
+>
+> **Facultatif :** la migration `007_lexnote_links.sql` reste dans le dépôt mais **rien n'en dépend** et elle n'est
+> **pas à appliquer** pour l'instant (voir §7). Elle sera revue — voire remplacée — quand LexNote aura ses comptes.
+>
+> **Priorité :** rendre LexNote fonctionnel comme produit indépendant multi-utilisateur (feuille de route §11), puis
+> seulement reprendre l'intégration (phase 10). Les sections ci-dessous décrivent l'état *à l'issue de l'audit* ; les
+> passages devenus provisoires sont marqués **[PROVISOIRE]** ou **[SUPPRIMÉ DE LA CIBLE]**.
+
 > **Deux applications indépendantes, une intégration propre.** Pas de fusion de dépôts, pas de base commune,
 > pas de compte commun. REV-EM est le *hub* de l'étudiant ; LexNote est le moteur spécialisé (notes, transcription,
 > supports). Cette étape pose le **socle** : propriété des données, contrat versionné, liens profonds, sécurité,
@@ -12,8 +32,8 @@ conditionnent toute l'architecture :
 
 | Hypothèse du brief | Réalité constatée dans LexNote | Conséquence |
 |---|---|---|
-| LexNote a une authentification et un modèle d'utilisateur | **Aucune.** Un « profil » local (`localStorage`, prénom + citation), « jamais envoyé ». La carte REV-EM de la barre latérale dit « Connexion bientôt disponible ». | Le lien se fait **par installation**, pas par compte. L'identité de l'étudiant vient **uniquement de REV-EM**. |
-| LexNote a sa propre base Supabase | **Aucune base distante.** IndexedDB (`lexnote` + `lexnote-capture`), `SyncEngine` *no-op*. « Aucune donnée ne quitte l'appareil. » | Pas de table `revem_links` côté serveur LexNote : c'est un **store IndexedDB local** (voir §6). |
+| LexNote a une authentification et un modèle d'utilisateur | **Aucune.** Un « profil » local (`localStorage`, prénom + citation), « jamais envoyé ». La carte REV-EM de la barre latérale dit « Connexion bientôt disponible ». | **[RÉVISÉ]** Un lien par installation avait été envisagé ; il est **abandonné comme architecture définitive**. On construit d'abord les comptes LexNote (§11). |
+| LexNote a sa propre base Supabase | **Aucune base distante.** IndexedDB (`lexnote` + `lexnote-capture`), `SyncEngine` *no-op*. « Aucune donnée ne quitte l'appareil. » | **[RÉVISÉ]** LexNote aura **sa propre base Supabase** (phase 3) ; `revem_links` y sera une vraie table (voir §7). |
 | `StudyArtifacts`, « cours intelligent », cartes mentales, schémas existent | **Pas encore.** `CourseSession` réserve `aiOutputs` (restructured/summary/studySheet), `flashcards`, `questions` ; IA = `NullProvider`. Roadmap V4–V5. | Le contrat décrit les supports **à venir** ; aucun n'est simulé. |
 | Routes `/course/:sessionId`, `/artifact/:artifactId`, `/integrations/revem/session` | Routes actuelles : `/`, `subjects`, `modules/:id`, `sessions`, `search`, `settings`, `session/:id`, `session/:id/recap`. | Les trois routes sont **à créer** (alias/redirections) — spécifiées §5, **non créées** (voir §8). |
 | REV-EM a des routes `/course/:eventId`, `/revision/:subjectId` | REV-EM n'a **pas de routeur** : navigation par `state.tab` (`switchTab`), URL inutilisée (seul `?brightspace=` est lu). Hébergé en statique (GitHub Pages) : pas de réécriture serveur. | Routes REV-EM en **fragment** (`#/course/<id>`), non branchées pour l'instant. |
@@ -55,7 +75,7 @@ opaque + titre + statut), jamais une copie du contenu.**
 | Notes brutes, transcription, audio, marqueurs, ancrages | **LexNote** | rien (REV-EM n'en reçoit même pas le comptage détaillé — seulement `capture.hasAudio/hasTranscript/…`) |
 | Documents de séance | **LexNote** | rien |
 | Cours intelligent, fiches, cartes mentales, schémas, supports générés | **LexNote** | `StudyArtifactReference` (ouvre par lien profond) |
-| Lien REV-EM ↔ installation LexNote | **REV-EM** (`lexnote_links`) | LexNote : le `linkId` pseudonyme + sa clé publique, en local |
+| Lien REV-EM ↔ installation LexNote | **REV-EM** (`lexnote_links`) | LexNote : (cible) sa propre table `revem_links` dans **sa** base, quand elle aura des comptes |
 | Identité de l'étudiant | **REV-EM** (Supabase Auth) | LexNote : **aucune** — il ne connaît ni e-mail, ni `user_id` |
 
 Conflit, doublon ou divergence : **le propriétaire gagne**. Les références ne sont jamais « réparées » en copiant du
@@ -132,6 +152,25 @@ nom de matière venu d'un client ; l'autorisation vient d'un **jeton signé vér
 * **Usage unique** : `jti` consommé côté serveur (`lexnote_link_intents.consumed_at`, `UPDATE … WHERE consumed_at IS NULL`).
   Une signature valide ne suffit pas : un jeton rejoué est refusé.
 * **Rotation** : l'en-tête porte `kid` ; le vérificateur reçoit un *jeu* de clés publiques (`kid → JWK`).
+
+### Procédure de génération de la clé Ed25519 (documentée, **non appliquée**)
+À exécuter **une seule fois, le moment venu** (phase 10), pas maintenant :
+```bash
+node -e '(async()=>{const kp=await crypto.subtle.generateKey({name:"Ed25519"},true,["sign","verify"]);
+ console.log("PRIVE", JSON.stringify(await crypto.subtle.exportKey("jwk",kp.privateKey)));
+ console.log("PUBLIC", JSON.stringify(await crypto.subtle.exportKey("jwk",kp.publicKey)));})()'
+```
+1. Choisir un `kid` (ex. `revem-2026-01`).
+2. La clé **PRIVÉE** (JSON contenant `d`) va **uniquement** dans un secret Supabase d'Edge Function
+   (`supabase secrets set LEXNOTE_SIGNING_KEY='…' LEXNOTE_SIGNING_KID='…'`). Jamais dans le dépôt, un `.env` versionné,
+   un navigateur, un journal ou une conversation.
+3. La clé **PUBLIQUE** (sans `d`) est **publique par nature** : elle peut être versionnée dans LexNote (jeu `kid → JWK`).
+4. **Rotation** : générer une nouvelle paire, publier la nouvelle clé publique dans LexNote **avant** de signer avec la
+   nouvelle clé privée, garder l'ancienne publique le temps de la durée de vie maximale d'un jeton (5 min), puis la
+   retirer.
+5. **Compromission** de la clé privée : retirer immédiatement sa clé publique du jeu de LexNote et en publier une neuve.
+Test de cohérence : `cd integration-contract && npm test` (signature + vérification de bout en bout avec une paire
+éphémère). **Aucun système de production n'est construit autour d'une identité locale temporaire.**
 * Refusés par les tests : `alg: none` / `HS256`, signature absente ou de mauvaise taille, charge falsifiée, mauvaise
   clé, `kid` inconnu (y compris `__proto__`), jeton expiré / du futur / trop long, claims en trop (`.strict()`).
 
@@ -152,15 +191,27 @@ LexNote (/integrations/revem/session)
 Le nom de matière reçu est **une indication** : LexNote le rapproche de ses propres matières ; la confirmation (et la
 création éventuelle) restent une décision de l'étudiant dans LexNote.
 
-### Établissement du lien (étape suivante)
-LexNote n'a pas de compte : à la première connexion, REV-EM (utilisateur authentifié) crée un lien `pending`, affiche
-un **code d'appairage** court (usage unique, expirant) ; LexNote le saisit/le reçoit et renvoie sa **référence
-d'installation** (identifiant aléatoire local) ; l'Edge Function passe le lien en `active`. Révocation : depuis REV-EM
-(statut `revoked`), effective immédiatement (le lancement vérifie le lien à chaque fois).
+### Établissement du lien — **[SUPPRIMÉ DE LA CIBLE]** (appairage par installation)
+~~LexNote n'a pas de compte : REV-EM crée un lien `pending`, affiche un code d'appairage, LexNote renvoie sa référence
+d'installation.~~ **Abandonné comme architecture définitive** (décision du propriétaire) : il ferait dépendre
+l'intégration de l'absence de comptes LexNote et lierait deux *appareils* au lieu de deux *personnes*.
+
+**Cible (orientation, à concevoir en phase 10 — rien n'est construit) :** une **liaison explicite entre un utilisateur
+REV-EM et un utilisateur LexNote**, consentie **des deux côtés** (l'étudiant est authentifié dans les deux applications
+au moment de lier), révocable depuis chacune, et exprimée **uniquement par des identifiants pseudonymes de lien** —
+jamais par l'`user_id` ni l'e-mail de l'autre application. Plusieurs appareils d'un même utilisateur partagent la même
+liaison (la liaison est portée par le compte, pas par l'appareil). Les principes de ce §6 (jeton court, signé, usage
+unique, rien d'identifiant dans l'URL, l'autorisation vient du jeton **et** de la liaison active) restent valables tels
+quels.
 
 ## 7. Bases de données — jamais mélangées
 
-### REV-EM (Supabase REV-EM) — migration `007_lexnote_links.sql`
+### REV-EM (Supabase REV-EM) — migration `007_lexnote_links.sql` — **[PROVISOIRE · FACULTATIVE]**
+> **Statut :** présente dans le dépôt, **non obligatoire, non à appliquer pour l'instant, et rien n'en dépend**
+> (aucun code d'application, aucun test applicatif, aucune Edge Function ne la lit). Sa colonne
+> `lexnote_external_reference` désigne aujourd'hui une *installation* ; dans la cible elle désignera un **lien vers un
+> utilisateur LexNote**. Elle sera **revue ou remplacée** (nouvelle migration `008…`) quand LexNote aura ses comptes ;
+> tant qu'elle n'est appliquée sur aucune base, elle peut être modifiée sans migration de données.
 | Table | Contenu | Accès |
 |---|---|---|
 | `lexnote_links` | `id` (**linkId pseudonyme**), `user_id` (= `revem_user_id`), `lexnote_external_reference` (opaque, jamais un e-mail), `status` (`pending/active/revoked/expired`), `scopes`, `integration_version`, dates | navigateur : **SELECT de ses propres lignes** (RLS `auth.uid() = user_id`). Aucune policy d'écriture : **seules les Edge Functions** (service_role) créent/activent/révoquent — un client ne peut pas se déclarer « lié ». |
@@ -172,13 +223,13 @@ d'installation** (identifiant aléatoire local) ; l'Edge Function passe le lien 
 * Test sur PostgreSQL réel : `node tests/lexnote-links.test.mjs` (30 vérifications : RLS, privilèges, contraintes,
   usage unique, cascade, idempotence).
 
-### LexNote — **pas de base distante**
-Le brief prévoyait `revem_links` dans la base de LexNote. **LexNote n'en a pas.** L'équivalent est un store
-**IndexedDB local** `revem_links` (non synchronisé) : `{ id, revemLinkId (pseudonyme), status, createdAt,
-revemOrigin }` + la clé publique de vérification. **Non créé dans cette étape** (voir §8). Si LexNote reçoit un jour
-des comptes/une base (roadmap V6), ce store deviendra la table `revem_links` du brief, sans changer le contrat.
+### LexNote — base propre, **à venir** (phase 3)
+~~Store IndexedDB local `revem_links`.~~ **Abandonné** : LexNote aura sa **propre base Supabase** (distincte de celle de
+REV-EM, jamais partagée) avec ses comptes ; `revem_links` y sera une **vraie table** du brief
+(`id`, `lexnote_user_id`, `revem_external_reference`, `status`, `created_at`), sous RLS stricte (`auth.uid() = user_id`).
+Rien n'est créé tant que LexNote n'a pas ses comptes.
 
-## 8. Ce qui est fait / pas fait dans cette étape
+## 8. Ce qui est fait / pas fait dans cette étape (état à l'issue de l'audit)
 
 | | |
 |---|---|
@@ -187,22 +238,22 @@ des comptes/une base (roadmap V6), ce store deviendra la table `revem_links` du 
 | ✅ Contrat versionné validé par Zod (`integration-contract/`) | 12 tests, `tsc --noEmit` propre |
 | ✅ Liens profonds spécifiés + parseurs/builders sûrs | §5 |
 | ✅ Sécurité : jeton Ed25519 court, usage unique, sans secret partagé | §6 (signature/vérification implémentées et testées) |
-| ✅ Structures REV-EM : `lexnote_links`, `lexnote_link_intents` (migration 007) | §7, 30 tests PostgreSQL |
-| ⏸ **Routes LexNote** (`/integrations/revem/session`, `/course/:id`, `/artifact/:id`) | **non créées** : exigent de modifier le dépôt LexNote, qui n'est pas attaché en écriture à cette session |
-| ⏸ Store `revem_links` local de LexNote | idem |
+| ✅ Structures REV-EM : `lexnote_links`, `lexnote_link_intents` (migration 007 — **facultative, provisoire**) | §7, 30 tests PostgreSQL |
+| ⏸ **Routes LexNote** (`/integrations/revem/session`, `/course/:id`, `/artifact/:id`) | **suspendues** jusqu'à la phase 10 (le dépôt LexNote est désormais accessible en écriture, mais la priorité est ailleurs) |
+| ❌ Store `revem_links` local de LexNote | **abandonné** (voir §7) |
 | ⏸ Routes REV-EM `#/course/:eventId`, `#/revision/:subjectId` | contrat prêt (`parseRevemHash`) ; **non branchées** (aucun comportement modifié) |
 | ⏸ Edge Functions (`lexnote-link`, `lexnote-launch`, `lexnote-intent`) | **non écrites** : étape suivante |
 | ❌ Lancement automatique, synchronisation des supports, assistant commun | **hors périmètre** de cette étape |
 
-## 9. Décisions à valider avant l'étape 2
+## 9. Décisions (réponses du propriétaire)
 
-1. **Lien par installation** (LexNote n'a pas de compte) : accepté ? Alternative : attendre les comptes LexNote (V6),
-   ce qui bloque l'intégration à long terme.
-2. **Droits sur LexNote** : pour créer les routes et le store local, attacher le dépôt LexNote en écriture à la session.
-3. **Hébergement de la clé privée de signature** : secret Supabase (`LEXNOTE_SIGNING_KEY`, JWK Ed25519) — à générer
-   et à enregistrer par toi ; la clé publique (non secrète) est embarquée dans LexNote.
-4. **Origines autorisées** : domaine de production de LexNote et de REV-EM (liste blanche `returnTo`/CORS).
-5. **CORS de l'Edge Function `lexnote-intent`** appelée depuis le navigateur de LexNote : restreinte à l'origine LexNote.
+| # | Question | Décision |
+|---|---|---|
+| 1 | Lien par installation | **NON comme architecture définitive.** On attend les comptes LexNote ; cible = utilisateur ↔ liaison explicite ↔ utilisateur. |
+| 2 | Écriture sur le dépôt LexNote | **OUI.** Les prochaines modifications se font réellement dans LexNote (accès attaché à la session). |
+| 3 | Ed25519 | **OUI sur le principe.** Architecture conservée, procédure documentée (§6), **aucun système de production** construit maintenant. |
+| 4 | Domaines de production | **Fournis/configurés plus tard**, quand LexNote aura son URL définitive (liste blanche `returnTo` / CORS). |
+| 5 | Migration 007 | **Facultative**, conservée, rien n'en dépend avant la nouvelle architecture utilisateurs. |
 
 ## 10. Règle de non-dérive
 
@@ -210,3 +261,29 @@ Toute évolution de l'intégration passe par le contrat (`integration-contract`)
 test + doc ; nouvelle route → `deeplinks.ts` + test ; nouveau cas d'échange → nouvelle intention + `scope`. Pas de
 champ « en plus » dans une URL, un jeton ou un objet (`strict()` le refuse), pas de lecture de la base de l'autre
 application, pas de copie de contenu. C'est ce qui évite que l'intégration devienne un ensemble de hacks.
+
+## 11. Feuille de route — LexNote d'abord, intégration ensuite
+
+L'intégration ne reprend **qu'après** la phase 9. Chaque phase se fait **dans le dépôt LexNote**, avec ses tests.
+
+| Phase | Contenu | Dépendances / remarques |
+|---|---|---|
+| 1 | **Authentification LexNote réelle** | Supabase Auth propre à LexNote ; mode « invité local » conservé (local-first) |
+| 2 | **Profils utilisateurs** | table `profiles` ; remplace le profil `localStorage` |
+| 3 | **Supabase propre à LexNote** | projet et migrations dédiés — **jamais** la base de REV-EM |
+| 4 | **Chaque donnée appartient à un `userId`** | matières, modules, CM/TD/TP, notes, transcriptions, ressources |
+| 5 | **RLS stricte** | `auth.uid() = user_id` partout ; tests sur une vraie base (comme REV-EM) |
+| 6 | **IndexedDB local-first + synchronisation Supabase** | l'autosave local reste prioritaire ; `SyncEngine` (aujourd'hui *no-op*) devient réel ; barrière d'hydratation |
+| 7 | **Multi-appareils** | cache **scopé par compte**, aucune fuite d'un compte à l'autre, conflits explicites |
+| 8 | **Cours intelligent** | `CourseContext` → IA ; provenance/vérification jamais « embellies » |
+| 9 | **Fiches, cartes mentales, schémas, StudyArtifacts** | les supports que le contrat référence |
+| 10 | **Reprise de l'intégration REV-EM ↔ LexNote** | liaison utilisateur ↔ utilisateur, Edge Functions, routes, jeton Ed25519 en production |
+
+### Ce que le contrat devra faire évoluer (anticipé, non fait)
+* `IntegrationUserLink.peer` : aujourd'hui `{ app, externalReference }` où `externalReference` peut désigner une
+  installation. Dans la cible il désignera un **pseudonyme de liaison utilisateur** (jamais l'`user_id` de l'autre
+  application). Le schéma sera resserré (ex. `peer.kind = "user_link"`) et le champ « installation » retiré.
+* `LexNoteSessionReference` / `StudyArtifactReference` : s'enrichiront (identifiants de comptes **non** inclus ; l'accès
+  restera décidé par le serveur, pas par l'URL).
+* **Versionnement :** `integrationVersion "1"` n'est émise par **aucune** application en production. Tant que c'est le
+  cas, il peut être **corrigé sans changement de version** ; dès la première utilisation réelle, toute rupture exige `"2"`.

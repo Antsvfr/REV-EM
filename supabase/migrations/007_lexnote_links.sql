@@ -1,6 +1,11 @@
 -- ============================================================================
 -- REV-EM — migration 007 : socle d'intégration REV-EM × LexNote (côté REV-EM)
 -- ============================================================================
+-- ⚠️ STATUT : FACULTATIVE ET PROVISOIRE. Rien dans l'application n'en dépend ; ne l'applique pas pour l'instant.
+-- Elle a été écrite pour un lien par INSTALLATION, qui n'est PAS l'architecture définitive (cible : liaison
+-- utilisateur REV-EM ↔ utilisateur LexNote, quand LexNote aura ses comptes). Elle sera revue ou remplacée.
+-- Voir INTEGRATION_REVEM_LEXNOTE.md (§7, §11).
+-- ----------------------------------------------------------------------------
 -- Idempotente. AUCUNE suppression, AUCUN drop, AUCUNE donnée existante modifiée.
 -- NE CONTIENT AUCUNE CLÉ SECRÈTE.
 --
