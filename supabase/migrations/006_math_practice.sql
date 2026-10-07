@@ -112,3 +112,13 @@ create policy "math_practice_delete_own" on public.math_practice for delete usin
 
 grant select, insert, update, delete on public.math_practice to authenticated;
 revoke all on public.math_practice from anon;
+
+-- ============================================================================
+-- 3. Cache de schéma de l'API
+-- ----------------------------------------------------------------------------
+-- PostgREST (l'API de Supabase) garde le schéma en cache : une table créée à la
+-- main peut rester « introuvable » (404 « Could not find the table … in the
+-- schema cache ») jusqu'au prochain rechargement. On le demande explicitement.
+-- Sans effet sur les données ; relançable sans risque.
+-- ============================================================================
+notify pgrst, 'reload schema';
