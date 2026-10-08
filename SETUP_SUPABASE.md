@@ -298,3 +298,17 @@ REV-EM sait interpréter au retour.
   avec la `service_role key` (le navigateur n'a pas le droit de supprimer un
   compte). Le bouton existe et annonce honnêtement que ce n'est pas encore
   disponible.
+
+## Base déjà en production : déterminer quoi exécuter (PR de réconciliation)
+
+`006_integration_links.sql` a pu être exécutée avant la fusion. **Ne la rejoue jamais** (elle utilise `create table` sans `if not exists`).
+Procédure, dans le SQL Editor du projet REV-EM :
+
+1. Exécute `supabase/ops/prod_readiness.sql` (lecture seule). Il dit, pour `006` et `007`, si la migration est absente, identique à la
+   version du dépôt, en version initiale (#21) ou différente, et ce qu'il faut exécuter.
+2. `006` ABSENTE → `006_integration_links.sql` ; `VERSION INITIALE (#21)` → UNIQUEMENT `supabase/ops/006_v1_to_v2.sql` ; `IDENTIQUE` → rien.
+3. `007` ABSENTE → `007_math_practice.sql` (idempotente) ; `IDENTIQUE` → rien. Un « STOP » = ne rien exécuter, analyser d'abord.
+4. Relance `prod_readiness.sql` : les deux lignes doivent afficher « IDENTIQUE À #23 » ; puis `supabase/tests/00_diagnostic.sql`.
+
+Les empreintes de référence sont calculées sur PostgreSQL avec `supabase/tests/00_local_emulation.sql` ; un écart sur un vrai projet Supabase
+produit un « STOP » prudent (jamais une exécution automatique) : l'empreinte par composant affichée en ligne 3 sert alors à localiser l'écart.
