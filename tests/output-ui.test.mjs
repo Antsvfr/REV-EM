@@ -254,7 +254,7 @@ try {
     check("diagnostic : FOREIGN_SCRIPT (Han ×2), langue attendue fr", d.outputIssues.includes("FOREIGN_SCRIPT") && d.preferredLanguage === "fr" && d.allowForeign === false, d);
     const note = await page.$eval(".ai-bubble-note[role=note]", e => e.innerText);
     check("une note discrète propose de régénérer (traduite)", /caractères inattendus/.test(note) && !!(await page.$("#ai-regen-btn")), note);
-    await page.evaluate(() => { document.getElementById("ai-diag-panel").open = true; });
+    await page.evaluate(() => { aiwOpenDiag(); document.getElementById("ai-diag-panel").open = true; });
     const panel = await page.innerText("#ai-diag-panel");
     check("le panneau de diagnostic montre la sortie : raw → clean, raisonnement masqué, problèmes, durée", /output : raw \d+ → clean \d+ chars/.test(panel) && /issues : FOREIGN_SCRIPT/.test(panel) && /outputProcessingTime : [\d.]+ ms/.test(panel), panel.slice(-700));
     check("…sans aucun texte de question ni de réponse", !/衡量|écart-type, ou/.test(panel));
@@ -284,7 +284,7 @@ try {
     const store = await page.evaluate(() => { const o = {}; for (let i = 0; i < localStorage.length; i++) o[localStorage.key(i)] = localStorage.getItem(localStorage.key(i)); return JSON.stringify(o); });
     check("aucune trace du brut dans localStorage (donc rien à synchroniser avec Supabase)", !/SECRET-RAISONNEMENT-42/.test(store));
     check("aucune trace du brut dans le DOM", !/SECRET-RAISONNEMENT-42/.test(await page.content()));
-    await page.evaluate(() => { document.getElementById("ai-diag-panel").open = true; });
+    await page.evaluate(() => { aiwOpenDiag(); document.getElementById("ai-diag-panel").open = true; });
     check("ni dans le panneau de diagnostic", !/SECRET-RAISONNEMENT-42/.test(await page.innerText("#ai-diag-panel")));
     await page.evaluate(() => { window.__copied = null; navigator.clipboard.writeText = async (x) => { window.__copied = x; }; });
     await page.click("#ai-copy-diag-btn");

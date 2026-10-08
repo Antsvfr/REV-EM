@@ -212,3 +212,7 @@ Rien de ce qui suit n'a pu être testé dans l'environnement de développement (
 7. **Mémoire** — Moniteur d'activité pendant l'étape 2 (le CAS ajoute l'interpréteur Python : quelques centaines de Mo possibles) ; vérifiez que WebLLM chargé en même temps reste stable (**GPU/mémoire unifiée non mesurés ici**).
 8. **Avec le vrai WebLLM** — poser `Résous x^2-5x+6=0`, `Dérive x^3+2x^2-5x+3`, `1000 € à 5 % pendant 4 ans`, puis un cours (`Qu'est-ce que la VAN ?`) : le modèle doit **reprendre** (2 ; 3), (3x²+4x−5), 194481/160 sans changer un nombre, et ne pas déclencher le moteur sur la question de cours. La **qualité de l'explication d'un vrai modèle n'a pas été mesurée**.
 9. Reporter tout écart (statut réel : `PASS` / `FAIL` / `NOT TESTED`) dans une issue : navigateur + version, console, `diag.math`.
+
+---
+
+> **Tuteur Maths & Stats** (Résoudre · Expliquer · M'entraîner, exercices générés et vérifiés par ce moteur, suivi et maîtrise) : voir [`MATH_TUTOR.md`](MATH_TUTOR.md).

@@ -37,7 +37,11 @@ with attendu(rang, fichier, repere, description) as (
     (4, '004_oauth_hardening.sql','table public.oauth_states',
         'états OAuth à usage unique, verrous de rafraîchissement'),
     (5, '005_user_sync.sql',      'index uq_subjects_user_local',
-        'les clés naturelles du multi-appareils — sans elles, la synchronisation ne peut pas être idempotente')
+        'les clés naturelles du multi-appareils — sans elles, la synchronisation ne peut pas être idempotente'),
+    (6, '006_integration_links.sql', 'table public.integration_links',
+        'liaison explicite compte REV-EM ↔ compte LexNote (protocole lexnote-revem/v1) — facultative : rien ne casse sans elle'),
+    (7, '007_math_practice.sql',  'table public.math_practice',
+        'journal d''exercices du tuteur Maths & Stats (suivi : essais, indices, réussite, maîtrise calculée)')
 ),
 etat as (
   select a.*,
@@ -51,6 +55,8 @@ etat as (
            when 4 then to_regclass('public.oauth_states') is not null
            when 5 then exists (select 1 from pg_indexes
                                 where schemaname = 'public' and indexname = 'uq_subjects_user_local')
+           when 6 then to_regclass('public.integration_links') is not null
+           when 7 then to_regclass('public.math_practice') is not null
          end as applique
     from attendu a
 )
@@ -67,7 +73,7 @@ select rang                                        as "n",
 -- ----------------------------------------------------------------------------
 with attendu(rang, fichier) as (
   values (0, '000_schema.sql'), (1, '001_brightspace.sql'), (2, '002_centralisation.sql'),
-         (3, '003_sync_layer.sql'), (4, '004_oauth_hardening.sql'), (5, '005_user_sync.sql')
+         (3, '003_sync_layer.sql'), (4, '004_oauth_hardening.sql'), (5, '005_user_sync.sql'), (6, '006_integration_links.sql'), (7, '007_math_practice.sql')
 ),
 etat as (
   select a.rang, a.fichier,
@@ -81,6 +87,8 @@ etat as (
            when 4 then to_regclass('public.oauth_states') is not null
            when 5 then exists (select 1 from pg_indexes
                                 where schemaname = 'public' and indexname = 'uq_subjects_user_local')
+           when 6 then to_regclass('public.integration_links') is not null
+           when 7 then to_regclass('public.math_practice') is not null
          end as applique
     from attendu a
 ),
@@ -95,7 +103,7 @@ v1 as (
 )
 select
   case when (select n from compte) = 0
-       then 'Rien à faire : les 6 migrations sont appliquées.'
+       then 'Rien à faire : les 8 migrations sont appliquées.'
        else 'À exécuter dans le SQL Editor, dans cet ordre : '
             || (select string_agg('supabase/migrations/' || fichier, '  puis  ' order by rang)
                   from manquantes)

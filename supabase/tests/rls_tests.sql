@@ -95,6 +95,7 @@ declare
     array['daily_stats','user_id','day','current_date','current_date - 1','y','y','y'],
     array['activities','user_id','ts, day, type','now(), current_date, ''quiz''','now() - interval ''1 hour'', current_date, ''flashcards''','y','y','y'],
     array['chapter_visits','user_id','chapter_key','''ch-a''','''ch-b''','y','y','y'],
+    array['math_practice','user_id','ts, topic, kind, difficulty','now(), ''algebra'', ''quad-solve'', 1','now() - interval ''1 hour'', ''finance'', ''fin-npv'', 2','y','y','y'],
     array['study_plans','user_id','','','','n','y','y'],
     array['sync_runs','user_id','status','''started''','''completed''','y','y','n'],
     array['brightspace_connections','user_id','tenant_url','''https://tenant-a.example''','''https://tenant-b.example''','n','n','n'],

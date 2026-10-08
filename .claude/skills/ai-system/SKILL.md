@@ -5,6 +5,8 @@ description: Fonctionnement réel de l'assistant IA (WebLLM local, ai-worker.js 
 
 # AI System
 
+> **Interface de la page « Assistant IA »** (sidebar, en-tête, saisie unique, panneaux d'état et de diagnostic, concentration, tiroir mobile) : voir `AI_WORKSPACE.md`. Règle : l'état d'interface (`aiw`) n'est jamais l'état du moteur — changer d'espace, replier la sidebar ou ouvrir un panneau ne recharge ni le modèle, ni le Math Engine, ni le Knowledge Engine. La saisie passe par `aiwSend()`, qui route vers la chaîne existante ; ne pas recréer de second champ de saisie ni de seconde interface concurrente de la bulle.
+
 ## Ce qui est réellement en place
 
 L'IA est **WebLLM** (`@mlc-ai/web-llm`, version **épinglée** dans

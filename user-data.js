@@ -139,8 +139,15 @@
   /* Toute erreur Supabase remonte ici : on ne lève jamais depuis un push, on
      RAPPORTE. Un appareil hors ligne doit continuer à fonctionner, pas se
      bloquer sur une exception non rattrapée. */
-  function fail(domain, error){
-    return { ok: false, domain: domain, error: (error && error.message) || String(error || "erreur inconnue") };
+  function fail(domain, error, op, table){
+    const e = error || {};
+    /* On garde TOUT ce que Supabase dit (code, détails, indice) : « error.message » seul
+       ne permet pas de distinguer une table absente (PGRST205 / 42P01), une policy
+       (42501), une colonne absente (42703 / PGRST204) ou un réseau coupé. Ces champs
+       servent au diagnostic développeur (console, diagnose()) — jamais à l'interface. */
+    return { ok: false, domain: domain, table: table || null, op: op || null,
+             error: e.message || String(error || "erreur inconnue"),
+             code: e.code || null, details: e.details || null, hint: e.hint || null };
   }
 
   /* ═════════════════════════════════════════════════════════════════════════
@@ -825,6 +832,53 @@
     },
   };
 
+  /* Journal d'exercices du tuteur Maths & Stats (migration 007). UNE ligne = UN exercice terminé : thème, difficulté, essais, indices, réussite.
+     Jamais l'énoncé ni la réponse de l'élève. Domaine « journal » (keyCol null) : on ajoute, on n'efface jamais — deux appareils hors ligne ne
+     s'écrasent pas, et la MAÎTRISE est recalculée depuis ce journal (math-tutor.js), jamais stockée. Les colonnes portent des CHECK : on
+     ne pousse que des valeurs qui les respectent (une ligne invalide est ÉCARTÉE, elle ne fait pas échouer tout le lot). */
+  const MATH_TOPICS = ["algebra", "functions", "derivatives", "integrals", "probability", "statistics", "matrices", "finance"];
+  const MATH_PRACTICE = {
+    name: "mathPractice",
+    table: "math_practice",
+    keyCol: null,
+    conflict: "user_id,ts",
+    rows(snap, userId){
+      return (snap.mathPractice || [])
+        .map(e => {
+          if (!e || !isFinite(Number(e.ts))) return null;
+          const at = Number(e.ts);
+          if (!isFinite(new Date(at).getTime())) return null;
+          const diff = Math.round(Number(e.difficulty));
+          if (MATH_TOPICS.indexOf(e.topic) === -1 || !(diff >= 0 && diff <= 2)) return null;
+          const kind = String(e.kind || "");
+          if (!kind || kind.length > 64) return null;
+          return {
+            user_id: userId,
+            ts: new Date(at).toISOString(),
+            topic: e.topic,
+            kind: kind,
+            difficulty: diff,
+            context: e.context === "business" ? "business" : "pure",
+            attempts: Math.max(0, Math.min(99, Math.round(Number(e.attempts) || 0))),
+            hints_used: Math.max(0, Math.min(3, Math.round(Number(e.hintsUsed) || 0))),
+            success: !!e.success,
+            solution_shown: !!e.solutionShown,
+          };
+        })
+        .filter(Boolean);
+    },
+    apply(rows, patch){
+      patch.mathPractice = (rows || [])
+        .map(r => ({
+          ts: ms(r.ts) || 0, topic: r.topic, kind: r.kind, difficulty: Number(r.difficulty) || 0, context: r.context === "business" ? "business" : "pure",
+          attempts: Number(r.attempts) || 0, hintsUsed: Number(r.hints_used) || 0, success: !!r.success, solutionShown: !!r.solution_shown,
+        }))
+        .filter(e => e.ts > 0)
+        .sort((a, b) => a.ts - b.ts)
+        .slice(-400);                                // l'appareil garde les 400 derniers exercices ; la base garde tout
+    },
+  };
+
   /* L'ordre compte : les matières d'abord (les chapitres et les documents ont
      besoin de leur uuid), puis tout le reste. */
   const DOMAINS = [
@@ -832,7 +886,7 @@
     QUIZ_PROGRESS, FLASH_PROGRESS, QSTATS,
     EXAM_HISTORY, BADGES, AI_CARDS, COURSE_NOTES,
     PLANNING_EVENTS, AI_HISTORY, PREFERENCES, DOCUMENTS, STUDY_PLAN,
-    USER_STATS, DAILY_STATS, ACTIVITIES, CHAPTER_VISITS,
+    USER_STATS, DAILY_STATS, ACTIVITIES, CHAPTER_VISITS, MATH_PRACTICE,
   ];
   const BY_NAME = {};
   DOMAINS.forEach(d => { BY_NAME[d.name] = d; });
@@ -856,6 +910,7 @@
     "documents":        ["documents"],
     "study-plan":       ["studyPlan"],
     "dashboard-stats":  ["userStats", "dailyStats", "activities", "chapterVisits"],
+    "math-practice":    ["mathPractice"],
     "ai-bubble-pos":    ["prefs"],
     "ai-model-choice":  ["prefs"],
   };
@@ -1017,8 +1072,9 @@
         rememberSubjects(subjectRows);
         knownKeys.subjects = new Set(subjectRows.map(r => rowKey(SUBJECTS, r)).filter(Boolean));
         SUBJECTS.apply(subjectRows, patch, ctx);
+        logf("download subjects: OK", subjectRows.length);
       } catch (e) {
-        failed.push(fail("subjects", e));
+        failed.push(fail("subjects", e, "select", SUBJECTS.table));
       }
 
       for (const domain of DOMAINS) {
@@ -1029,8 +1085,9 @@
             knownKeys[domain.name] = new Set(rows.map(r => rowKey(domain, r)).filter(Boolean));
           }
           domain.apply(rows, patch, ctx);
+          logf("download " + domain.name + ": OK", rows.length);
         } catch (e) {
-          failed.push(fail(domain.name, e));
+          failed.push(fail(domain.name, e, "select", domain.table));
         }
       }
 
@@ -1041,7 +1098,7 @@
         counts[k] = Array.isArray(v) ? v.length : (v && typeof v === "object" ? Object.keys(v).length : (v ? 1 : 0));
       });
       logf("downloaded", counts);
-      failed.forEach(f => logf("FAILED download " + f.domain, f.error));
+      failed.forEach(f => logf("FAILED download " + f.domain, { table: f.table, op: f.op, code: f.code, message: f.error, details: f.details, hint: f.hint }));
       return { snapshot: patch, errors: failed };
     }
 
@@ -1136,7 +1193,7 @@
         try {
           written += await writeDomain(domain, snap);
         } catch (e) {
-          failed.push(fail(domain.name, e));
+          failed.push(fail(domain.name, e, "write", domain.table));
           /* On remet le domaine en file : la prochaine occasion (nouvelle
              écriture, reconnexion, flush explicite) réessaiera. Rien n'est
              perdu — la donnée est toujours dans le cache local. */
@@ -1145,7 +1202,7 @@
       }
 
       failed.forEach(f => errors.push(f));
-      if (failed.length) failed.forEach(f => logf("FAILED upload " + f.domain, f.error));
+      if (failed.length) failed.forEach(f => logf("FAILED upload " + f.domain, { table: f.table, op: f.op, code: f.code, message: f.error, details: f.details, hint: f.hint }));
       else logf("upload OK", ordered.map(d => d.name).join(","));
       inFlightDomains = new Set();
       notifyPending();
@@ -1274,7 +1331,7 @@
     dctx.builtinSubjects.forEach(b => { dctx.subjectIdByLocal[String(b.id)] = "x"; });
     const out = [];
     for (const d of DOMAINS) {
-      const row = { domain: d.name, table: d.table, local: null, cloud: null, error: "" };
+      const row = { domain: d.name, table: d.table, local: null, cloud: null, error: "", code: "", hint: "" };
       try { row.local = (d.rows(snap, userId, dctx) || []).length; } catch (e) { row.local = "?"; }
       try {
         let q = client.from(d.table).select("*", { count: "exact", head: true }).eq("user_id", userId);
@@ -1282,7 +1339,7 @@
         const r = await q;
         if (r.error) throw r.error;
         row.cloud = r.count;
-      } catch (e) { row.error = (e && e.message) || String(e); }
+      } catch (e) { row.error = (e && e.message) || String(e); row.code = (e && e.code) || ""; row.hint = (e && (e.hint || e.details)) || ""; }
       out.push(row);
     }
     return out;

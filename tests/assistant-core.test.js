@@ -359,5 +359,31 @@ const PREV = { hasAnswer: true };
   check("ancien calcul local (kind sans « math: ») : stratégie ordinaire inchangée", legacy.meta.profile !== "mathExplain");
 }
 
+{
+  console.log("\n── tuteur Maths & Stats : mode « Expliquer » ──");
+  const build = (q, o, lang) => { const an = A.analyzeQuestion(q, { lang: lang || "fr" }); return A.buildGeneralPrompt(Object.assign({ question: q, analysis: an, history: [], tier: "avance", reasoning: false, contextTokens: 4096 }, o || {})); };
+  const ex = d => build("explique moi l'écart type", { tutor: { mode: "explain", detail: d } });
+  const std = ex("standard"), sh = ex("short"), de = ex("detailed"), sys = std.messages[0].content;
+  check("six sections dans l'ordre : Intuition · Définition · Méthode · Formule · Exemple · Interprétation", /\*\*Intuition\*\* · \*\*Définition\*\* · \*\*Méthode\*\* · \*\*Formule\*\* · \*\*Exemple\*\* · \*\*Interprétation\*\*/.test(sys), sys.slice(-900));
+  check("on part de l'intuition, pas de la formule ; chaque symbole est nommé ; arrêt après la dernière section", /Start from the intuition, never from the formula/.test(sys) && /Name every symbol/.test(sys) && /Stop after the last section/.test(sys));
+  check("niveau de détail : concis < standard < détaillé (jetons autorisés)", sh.params.maxTokens < std.params.maxTokens && std.params.maxTokens < de.params.maxTokens, [sh.params.maxTokens, std.params.maxTokens, de.params.maxTokens]);
+  check("…et les consignes de longueur diffèrent (≈ 80 / 180 / 330 mots)", /About 80 words/.test(sh.messages[0].content) && /About 180 words/.test(sys) && /About 330 words/.test(de.messages[0].content));
+  check("profil « tutorExplain », température 0,4", std.meta.profile === "tutorExplain" && std.params.temperature === 0.4, std.params);
+  const lbl = { en: "**Interpretation**", es: "**Interpretación**", de: "**Interpretation**", it: "**Interpretazione**" };
+  Object.keys(lbl).forEach(l => check("libellés de section en langue « " + l + " »", build({ en: "explain standard deviation", es: "explica la desviación típica", de: "erkläre die Standardabweichung", it: "spiega la deviazione standard" }[l], { tutor: { mode: "explain", detail: "standard" } }, l).messages[0].content.indexOf(lbl[l]) > 0));
+  const calc = { kind: "math:equation", resultText: "", block: "exact result: x = 2 ; x = 3", header: "MATH ENGINE RESULT (verified)" };
+  const both = build("explique comment résoudre x² - 5x + 6 = 0", { calc, tutor: { mode: "explain", detail: "standard" } });
+  check("problème déjà résolu par le moteur + explication : le résultat reste la vérité (« do not recompute », énoncé UNE fois) ET les six sections sont demandées", /ALREADY solved/.test(both.messages[0].content) && /state it only once/.test(both.messages[0].content) && /\*\*Intuition\*\*/.test(both.messages[0].content) && /MATH ENGINE RESULT/.test(both.messages[0].content));
+  check("vocabulaire mathématique français imposé (« racines », « s'additionnent »)", /racines/.test(both.messages[0].content));
+  const solve = build("résous x² - 5x + 6 = 0", { calc, tutor: { mode: "solve" } }), base = build("résous x² - 5x + 6 = 0", { calc });
+  check("mode « Résoudre » : exactement la stratégie « calcul déjà fait » (inchangée)", solve.params.maxTokens === base.params.maxTokens && solve.meta.profile === "mathExplain" && solve.messages[0].content === base.messages[0].content);
+  const none = build("explique moi l'écart type", {});
+  check("sans tuteur : question de cours inchangée (600 / 0,5, pas de sections imposées)", none.params.maxTokens === 600 && none.params.temperature === 0.5 && !/\*\*Intuition\*\*/.test(none.messages[0].content));
+  const exp = build("explique moi l'écart type", { tutor: { mode: "explain", detail: "detailed" }, reasoning: true, tier: "expert" });
+  check("palier Expert (raisonnement) : marge supplémentaire pour la réflexion, température 0,5-0,6", exp.params.maxTokens >= 1400 && exp.params.temperature >= 0.5 && exp.params.temperature <= 0.6, exp.params);
+  const practice = build("Explique-moi cet exercice : Résous x² + 3x - 18 = 0", { calc: { kind: "math:practice", resultText: "x = -6 ; x = 3", header: "MATH ENGINE RESULT (exercise generated and checked deterministically by the Fast Engine; this answer is certain, do not recompute it, only explain it)", block: "Exercise: x² + 3x - 18 = 0\nVerified answer: x = -6 ; x = 3" }, tutor: { mode: "practice-explain" } });
+  check("explication d'un exercice validé : stratégie « calcul déjà fait » (≤ 320 jetons, 0,3), réponse vérifiée dans le prompt", practice.params.maxTokens <= 320 && practice.params.temperature === 0.3 && /Verified answer: x = -6 ; x = 3/.test(practice.messages[0].content));
+}
+
 console.log("\n" + pass + " vérifications réussies, " + fail + " échec(s).");
 process.exit(fail ? 1 : 0);

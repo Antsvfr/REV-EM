@@ -19,7 +19,7 @@
    Ce n'est PAS ce qui garantit que index.html reste à jour — voir la
    stratégie « réseau d'abord » plus bas, qui s'en charge sans dépendre d'un
    humain qui penserait à incrémenter ce numéro à chaque déploiement. */
-const CACHE_VERSION = "rev-em-v13";
+const CACHE_VERSION = "rev-em-v14";
 const SHELL_CACHE = CACHE_VERSION + "-shell";
 const RUNTIME_CACHE = CACHE_VERSION + "-runtime";
 
@@ -63,6 +63,7 @@ const SHELL_URLS = [
   "./math-fast.js",
   "./math-verify.js",
   "./math-engine.js",
+  "./math-tutor.js",
   "./math-cas-client.js",
   "./math-cas-worker.js",
   "./math-cas.py",

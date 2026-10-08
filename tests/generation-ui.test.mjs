@@ -107,7 +107,7 @@ try {
     const t = await T(page), d = await diag(page), shown = await body(page);
     eq("UNE seule génération pour la question (generationCount = 1, un seul GENERATE posté)", [d.generationCount, t.generates], [1, 1]);
     check("une ÉQUATION NUE est reconnue par le moteur : résultat déterministe fourni au modèle", d.math && d.math.mathProblemType === "equation" && d.math.verificationStatus === "VERIFIED_EXACT", d.math);
-    check("carte du moteur affichée (x = 2 ; x = 3, vérifié exactement)", /VÉRIFIÉ \(EXACT\)/.test(await page.$$eval(".mx-card", e => e[e.length - 1].innerText)));
+    check("carte du moteur affichée (x = 2 ; x = 3, vérifié exactement)", /Vérifié \(exact\)/i.test(await page.$$eval(".mx-card", e => e[e.length - 1].innerText)));
     const g = t.gens[0];
     check("budget proportionné : max_tokens ≤ 320 (et non 600), température 0,3", g.maxTokens <= 320 && g.temperature === 0.3, g);
     check("le redémarrage est détecté PENDANT le flux : un ABORT est envoyé, la génération s'arrête bien avant la fin du script", t.aborts === 1 && g.sentChars < g.totalChars * 0.75, [t.aborts, g.sentChars, g.totalChars]);
@@ -120,7 +120,7 @@ try {
     check("DIAGNOSTIC : transport sain — deltas comptés = caractères envoyés par l'hôte, aucun chunk cumulatif ni rejoué", d.chunks.deltaChars === d.hostChars && d.chunks.cumulative === 0 && d.chunks.longestIdenticalRun < 3, [d.chunks, d.hostChars]);
     check("DIAGNOSTIC : stopReason = repeat-detected, aucun retry", d.stopReason === "repeat-detected" && d.attempts.length === 1 && d.retriedSmaller !== true, [d.stopReason, d.attempts]);
     check("le BRUT n'est jamais dans l'interface normale", !(await page.content()).includes("se factorise l'équation x² - 5x + 6 = 0 en ("));
-    const panel = await page.evaluate(() => { state.aiDiagPanelOpen = true; render(); return document.getElementById("ai-diag-panel") ? document.getElementById("ai-diag-panel").innerText : ""; });
+    const panel = await page.evaluate(() => { aiwOpenDiag(); return document.getElementById("ai-diag-panel") ? document.getElementById("ai-diag-panel").innerText : ""; });
     check("le panneau de diagnostic affiche generationCount, stopReason et les stades (sans texte brut)", /generationCount : 1/.test(panel) && /stopReason : repeat-detected/.test(panel) && /firstRepeatStage : raw/.test(panel) && !/se factorise/.test(panel), panel.slice(0, 600));
     eq("aucune erreur JavaScript", page.errors, []);
     await ctx.close();

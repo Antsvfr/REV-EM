@@ -7,7 +7,7 @@
      • les policies RLS, évaluées par PostgreSQL avec le rôle `authenticated`
        et un claim `sub` réel — c'est la vraie barrière de sécurité ;
      • le code de user-data.js, chargé tel quel, sans adaptation ;
-     • le schéma : schema.sql + les cinq migrations, appliqués pour de bon.
+     • le schéma : schema.sql + les six migrations, appliqués pour de bon.
 
    Ce qui est REMPLACÉ : le transport HTTP de PostgREST (traduit en SQL par
    tests/helpers/pgrest.js) et la vérification de signature du JWT, qui est le
@@ -82,6 +82,7 @@ execSync(`su postgres -c "dropdb --if-exists ${DB}; createdb ${DB}"`, { stdio: "
   "supabase/migrations/003_sync_layer.sql",
   "supabase/migrations/004_oauth_hardening.sql",
   "supabase/migrations/005_user_sync.sql",
+  "supabase/migrations/007_math_practice.sql",
 ].forEach(psqlFile);
 
 /* Un mot de passe pour se connecter en TCP depuis Node. */
@@ -708,6 +709,73 @@ try {
     c.resume();
     await new Promise(r => setTimeout(r, 300));
     eq("la reprise envoie, en un seul lot", Number((await asService("select count(*) from public.subjects where user_id=$1 and name='Créée pendant l''hydratation'", [USER_B]))[0].count), 1);
+  });
+
+  /* ======================================================================
+     18. TUTEUR MATHS & STATS — journal d'exercices (migration 007)
+     ====================================================================== */
+  await scenario("18. journal d'exercices Maths & Stats : union, RLS stricte, CHECK, idempotence", async () => {
+    const T0 = 1790000000000;
+    const E = (i, o) => Object.assign({ ts: T0 + i * 60000, topic: "algebra", kind: "quad-solve", difficulty: 1, context: "pure", attempts: 2, hintsUsed: 1, success: true, solutionShown: false }, o || {});
+    const snapA = { mathPractice: [E(1), E(2, { topic: "finance", kind: "fin-npv", context: "business", difficulty: 2, success: false, solutionShown: true, attempts: 3, hintsUsed: 3 }), E(3, { topic: "statistics", kind: "stats-mean", difficulty: 0, attempts: 1, hintsUsed: 0 })] };
+    const cA = cloudFor(USER_A, snapA);
+    cA.push("mathPractice");
+    const r = await cA.flush();
+    check("l'envoi du journal réussit", r.ok === true, r);
+    const rows = await asService("select topic, kind, difficulty, context, attempts, hints_used, success, solution_shown from public.math_practice where user_id=$1 order by ts", [USER_A]);
+    eq("3 lignes en base, colonnes exactes (thème, type, difficulté, contexte, essais, indices, réussite, solution)", rows, [
+      { topic: "algebra", kind: "quad-solve", difficulty: 1, context: "pure", attempts: 2, hints_used: 1, success: true, solution_shown: false },
+      { topic: "finance", kind: "fin-npv", difficulty: 2, context: "business", attempts: 3, hints_used: 3, success: false, solution_shown: true },
+      { topic: "statistics", kind: "stats-mean", difficulty: 0, context: "pure", attempts: 1, hints_used: 0, success: true, solution_shown: false }]);
+    const cols = (await asService("select column_name from information_schema.columns where table_schema='public' and table_name='math_practice'")).map(x => x.column_name);
+    check("jamais l'énoncé, ni la réponse de l'élève, ni la solution en base", !cols.some(c => /statement|answer|solution_text|enonce|reponse|^text$|^content$/i.test(c)), cols);
+
+    await cA.pushAll(snapA); await cA.pushAll(snapA);
+    eq("pousser trois fois ne duplique rien (unique user_id, ts)", Number((await asService("select count(*) from public.math_practice where user_id=$1", [USER_A]))[0].count), 3);
+
+    const back = await cloudFor(USER_A, {}).pullAll({});
+    eq("un autre appareil du même compte retrouve le journal, trié par date", back.snapshot.mathPractice.map(e => [e.topic, e.kind, e.difficulty, e.hintsUsed, e.success, e.solutionShown]), [
+      ["algebra", "quad-solve", 1, 1, true, false], ["finance", "fin-npv", 2, 3, false, true], ["statistics", "stats-mean", 0, 0, true, false]]);
+    eq("les horodatages reviennent à la milliseconde près", back.snapshot.mathPractice.map(e => e.ts), [T0 + 60000, T0 + 120000, T0 + 180000]);
+
+    /* union : un second appareil ajoute SON exercice sans écraser ni supprimer celui du premier */
+    const snapA2 = { mathPractice: [E(4, { topic: "derivatives", kind: "derivative", difficulty: 0 })] };
+    const cA2 = cloudFor(USER_A, snapA2); cA2.push("mathPractice"); await cA2.flush();
+    eq("journal « union » : l'appareil 2 ajoute, l'appareil 1 garde les siens (4 lignes)", Number((await asService("select count(*) from public.math_practice where user_id=$1", [USER_A]))[0].count), 4);
+
+    /* B ne voit rien, ne lit rien, ne peut rien écrire au nom de A */
+    const emptyB = await cloudFor(USER_B, {}).pullAll({});
+    eq("B ne lit aucun exercice de A", emptyB.snapshot.mathPractice, []);
+    const cB = clientFor(USER_B);
+    const readA = await cB.from("math_practice").select("*").eq("user_id", USER_A);
+    eq("lire explicitement le journal de A renvoie zéro ligne (RLS)", (readA.data || []).length, 0);
+    const forged = await cB.from("math_practice").upsert([{ user_id: USER_A, ts: new Date(T0 + 999000).toISOString(), topic: "algebra", kind: "x", difficulty: 0 }], { onConflict: "user_id,ts" }).select();
+    check("B ne peut pas écrire un exercice au nom de A (user_id falsifié)", !!forged.error, forged.error || forged.data);
+    const delA = await cB.from("math_practice").delete().eq("user_id", USER_A).select();
+    eq("B ne peut pas supprimer le journal de A", (delA.data || []).length, 0);
+    const upd = await cB.from("math_practice").update({ success: false }).eq("user_id", USER_A).select();
+    eq("ni le modifier", (upd.data || []).length, 0);
+    eq("A a toujours ses 4 lignes", Number((await asService("select count(*) from public.math_practice where user_id=$1", [USER_A]))[0].count), 4);
+
+    /* contraintes CHECK de la base : refusées même sans passer par le client */
+    const bad = async (label, sql) => { let err = null; try { await asService(sql, [USER_B]); } catch (e) { err = e; } check("CHECK : " + label, !!err && /check|violates/i.test(String(err.message)), err && err.message); };
+    await bad("thème inconnu refusé", "insert into public.math_practice (user_id, ts, topic, kind, difficulty) values ($1, now(), 'alchimie', 'k', 0)");
+    await bad("difficulté 3 refusée", "insert into public.math_practice (user_id, ts, topic, kind, difficulty) values ($1, now(), 'algebra', 'k', 3)");
+    await bad("4 indices refusés", "insert into public.math_practice (user_id, ts, topic, kind, difficulty, hints_used) values ($1, now(), 'algebra', 'k', 0, 4)");
+    await bad("contexte inconnu refusé", "insert into public.math_practice (user_id, ts, topic, kind, difficulty, context) values ($1, now(), 'algebra', 'k', 0, 'x')");
+    await bad("type vide refusé", "insert into public.math_practice (user_id, ts, topic, kind, difficulty) values ($1, now(), 'algebra', '', 0)");
+    const anon = await asService("select has_table_privilege('anon', 'public.math_practice', 'select') as s, has_table_privilege('anon', 'public.math_practice', 'insert') as i, has_table_privilege('authenticated', 'public.math_practice', 'insert') as a");
+    eq("accès anonyme retiré, utilisateur connecté autorisé", [anon[0].s, anon[0].i, anon[0].a], [false, false, true]);
+
+    /* une entrée invalide est ÉCARTÉE côté client sans faire échouer le lot */
+    const snapMix = { mathPractice: [E(10), { ts: T0 + 11, topic: "alchimie", kind: "k", difficulty: 1 }, { ts: "pas une date", topic: "algebra", kind: "k", difficulty: 1 }, E(12, { difficulty: 7 }), E(13, { attempts: 500, hintsUsed: 9 })] };
+    const cB2 = cloudFor(USER_B, snapMix); cB2.push("mathPractice");
+    const rb = await cB2.flush();
+    check("un lot contenant des entrées invalides n'échoue pas", rb.ok === true, rb);
+    const rowsB = await asService("select ts, attempts, hints_used from public.math_practice where user_id=$1 order by ts", [USER_B]);
+    eq("seules les entrées valides sont écrites (2), valeurs bornées (essais ≤ 99, indices ≤ 3)", rowsB.map(x => [x.attempts, x.hints_used]), [[2, 1], [99, 3]]);
+    eq("la migration est idempotente (relancée, rien ne change)", (() => { try { psqlFile("supabase/migrations/007_math_practice.sql"); return "ok"; } catch (e) { return String(e.message); } })(), "ok");
+    eq("…et les données sont intactes", Number((await asService("select count(*) from public.math_practice where user_id=$1", [USER_A]))[0].count), 4);
   });
 
 } catch (e) {
