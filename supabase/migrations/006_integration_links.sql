@@ -69,8 +69,12 @@ alter table public.integration_nonces force row level security;
 revoke all on public.integration_links, public.integration_link_intents, public.integration_nonces from public, anon, authenticated;
 -- Lecture de SES liaisons, colonnes non sensibles uniquement (les pseudonymes `*_reference` restent côté serveur).
 grant select (id, provider, link_id, status, linked_at, revoked_at, revoked_by, error_code, created_at, updated_at) on public.integration_links to authenticated;
-create policy integration_links_select_own on public.integration_links for select to authenticated using (user_id = auth.uid());
+-- `(select auth.uid())` : évalué UNE fois par requête (et non par ligne) — recommandation du Performance Advisor (auth_rls_initplan).
+create policy integration_links_select_own on public.integration_links for select to authenticated using (user_id = (select auth.uid()));
 -- Aucune policy d'écriture : INSERT/UPDATE/DELETE impossibles depuis un navigateur.
+-- Intentions et nonces : refus EXPLICITE pour les rôles navigateur (en plus de l'absence de droits) — intention documentée, et plus d'alerte « RLS sans policy ».
+create policy integration_intents_no_client_access on public.integration_link_intents for all to anon, authenticated using (false) with check (false);
+create policy integration_nonces_no_client_access on public.integration_nonces for all to anon, authenticated using (false) with check (false);
 
 -- ---------------------------------------------------------------------------
 -- Fonctions serveur (appelées avec la clé service role par les Edge Functions). Toutes renvoient un jsonb {reason, …}.

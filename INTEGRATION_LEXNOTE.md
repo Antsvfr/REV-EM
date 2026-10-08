@@ -54,7 +54,7 @@ Jamais stockés : e-mail distant, mot de passe, access/refresh token, `service_r
    supabase secrets set INTEGRATION_ENV=production \
      INTEGRATION_KEY_ID=k1 INTEGRATION_KEY=<clé> \
      INTEGRATION_SELF_APP_URL=https://antsvfr.github.io/REV-EM/ \
-     INTEGRATION_PEER_APP_URL=<URL officielle de LexNote, ex. https://lexnote.vercel.app/> \
+     INTEGRATION_PEER_APP_URL=https://lex-note-svfr.vercel.app/ \
      INTEGRATION_PEER_GATEWAY_URL=https://<réf-projet-LexNote>.supabase.co/functions/v1/integration-gateway
    # facultatif : INTEGRATION_ALLOWED_ORIGINS (origines navigateur supplémentaires, https uniquement)
    ```
@@ -77,3 +77,7 @@ Jamais stockés : e-mail distant, mot de passe, access/refresh token, `service_r
   (et deux bases PostgreSQL réelles côté LexNote), **pas contre deux vrais projets Supabase déployés** (NOT TESTED en production).
 - La suppression d'un compte supprime sa liaison locale (cascade) ; l'autre côté le constate au prochain contrôle (`PEER_MISSING`).
 - La liaison est **initiée depuis REV-EM** ; l'initiation depuis LexNote n'est pas construite (les tables et fonctions la permettent).
+
+## Production
+
+Procédure complète (migrations, secrets, déploiement, audit `verify-db.sql`, test réel A/B et attaques, Advisors) : dépôt LexNote, `docs/PRODUCTION_RUNBOOK.md`. Domaines officiels : `https://antsvfr.github.io/REV-EM/` et `https://lex-note-svfr.vercel.app`.

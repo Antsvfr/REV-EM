@@ -1,5 +1,5 @@
 // GÉNÉRÉ par scripts/build-integration-bundle.mjs — NE PAS MODIFIER À LA MAIN. Contrat lexnote-revem/v1 (zod inclus).
-// sha256 du code : f414863b8c84f259fccb141d55c17fe94fbf26c0bd118b3d4fc631284aae8073
+// sha256 du code : 94f5ad8715488360c07c37b5f1cacb157f3c66548dbb134d03d37efd4e1bff12
 //#region src/integration/version.ts
 /**
 * Version du contrat d'intégration REV-EM ⇄ LexNote.
@@ -6112,11 +6112,16 @@ const DEV_ORIGINS = {
 		"http://127.0.0.1:3000"
 	]
 };
-/**
-* Origines OFFICIELLES de production connues. REV-EM est publié sur GitHub Pages ; l'adresse officielle de LexNote n'est pas encore figée :
-* elle est fournie par `INTEGRATION_SELF_APP_URL` (LexNote) / `INTEGRATION_PEER_APP_URL` (REV-EM) — jamais devinée.
-*/
-const PRODUCTION_ORIGINS = { revem: ["https://antsvfr.github.io"] };
+/** Origines OFFICIELLES de production (seules origines navigateur acceptées en production, avec celles ajoutées explicitement par l'opérateur). */
+const PRODUCTION_ORIGINS = {
+	lexnote: ["https://lex-note-svfr.vercel.app"],
+	revem: ["https://antsvfr.github.io"]
+};
+/** URLs complètes officielles (avec chemin) : valeurs à poser dans INTEGRATION_SELF_APP_URL / INTEGRATION_PEER_APP_URL. */
+const OFFICIAL_APP_URLS = {
+	lexnote: "https://lex-note-svfr.vercel.app/",
+	revem: "https://antsvfr.github.io/REV-EM/"
+};
 const other = (a) => a === "lexnote" ? "revem" : "lexnote";
 function cfgError(msg) {
 	throw new IntegrationFailure(integrationError("INTERNAL", `Configuration d'intégration invalide : ${msg}`));
@@ -6137,6 +6142,22 @@ function checkOrigin(value, env) {
 	if (u.protocol === "http:" && local && env === "development") return u.origin;
 	return cfgError(`origine non sécurisée « ${u.origin} » (https requis${local ? " ; localhost réservé au développement" : ""})`);
 }
+/**
+* Origines NAVIGATEUR autorisées pour les fonctions appelées depuis le front de `self` (CORS, liste blanche stricte).
+* Ne dépend d'aucune clé : utilisable par n'importe quelle Edge Function (ex. `delete-account`).
+* production : origine officielle + INTEGRATION_SELF_APP_URL + INTEGRATION_ALLOWED_ORIGINS ; development : localhost explicite en plus.
+*/
+function readBrowserOrigins(self, src) {
+	const get = (k) => (src(k) ?? "").trim();
+	const env = get("INTEGRATION_ENV") || "production";
+	if (env !== "development" && env !== "production") cfgError("INTEGRATION_ENV doit valoir development ou production");
+	const out = /* @__PURE__ */ new Set();
+	for (const o of PRODUCTION_ORIGINS[self]) out.add(checkOrigin(o, env));
+	if (get("INTEGRATION_SELF_APP_URL")) out.add(checkOrigin(new URL(get("INTEGRATION_SELF_APP_URL")).origin, env));
+	for (const o of get("INTEGRATION_ALLOWED_ORIGINS").split(/[\s,]+/).filter(Boolean)) out.add(checkOrigin(o, env));
+	if (env === "development") for (const o of DEV_ORIGINS[self]) out.add(o);
+	return [...out];
+}
 function readIntegrationConfig(self, src) {
 	const get = (k) => (src(k) ?? "").trim();
 	const req = (k) => get(k) || cfgError(`variable ${k} manquante`);
@@ -6150,10 +6171,7 @@ function readIntegrationConfig(self, src) {
 	const gw = new URL(req("INTEGRATION_PEER_GATEWAY_URL"));
 	checkOrigin(gw.origin, env);
 	if (gw.search || gw.hash) cfgError("URL de passerelle avec paramètres");
-	const extra = get("INTEGRATION_ALLOWED_ORIGINS").split(/[\s,]+/).filter(Boolean);
-	const selfOrigins = /* @__PURE__ */ new Set([checkOrigin(selfAppUrl.origin, env), ...extra.map((o) => checkOrigin(o, env))]);
-	if (env === "development") for (const o of DEV_ORIGINS[self]) selfOrigins.add(o);
-	else for (const o of PRODUCTION_ORIGINS[self] ?? []) selfOrigins.add(checkOrigin(o, env));
+	const selfOrigins = new Set(readBrowserOrigins(self, src));
 	const keyId = req("INTEGRATION_KEY_ID");
 	const keys = {};
 	const key = req("INTEGRATION_KEY");
@@ -6182,6 +6200,18 @@ function readIntegrationConfig(self, src) {
 }
 /** CORS : renvoie l'origine SI elle est autorisée, sinon null. Jamais de joker, jamais d'écho aveugle. */
 const allowedBrowserOrigin = (cfg, origin) => origin && cfg.selfOrigins.includes(origin) ? origin : null;
+/** En-têtes CORS pour une réponse à un navigateur : écho EXACT d'une origine autorisée, sinon aucun en-tête d'autorisation. Jamais « * ». */
+function corsHeadersFor(origins, origin) {
+	const base = {
+		"Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+		"Access-Control-Allow-Methods": "POST, OPTIONS",
+		Vary: "Origin"
+	};
+	return origin && origins.includes(origin) ? {
+		"Access-Control-Allow-Origin": origin,
+		...base
+	} : base;
+}
 
 //#endregion
 //#region src/integration/signing.ts
@@ -6996,4 +7026,4 @@ async function handleUserRequest(req, deps) {
 }
 
 //#endregion
-export { APPS, ARTIFACT_KINDS, CALENDAR_SOURCES, CONFIRM_PATH, CONNECTION_STATES, DEEP_LINK_KINDS, DEV_ORIGINS, ERROR_CODES, GATEWAY_ROUTE, H, INTEGRATION_NAMESPACE, INTEGRATION_VERSION, INTENT_TTL_SECONDS, IntegrationFailure, LINK_OPERATIONS, LINK_STATUSES, MAX_SKEW_SECONDS, PEER_STATUSES, PRODUCTION_ORIGINS, PROGRESS_KINDS, SCOPES, SESSION_TYPE_HINTS, SIGNATURE_SCHEME, SUPPORTED_MAJORS, allowedBrowserOrigin, canonicalString, checkOrigin, connectionStateSchema, courseProgressEventSchema, createLinkService, createPeerClient, createRpcStore, deepLinkTargetSchema, envelopeSchema, expectPayload, externalCourseEventSchema, externalSubjectRefSchema, fail, findSecrets, handleGatewayRequest, handleUserRequest, httpStatusOf, integrationError, integrationErrorSchema, integrationIdentitySchema, isSupportedVersion, lexNoteSessionReferenceSchema, linkRequestSchema, linkResponseSchema, majorOf, makeEnvelope, normalizeErrorCode, parseEnvelope, progressEventId, randomToken, readIntegrationConfig, sha256Hex, signRequest, studyArtifactReferenceSchema, timingSafeEqual, verifyRequest };
+export { APPS, ARTIFACT_KINDS, CALENDAR_SOURCES, CONFIRM_PATH, CONNECTION_STATES, DEEP_LINK_KINDS, DEV_ORIGINS, ERROR_CODES, GATEWAY_ROUTE, H, INTEGRATION_NAMESPACE, INTEGRATION_VERSION, INTENT_TTL_SECONDS, IntegrationFailure, LINK_OPERATIONS, LINK_STATUSES, MAX_SKEW_SECONDS, OFFICIAL_APP_URLS, PEER_STATUSES, PRODUCTION_ORIGINS, PROGRESS_KINDS, SCOPES, SESSION_TYPE_HINTS, SIGNATURE_SCHEME, SUPPORTED_MAJORS, allowedBrowserOrigin, canonicalString, checkOrigin, connectionStateSchema, corsHeadersFor, courseProgressEventSchema, createLinkService, createPeerClient, createRpcStore, deepLinkTargetSchema, envelopeSchema, expectPayload, externalCourseEventSchema, externalSubjectRefSchema, fail, findSecrets, handleGatewayRequest, handleUserRequest, httpStatusOf, integrationError, integrationErrorSchema, integrationIdentitySchema, isSupportedVersion, lexNoteSessionReferenceSchema, linkRequestSchema, linkResponseSchema, majorOf, makeEnvelope, normalizeErrorCode, parseEnvelope, progressEventId, randomToken, readBrowserOrigins, readIntegrationConfig, sha256Hex, signRequest, studyArtifactReferenceSchema, timingSafeEqual, verifyRequest };
