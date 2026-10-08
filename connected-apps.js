@@ -37,9 +37,13 @@
 
   function errorReason(code){
     switch(code){
-      case "UNAVAILABLE": case "TIMEOUT": case "OFFLINE": return "unreachable";
+      case "UNAVAILABLE": case "TIMEOUT": return "unreachable";
+      case "OFFLINE": case "NETWORK": return "network";
       case "CONFLICT": return "already";
-      case "INTERNAL": return "unconfigured";
+      case "INTERNAL": case "NOT_DEPLOYED": case "NOT_CONFIGURED": return "unconfigured";
+      case "INTENT_EXPIRED": case "EXPIRED": return "expired";
+      case "INTENT_USED": case "USED": return "used";
+      case "UNAUTHENTICATED": case "UNAUTHORIZED": return "session";
       default: return "generic";
     }
   }
@@ -47,10 +51,25 @@
   /* Seules les actions suivantes sont proposées à l'étudiant selon l'état affiché. */
   function actions(view){
     return {
-      connect:    view.kind === "not_connected" || view.kind === "revoked" || (view.kind === "error" && view.reason !== "unreachable" && view.reason !== "unconfigured"),
-      disconnect: view.kind === "connected" || view.kind === "pending" || (view.kind === "error" && view.reason !== "unconfigured"),
+      connect:    view.kind === "not_connected" || view.kind === "revoked" || (view.kind === "error" && ["unreachable", "unconfigured", "network", "session"].indexOf(view.reason) < 0),
+      disconnect: view.kind === "connected" || view.kind === "pending" || (view.kind === "error" && ["unconfigured", "network", "session"].indexOf(view.reason) < 0),
       verify:     view.kind !== "loading",
     };
+  }
+
+  /* Clé de traduction du libellé d'état : Non connecté / Connexion en cours / Connecté / Connexion révoquée /
+     LexNote indisponible / Erreur de configuration (+ « Erreur » pour le reste). */
+  function statusKey(view){
+    switch(view.kind){
+      case "connected":     return "lnk.connected";
+      case "not_connected": return "lnk.not_connected";
+      case "pending":       return "lnk.pending";
+      case "revoked":       return "lnk.revoked";
+      case "loading":       return "lnk.checking";
+      default:
+        return view.reason === "unreachable" || view.reason === "network" ? "lnk.unavailable"
+             : view.reason === "unconfigured" ? "lnk.config_error" : "lnk.error";
+    }
   }
 
   /* L'URL vient de NOTRE Edge Function, mais on ne redirige jamais sur une valeur non vérifiée :
@@ -75,5 +94,5 @@
     return { status: v === "connected" ? "connected" : "unknown", cleanSearch: rest ? "?" + rest : "" };
   }
 
-  global.RevemLinks = { RETURN_PARAM: RETURN_PARAM, describe: describe, actions: actions, safeConfirmUrl: safeConfirmUrl, parseReturn: parseReturn, errorReason: errorReason };
+  global.RevemLinks = { RETURN_PARAM: RETURN_PARAM, describe: describe, statusKey: statusKey, actions: actions, safeConfirmUrl: safeConfirmUrl, parseReturn: parseReturn, errorReason: errorReason };
 })(typeof globalThis !== "undefined" ? globalThis : this);

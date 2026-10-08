@@ -216,7 +216,7 @@ Supabase**, que le code ne peut pas faire à ta place.
 supabase/tests/00_diagnostic.sql
 ```
 
-Il liste les six migrations, dit lesquelles sont déjà appliquées, et te donne
+Il liste les sept migrations, dit lesquelles sont déjà appliquées, et te donne
 la liste exacte de celles qu'il te reste à exécuter. Il signale aussi le seul
 point destructif du schéma : si ta table `profiles` date de la v1 et contient
 encore une colonne `user_code`, `000_schema.sql` la **supprimera** avec son
@@ -232,6 +232,8 @@ Puis, SQL Editor → coller et exécuter, l'un après l'autre :
 | `supabase/migrations/003_sync_layer.sql` | index d'import non partiels, journal |
 | `supabase/migrations/004_oauth_hardening.sql` | durcissement OAuth |
 | **`supabase/migrations/005_user_sync.sql`** | **les clés naturelles qui rendent l'écriture multi-appareils idempotente** |
+| `supabase/migrations/006_integration_links.sql` | liaison explicite REV-EM ↔ LexNote (`lexnote-revem/v1`) : `integration_links`, `integration_link_intents`, `integration_nonces` (RLS forcée) — voir `INTEGRATION_LEXNOTE.md` |
+| `supabase/migrations/007_math_practice.sql` | `math_practice` : journal d'exercices du tuteur Maths & Stats (RLS stricte, jamais l'énoncé ni la réponse de l'élève) |
 
 Toutes sont idempotentes : tu peux les relancer, y compris celles déjà
 passées, sans créer de doublon (vérifié — tables, index et policies restent
@@ -296,3 +298,17 @@ REV-EM sait interpréter au retour.
   avec la `service_role key` (le navigateur n'a pas le droit de supprimer un
   compte). Le bouton existe et annonce honnêtement que ce n'est pas encore
   disponible.
+
+## Base déjà en production : déterminer quoi exécuter (PR de réconciliation)
+
+`006_integration_links.sql` a pu être exécutée avant la fusion. **Ne la rejoue jamais** (elle utilise `create table` sans `if not exists`).
+Procédure, dans le SQL Editor du projet REV-EM :
+
+1. Exécute `supabase/ops/prod_readiness.sql` (lecture seule). Il dit, pour `006` et `007`, si la migration est absente, identique à la
+   version du dépôt, en version initiale (#21) ou différente, et ce qu'il faut exécuter.
+2. `006` ABSENTE → `006_integration_links.sql` ; `VERSION INITIALE (#21)` → UNIQUEMENT `supabase/ops/006_v1_to_v2.sql` ; `IDENTIQUE` → rien.
+3. `007` ABSENTE → `007_math_practice.sql` (idempotente) ; `IDENTIQUE` → rien. Un « STOP » = ne rien exécuter, analyser d'abord.
+4. Relance `prod_readiness.sql` : les deux lignes doivent afficher « IDENTIQUE À #23 » ; puis `supabase/tests/00_diagnostic.sql`.
+
+Les empreintes de référence sont calculées sur PostgreSQL avec `supabase/tests/00_local_emulation.sql` ; un écart sur un vrai projet Supabase
+produit un « STOP » prudent (jamais une exécution automatique) : l'empreinte par composant affichée en ligne 3 sert alors à localiser l'écart.

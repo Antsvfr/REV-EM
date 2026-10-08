@@ -145,7 +145,10 @@ async function page(ctx) {
   p.errors = errors;
   return p;
 }
-const openAI = async (p) => { await p.evaluate(() => switchTab("ai")); await p.waitForFunction(() => state.aiStatus !== "checking", null, { timeout: 8000 }); };
+/* AI Workspace V2 : le sélecteur de modèle et l'état vivent dans le PANNEAU D'ÉTAT (ouvert au clic sur la pastille d'état), le diagnostic dans son panneau.
+   Ici on ouvre le panneau d'état une fois : il reste ouvert à travers les render() (état de l'interface, pas du moteur). */
+const openAI = async (p) => { await p.evaluate(() => switchTab("ai")); await p.waitForFunction(() => state.aiStatus !== "checking", null, { timeout: 8000 }); await p.evaluate(() => { if (aiw.menu !== "status") aiwSetMenu("status"); }); };
+const openDiag = (p) => p.evaluate(() => aiwOpenDiag());
 const waitStatus = (p, st, ms = 8000) => p.waitForFunction((s) => state.aiStatus === s, st, { timeout: ms });
 const S = (p, expr) => p.evaluate(expr);
 const cardText = (p) => p.$$eval(".ai-tier", els => els.map(e => e.innerText));
@@ -156,7 +159,7 @@ await scenario("1. WebGPU absent → message clair, le site fonctionne", async (
   const p = await page(ctx);
   await openAI(p);
   eq("état nogpu", await S(p, "state.aiStatus"), "nogpu");
-  check("message d'indisponibilité affiché", /WebGPU/.test(await p.innerText(".ai-status")));
+  check("message d'indisponibilité affiché", /WebGPU/.test(await p.innerText("#aiw-pop-status")));
   check("aucun sélecteur de modèle proposé quand WebGPU manque", (await p.$$(".ai-tier")).length === 0);
   const r = await p.evaluate(async () => { try { await webllmChat([{ role: "user", content: "x" }]); return "no-error"; } catch (e) { return e.message; } });
   check("webllmChat échoue proprement (pas de blocage)", /n'est pas chargé/.test(r), r);
@@ -212,7 +215,7 @@ await scenario("4. Expert échoue → repli automatique sur Avancé", async () =
   eq("palier final = Avancé", await S(p, "state.aiTier"), "avance");
   const notice = await p.innerText(".ai-notice-line");
   check("message simple, sans jargon technique", /Expert est trop exigeant/.test(notice) && /Avancé/.test(notice) && !/maxStorage|Error/.test(notice), notice);
-  eq("aucun écran d'erreur géant : statut « prêt »", await p.$$eval(".ai-status.ko", e => e.length), 0);
+  eq("aucun écran d'erreur géant : statut « prêt »", await p.$$eval(".aiw-banner.is-warn", e => e.length), 0);
   const mem = await S(p, "aiMem()");
   eq("le repli est mémorisé", [mem.lastFallback.from, mem.lastFallback.to], ["expert", "avance"]);
   eq("l'échec d'Expert est mémorisé avec le code réel", mem.lastFailure.code, "OUT_OF_MEMORY_OR_RESOURCE_LIMIT");
@@ -382,7 +385,7 @@ await scenario("11. WKWebView : détection honnête + mode compatibilité si le 
     const p = await page(ctx);
     await openAI(p);
     eq("UA de WKWebView reconnu (simulation par User-Agent, PAS un vrai WKWebView)", await S(p, "aiEnv().browser"), "wkwebview");
-    await p.click(".ai-extra summary");
+    await openDiag(p);
     check("le diagnostic dit « probablement » (aucune certitude inventée)", /probablement/.test(await p.innerText("#ai-diag-panel")));
     await ctx.close();
   }
@@ -521,7 +524,7 @@ await scenario("17. Diagnostic copiable : complet, sans secret", async () => {
   await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
   await openAI(p);
   await p.click('[data-aitier="rapide"]'); await waitStatus(p, "error", 8000);
-  await p.click("#ai-diag-panel summary");
+  await openDiag(p);
   await p.click("#ai-copy-diag-btn");
   await p.waitForFunction(() => state.aiDiagCopied);
   const txt = await p.evaluate(() => navigator.clipboard.readText());
@@ -546,7 +549,7 @@ await scenario("18. Interface : accessibilité clavier, 5 langues, responsive", 
     await p.evaluate((l) => LyonI18n.setLang(l), lang);
     await p.evaluate(() => render());
     check(`langue ${lang} : « ${word} » affiché`, (await p.$$eval(".ai-tier-name", e => e.map(x => x.textContent))).includes(word));
-    check(`langue ${lang} : aucune clé brute « ai.* » visible`, !/\bai\.(tier|state|err|load|diag|reset|notice)\./.test(await p.innerText(".ai-status")));
+    check(`langue ${lang} : aucune clé brute « ai.* » visible`, !/\bai\.(tier|state|err|load|diag|reset|notice)\./.test(await p.innerText("#aiw-pop-status")));
   }
   await p.evaluate(() => LyonI18n.setLang("fr")); await p.evaluate(() => render());
   await p.setViewportSize({ width: 375, height: 800 });
@@ -572,7 +575,7 @@ await scenario("20. Test complet (bouton du diagnostic) : chaque étape cochée 
   const { ctx } = await open();
   const p = await page(ctx);
   await openAI(p);
-  await p.click("#ai-diag-panel summary");
+  await openDiag(p);
   await p.click("#ai-full-test-btn");
   await p.waitForFunction(() => !state.aiFullTestBusy && state.aiFullTestResult, null, { timeout: 15000 });
   const steps = await S(p, "state.aiFullTestSteps.map(s => s.status)");
@@ -583,7 +586,7 @@ await scenario("20. Test complet (bouton du diagnostic) : chaque étape cochée 
   bad.world.behavior = () => ({ throw: "Error: Cannot initialize runtime because of requested maxStorageBufferBindingSize exceeds limit. requested=128MB, limit=64MB. " });
   const p2 = await page(bad.ctx);
   await openAI(p2);
-  await p2.click("#ai-diag-panel summary");
+  await openDiag(p2);
   await p2.click("#ai-full-test-btn");
   await p2.waitForFunction(() => !state.aiFullTestBusy && state.aiFullTestResult, null, { timeout: 20000 });
   const steps2 = await S(p2, "state.aiFullTestSteps.map(s => s.status)");

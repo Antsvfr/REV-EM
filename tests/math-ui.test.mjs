@@ -104,7 +104,7 @@ try {
     eq("barre de question ACTIVE même sans modèle (le moteur est déterministe)", await page.$eval("#assistant-query-input", e => e.disabled), false);
     await ask(page, "factorise x^2-5x+6");
     const card = await lastCard(page);
-    check("badge « VÉRIFIÉ (EXACT) » et étiquette « Factorisation »", /VÉRIFIÉ \(EXACT\)/.test(card) && /Factorisation/.test(card), card);
+    check("badge « VÉRIFIÉ (EXACT) » et étiquette « Factorisation »", /Vérifié \(exact\)/i.test(card) && /Factorisation/.test(card), card);
     check("le résultat (x−2)(x−3) est affiché (KaTeX + MathML : la valeur est lisible)", /x\s*−\s*2/.test(card) && /x\s*−\s*3/.test(card), card);
     check("moteur « Calcul exact » (Fast Engine)", /Calcul exact/.test(card));
     eq("aucune requête vers pyodide / sympy pour un calcul exact", vendorHits().filter(h => /pyodide|\/py\//.test(h)), []);
@@ -117,7 +117,7 @@ try {
     const c2 = await lastCard(page);
     check("division par zéro : « Saisie invalide » + explication, AUCUN résultat", /Saisie invalide/i.test(c2) && /Division par zéro/.test(c2) && !/RÉSULTAT/i.test(c2), c2);
     await ask(page, "inverse de [[1,2],[2,4]]");
-    { const cs = await lastCard(page); check("matrice singulière : « non inversible », vérifiée exactement", /non\s+inversible/.test(cs) && /VÉRIFIÉ \(EXACT\)/.test(cs), cs); }
+    { const cs = await lastCard(page); check("matrice singulière : « non inversible », vérifiée exactement", /non\s+inversible/.test(cs) && /Vérifié \(exact\)/i.test(cs), cs); }
     await ask(page, "variance de 2 4 4 4 5 5 7 9");
     const c3 = await lastCard(page);
     check("variance : population ET échantillon + convention signalée comme non précisée", /POPULATION/.test(c3) && /ÉCHANTILLON/.test(c3) && /Convention non précisée/.test(c3), c3);
@@ -193,7 +193,7 @@ try {
     eq("phase = ABORTED, aucune carte ajoutée à la conversation", [await page.evaluate(() => state.aiChat.phase), (await page.$$(".mx-card")).length], ["ABORTED", 1]);
     eq("le moteur est inactif (worker tué)", await page.evaluate(() => RevemMath.cas.state), "idle");
     await ask(page, "factorise x^2-5x+6");
-    check("la question suivante fonctionne normalement", /VÉRIFIÉ \(EXACT\)/.test(await lastCard(page)));
+    check("la question suivante fonctionne normalement", /Vérifié \(exact\)/i.test(await lastCard(page)));
     void nBefore;
     await ctx.close();
   });
@@ -210,7 +210,7 @@ try {
     checkMock("…avec l'interdiction de recalculer / modifier un nombre", /never recompute/.test(sys));
     checkMock("…et SANS l'ancien en-tête « VERIFIED CALCULATION »", !/VERIFIED CALCULATION \(computed locally, exact\):/.test(sys.split("MATH ENGINE RESULT")[0].slice(-80)));
     const b = (await bubbles(page)).pop();
-    check("la carte du moteur est affichée AU-DESSUS de l'explication du modèle", /VÉRIFIÉ \(EXACT\)/.test(b) && /On cherche deux nombres/.test(b) && b.indexOf("VÉRIFIÉ") < b.indexOf("On cherche"), b);
+    check("la carte du moteur est affichée AU-DESSUS de l'explication du modèle", /Vérifié \(exact\)/i.test(b) && /On cherche deux nombres/.test(b) && b.search(/Vérifié/i) < b.indexOf("On cherche"), b);
     check("la connaissance « REV-EM Knowledge » n'est pas injectée pour un calcul (le moteur fait autorité)", await page.evaluate(() => state.aiChat.diag.knowledgeStatus) === "skipped:calculation");
     // un résultat non vérifié ne doit pas être présenté comme certain
     await page.evaluate(() => { window.__T.script.push({ text: "Je ne peux pas confirmer ce résultat." }); });
@@ -222,7 +222,7 @@ try {
     await page.evaluate(() => { window.__T.script.push({ error: { code: "GENERATION_FAILED", message: "boom" } }, { error: { code: "GENERATION_FAILED", message: "boom" } }); });
     await ask(page, "dérivée de x^3+2x^2-5x+3");
     const lastB = (await bubbles(page)).pop();
-    check("explication impossible (erreur du modèle) : le RÉSULTAT vérifié reste affiché", /VÉRIFIÉ \(EXACT\)/.test(lastB) && /3x\s*2|3x²|3x/.test(lastB), lastB);
+    check("explication impossible (erreur du modèle) : le RÉSULTAT vérifié reste affiché", /Vérifié \(exact\)/i.test(lastB) && /3x\s*2|3x²|3x/.test(lastB), lastB);
     check("…et l'erreur du modèle est annoncée normalement", await page.evaluate(() => !!state.aiError));
     eq("aucune erreur JavaScript", page.errors, []);
     await ctx.close();
@@ -277,7 +277,7 @@ try {
   });
 
   await scenario("10. langues : l'interface de la carte suit la langue (EN, ES, DE, IT)", async () => {
-    for (const [lang, status, ph] of [["en", /VERIFIED \(EXACT\)/, "Exact computation"], ["es", /VERIFICADO \(EXACTO\)/, "Cálculo exacto"], ["de", /VERIFIZIERT \(EXAKT\)/, "Exakte Berechnung"], ["it", /VERIFICATO \(ESATTO\)/, "Calcolo esatto"]]) {
+    for (const [lang, status, ph] of [["en", /Verified \(exact\)/i, "Exact computation"], ["es", /Verificado \(exacto\)/i, "Cálculo exacto"], ["de", /Verifiziert \(exakt\)/i, "Exakte Berechnung"], ["it", /Verificato \(esatto\)/i, "Calcolo esatto"]]) {
       const { ctx, page } = await open({ lang });
       const q = { en: "solve x^2-5x+6=0", es: "resuelve x^2-5x+6=0", de: "löse x^2-5x+6=0", it: "risolvi x^2-5x+6=0" }[lang];
       await ask(page, q);
@@ -344,7 +344,7 @@ try {
     check("le CAS n'est pas resté « en chargement » (état d'erreur ou inactif)", ["idle", "error"].indexOf(await page.evaluate(() => RevemMath.cas.state)) >= 0);
     check("diagnostic : code d'erreur renseigné", /^CAS_/.test(await page.evaluate(() => state.aiChat.diag.math.errorCode || "")));
     await ask(page, "factorise x^2-5x+6");
-    check("le moteur EXACT fonctionne quand même", /VÉRIFIÉ \(EXACT\)/.test(await lastCard(page)));
+    check("le moteur EXACT fonctionne quand même", /Vérifié \(exact\)/i.test(await lastCard(page)));
     srv.state.blocked = null;
     await ask(page, "limite de sin(x)/x quand x tend vers 0");
     check("fichiers de nouveau disponibles : le calcul formel réussit au nouvel essai (rien n'est resté bloqué)", /Vérifié numériquement/i.test(await lastCard(page)));

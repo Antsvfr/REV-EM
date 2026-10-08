@@ -256,6 +256,7 @@
         if(!pl.ok) return Object.assign(base, invalidExpr(expr, pl.error));
         return Object.assign(base, { kind: "limit", ast: pl.ast, var: v, point: point, side: side, notes: pl.notes });
       }
+      if(!/[0-9]|→|->/.test(src)) return noneResult("« limites » au sens courant (limites d'un indicateur…), pas un calcul");   // « Quelles sont les limites de l'EBITDA ? » n'est pas un problème de limite
       if(!isExplain) return Object.assign(base, { kind: "invalid", src: src, message: "limite non reconnue : précise la variable et le point, par exemple « lim x→0 sin(x)/x »", code: "LIMIT_FORM", status: STATUS.INVALID_INPUT });
     }
 

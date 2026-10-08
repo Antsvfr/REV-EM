@@ -280,7 +280,7 @@ try {
 
   await scenario("13. réglage Auto / Désactivées / Démo dans le diagnostic, et mémorisé", async () => {
     const { ctx, page } = await open();
-    await page.evaluate(() => { state.aiDiagPanelOpen = true; render(); });
+    await page.evaluate(() => { aiwOpenDiag(); });
     await page.waitForSelector("#ai-kn-control");
     const labels = await page.$$eval("[data-ai-kn-mode]", e => e.map(b => b.innerText.trim()));
     eq("trois choix", labels, ["Auto", "Désactivées", "Démo"]);
@@ -302,7 +302,7 @@ try {
     const { ctx, page } = await open({ mode: "demo" });
     await script(page, [{ text: "Réponse secrète de test." }]);
     await ask(page, "Qu'est-ce que la VAN ?");
-    await page.evaluate(() => { document.getElementById("ai-diag-panel").open = true; });
+    await page.evaluate(() => { aiwOpenDiag(); document.getElementById("ai-diag-panel").open = true; });
     const txt = await page.innerText("#ai-diag-panel");
     check("knowledge : mode, sujets, candidats, sélection, scores", /knowledge : mode demo · ready · topicsDetected : npv · candidates 1 · selected finance\.npv · scores \d+/.test(txt), txt.slice(-900));
     check("knowledgeContext : jetons, éléments utilisés, retrievalTime", /knowledgeContext : \d+ tokens≈ · used finance\.npv/.test(txt) && /retrievalTime : [\d.]+ ms/.test(txt));
@@ -357,7 +357,7 @@ try {
   await scenario("17. mobile 375 px : le réglage et le diagnostic ne débordent pas", async () => {
     const { ctx, page } = await open({ mode: "demo", vp: { width: 375, height: 800 } });
     await ask(page, "Qu'est-ce que la VAN ?");
-    await page.evaluate(() => { state.aiDiagPanelOpen = true; render(); });
+    await page.evaluate(() => { aiwOpenDiag(); });
     await page.waitForSelector("#ai-kn-control");
     const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     check("aucun défilement horizontal de la page", over <= 1, over);

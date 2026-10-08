@@ -43,7 +43,7 @@ export function createMockSupabase() {
     ai_cards: ["user_id", "builtin_chapter_id"], course_notes: ["user_id", "event_id"],
     ai_history: ["user_id"], preferences: ["user_id"], study_plans: ["user_id"],
     user_stats: ["user_id"], daily_stats: ["user_id", "day"],
-    activities: ["user_id", "ts"], chapter_visits: ["user_id", "chapter_key"],
+    activities: ["user_id", "ts"], chapter_visits: ["user_id", "chapter_key"], math_practice: ["user_id", "ts"],
     profiles: ["id"],
   };
   const rowsOf = (t) => (tables[t] = tables[t] || []);
