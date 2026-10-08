@@ -73,7 +73,7 @@ Object.defineProperty(window.LyonAuth, "client", { get: function(){ return windo
   /* 2. LE cas critique : CONNECTED non vérifié ne s'affiche jamais « Connecté » */
   txt = await show(await S({ state: "CONNECTED", localStatus: "CONNECTED", verified: false, peerStatus: "UNKNOWN", linkId: "lnk_x" }));
   assert(!/✓ Connecté/.test(txt), "CONNECTED non vérifié : jamais « ✓ Connecté », got: " + txt.slice(0, 120));
-  assert(/Vérification en cours/.test(txt), "il est présenté comme vérification en cours");
+  assert(/Connexion en cours/.test(txt), "il est présenté comme connexion en cours");
   txt = await show(await S({ state: "CONNECTED", localStatus: "CONNECTED", verified: true, peerStatus: "PENDING" }));
   assert(!/✓ Connecté/.test(txt), "partenaire non confirmé : jamais « ✓ Connecté »");
 
@@ -90,7 +90,7 @@ Object.defineProperty(window.LyonAuth, "client", { get: function(){ return windo
   await page.waitForFunction(() => window.__invoked.some(x => x.body && x.body.action === "revoke"), null, { timeout: 4000 });
   await page.waitForTimeout(200);
   txt = await page.evaluate(() => document.querySelector("#connected-apps").textContent.replace(/\s+/g, " "));
-  assert(/Déconnecté/.test(txt) && /Aucune donnée n'a été supprimée/.test(txt), "après révocation : « Déconnecté » + aucune donnée supprimée, got: " + txt.slice(0, 160));
+  assert(/Connexion révoquée/.test(txt) && /Aucune donnée n'a été supprimée/.test(txt), "après révocation : « Connexion révoquée » + aucune donnée supprimée, got: " + txt.slice(0, 160));
   assert(!!(await page.$("#lnk-connect-btn")), "révoqué : reconnexion possible");
   await page.evaluate(() => { window.__invoked = []; window.confirm = () => false; });
   await show(await S({ state: "CONNECTED", localStatus: "CONNECTED", verified: true, peerStatus: "CONNECTED", linkedAt: "2026-10-08T10:00:00Z" }));

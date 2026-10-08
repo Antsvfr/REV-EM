@@ -20346,9 +20346,16 @@ async function lnInvoke(action, body){
   if(error){
     let payload = null;
     try{ payload = await error.context.json(); }catch(e){}
-    const code = payload && payload.error && payload.error.code;
-    const err = new Error(code || "UNAVAILABLE");
-    err.code = code || "UNAVAILABLE";
+    let code = payload && payload.error && payload.error.code;
+    const status = error.context && error.context.status;
+    if(!code){
+      if(status === 404) code = "NOT_DEPLOYED";                       // fonction non déployée
+      else if(status === 401 || status === 403) code = "UNAUTHENTICATED";
+      else if(typeof navigator !== "undefined" && navigator.onLine === false) code = "OFFLINE";
+      else code = "UNAVAILABLE";
+    }
+    const err = new Error(code);
+    err.code = code;
     throw err;
   }
   if(data && data.ok === false){ const e = new Error(data.error && data.error.code); e.code = data.error && data.error.code; throw e; }
@@ -20433,7 +20440,7 @@ function renderConnectedApps(){
     const view = RevemLinks.describe(ln.conn, ln.error);
     const act = RevemLinks.actions(view);
     let badge, msg = "";
-    if(ln.busy === "connecting"){ badge = `<span class="src-state">${t("lnk.connecting")}</span>`; }
+    if(ln.busy === "connecting"){ badge = `<span class="src-state" data-testid="lnk-status">${t("lnk.pending")}</span>`; msg = `<p class="meta">${t("lnk.connecting")}</p>`; }
     else if(ln.busy === "checking" && !ln.loaded){ badge = `<span class="src-state">${t("lnk.checking")}</span>`; }
     else if(view.kind === "connected"){
       badge = `<span class="src-state src-ok" data-testid="lnk-status">${t("lnk.connected")}</span>`;
@@ -20448,7 +20455,7 @@ function renderConnectedApps(){
       badge = `<span class="src-state src-warn-state" data-testid="lnk-status">${t("lnk.revoked")}</span>`;
       msg = `<p class="meta">${t(view.by === "partner" ? "lnk.revoked_by_partner" : "lnk.revoked_by_self", { date: escapeHtml(lnFmtDate(view.at)) })} ${t("lnk.no_data_deleted")}</p>`;
     } else if(view.kind === "error"){
-      badge = `<span class="src-state src-warn-state" data-testid="lnk-status">${t("lnk.error")}</span>`;
+      badge = `<span class="src-state src-warn-state" data-testid="lnk-status">${t(RevemLinks.statusKey(view))}</span>`;
       msg = `<p class="meta src-warn">${t("lnk.error_" + view.reason)}</p>`;
     } else {
       badge = `<span class="src-state">${t("lnk.checking")}</span>`;
@@ -20467,6 +20474,7 @@ function renderConnectedApps(){
     <p class="dash-empty" style="margin-top:0;">${t("lnk.intro")}</p>
     <div class="src-card" data-testid="lnk-lexnote">
       <div class="src-head"><span class="src-name">LexNote</span></div>
+      <p class="meta" data-testid="lnk-card-desc">${t("lnk.card_desc")}</p>
       ${body}
     </div>
   </div>`;

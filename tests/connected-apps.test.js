@@ -37,6 +37,19 @@ eq("http://localhost accepté (développement)", L.safeConfirmUrl("http://localh
 for (const bad of ["javascript:alert(1)", "http://evil.example/x", "data:text/html,x", "https://user:pw@lexnote.example.app/", "ftp://x.y", "", null, undefined, "pas une url"])
   eq("refusée : " + String(bad), L.safeConfirmUrl(bad), null);
 
+scenario("Libellés d'état et messages d'erreur");
+eq("statusKey non connecté", L.statusKey({ kind: "not_connected" }), "lnk.not_connected");
+eq("statusKey connexion en cours", L.statusKey({ kind: "pending" }), "lnk.pending");
+eq("statusKey connecté", L.statusKey({ kind: "connected" }), "lnk.connected");
+eq("statusKey révoquée", L.statusKey({ kind: "revoked" }), "lnk.revoked");
+eq("statusKey LexNote indisponible", L.statusKey({ kind: "error", reason: "unreachable" }), "lnk.unavailable");
+eq("statusKey erreur de configuration", L.statusKey({ kind: "error", reason: "unconfigured" }), "lnk.config_error");
+eq("fonction non déployée → configuration", L.errorReason("NOT_DEPLOYED"), "unconfigured");
+eq("intention expirée", L.errorReason("INTENT_EXPIRED"), "expired");
+eq("intention utilisée", L.errorReason("INTENT_USED"), "used");
+eq("réseau coupé", L.errorReason("OFFLINE"), "network");
+eq("session expirée", L.errorReason("UNAUTHENTICATED"), "session");
+
 scenario("Retour de LexNote (?lexnote_link=connected)");
 eq("paramètre lu et retiré", L.parseReturn("?lexnote_link=connected&x=1"), { status: "connected", cleanSearch: "?x=1" });
 eq("seul paramètre : query vide", L.parseReturn("?lexnote_link=connected"), { status: "connected", cleanSearch: "" });
