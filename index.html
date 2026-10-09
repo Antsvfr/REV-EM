@@ -4927,6 +4927,13 @@
   .cw-checklist input[type="checkbox"]{ width:16px; height:16px; accent-color: var(--red); cursor:pointer; flex-shrink:0; }
   .cw-actions{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:24px; padding-top:16px; border-top:1px solid var(--bg); }
   .cw-save-indicator{ font-size: var(--text-label); color: var(--muted); }
+  /* — « Prendre mes notes dans LexNote » : l'action principale de la fiche, sous les informations du cours — */
+  .cw-lexnote{ margin-top:var(--space-md); }
+  .cw-lx-row{ display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap; }
+  .cw-lx-btn{ min-height:44px; max-width:100%; white-space:normal; text-align:center; gap:var(--space-xs); }
+  .cw-lx-hint{ margin:var(--space-xs) 0 0; }
+  .cw-lx-spin{ width:14px; height:14px; border-radius:50%; border:2px solid currentColor; border-top-color:transparent; display:inline-block; flex-shrink:0; animation: ds-spin 0.7s linear infinite; }
+  @media (prefers-reduced-motion: reduce){ .cw-lx-spin{ animation-duration: 2.4s; } }
 
   /* ---- fiche de cours : disposition à deux volets (notes + assistant IA) ---- */
   .cal-modal-workspace{
@@ -7918,7 +7925,7 @@ function resetUserStateInMemory(){
   state.qstats = {}; state.badges = {}; state.aiCards = {};
   state.userSubjects = []; state.userChapters = [];
   state.documents = []; state.courseData = {}; state.studyPlan = null;
-  state.lexnote = { conn: null, error: null, busy: null, loaded: false, toast: null };   // la liaison d'un compte n'est jamais visible depuis un autre
+  state.lexnote = { conn: null, error: null, busy: null, loaded: false, toast: null, launch: { busy: false, error: null } };   // la liaison d'un compte n'est jamais visible depuis un autre
   Object.assign(state.dash, {
     totalAnswered: 0, totalCorrect: 0, dailyStats: {}, activityDates: [],
     timeSpentSeconds: 0, recentActivity: [], recentChapters: [], wrongQuestions: {},
@@ -16606,7 +16613,7 @@ Object.assign(state, {
   // n'est qu'un cache d'affichage rechargé à chaque ouverture de session.
   brightspace: { connection: null, busy: null, progress: null, lastResult: null, error: null, check: null },
   // --- applications connectées (LexNote) : jamais persisté, rechargé depuis le serveur à chaque ouverture ---
-  lexnote: { conn: null, error: null, busy: null, loaded: false, toast: null },
+  lexnote: { conn: null, error: null, busy: null, loaded: false, toast: null, launch: { busy: false, error: null } },
   // --- état d'interface du formulaire de compte ("Mon espace") ---
   /* linkResult : ce que le lien reçu par e-mail vient de produire
      ("confirmed" | "recovery" | "email_changed" | "expired"), afin de le DIRE
@@ -21006,9 +21013,92 @@ async function lnLoad(opts){
     if(currentAuthId() !== userAtStart) return;
     state.lexnote.conn = null; state.lexnote.error = { code: e.code || "UNAVAILABLE" };
   }finally{
-    if(currentAuthId() === userAtStart){ state.lexnote.busy = null; state.lexnote.loaded = true; if(state.tab === "settings") render(); }
+    if(currentAuthId() === userAtStart){ state.lexnote.busy = null; state.lexnote.loaded = true; if(state.tab === "settings") render(); lnRefreshLaunchBlock(); }
   }
 }
+
+/* ---- « Prendre mes notes dans LexNote » (fiche d'un cours du planning) --------------------------------------------
+   Un clic : le serveur (Edge Function integration-link, avec SON jeton) relit le cours dans le compte en ligne, crée une
+   intention courte à usage unique, et renvoie l'adresse d'ouverture de LexNote. Le navigateur n'envoie QUE l'identifiant du
+   cours et le fuseau horaire : jamais le cours lui-même, jamais de notes, de jeton ni d'identifiant d'utilisateur. */
+function lnLaunchHtml(e){
+  const ln = state.lexnote;
+  const v = RevemLinks.launchView(lnAvailable() ? RevemLinks.describe(ln.conn, ln.error) : { kind: "not_connected" }, ln.launch, ln.loaded);
+  let btn, extra = "", hint = "";
+  if(v.kind === "opening") btn = `<button type="button" class="btn red cw-lx-btn" id="cw-lexnote-btn" data-testid="cw-lexnote-btn" data-state="opening" disabled aria-busy="true"><span class="cw-lx-spin" aria-hidden="true"></span>${t("lnk.launch_opening")}</button>`;
+  else if(v.kind === "checking") btn = `<button type="button" class="btn red cw-lx-btn" id="cw-lexnote-btn" data-testid="cw-lexnote-btn" data-state="checking" disabled aria-busy="true"><span class="cw-lx-spin" aria-hidden="true"></span>${t("lnk.launch_checking")}</button>`;
+  else if(v.kind === "connect"){
+    btn = `<button type="button" class="btn red cw-lx-btn" id="cw-lexnote-btn" data-testid="cw-lexnote-btn" data-state="connect">${t("lnk.launch_connect")}</button>`;
+    hint = t("lnk.launch_hint_connect");
+  } else if(v.kind === "unavailable"){
+    btn = `<button type="button" class="btn red cw-lx-btn" id="cw-lexnote-btn" data-testid="cw-lexnote-btn" data-state="unavailable" disabled>${t("lnk.launch_unavailable")}</button>`;
+    extra = `<button type="button" class="btn-text" id="cw-lexnote-recheck" data-testid="cw-lexnote-recheck">${t("lnk.launch_recheck")}</button>`;
+  } else {
+    btn = `<button type="button" class="btn red cw-lx-btn" id="cw-lexnote-btn" data-testid="cw-lexnote-btn" data-state="ready">${t("lnk.launch_btn")}</button>`;
+    hint = t("lnk.launch_hint_ready");
+  }
+  const err = ln.launch && ln.launch.error ? `<p class="meta src-warn" role="alert" data-testid="cw-lexnote-error">${t("lnk.launch_error_" + RevemLinks.launchErrorReason(ln.launch.error))}</p>` : "";
+  return `<div class="cw-lx-row">${btn}${extra}</div>${hint ? `<p class="meta cw-lx-hint">${escapeHtml(hint)}</p>` : ""}${err}`;
+}
+
+function lnRefreshLaunchBlock(){
+  const box = document.getElementById("cw-lexnote");
+  if(!box) return;
+  const e = state.planning.selectedEventId ? state.planning.events.find(x => x.id === state.planning.selectedEventId) : null;
+  if(!e) return;
+  box.innerHTML = lnLaunchHtml(e);
+  lnAttachLaunchEvents();
+}
+
+function lnAttachLaunchEvents(){
+  const b = document.getElementById("cw-lexnote-btn");
+  if(b) b.addEventListener("click", ()=>{
+    const st = b.getAttribute("data-state");
+    if(st === "connect"){ lnLaunchToSettings(); return; }
+    if(st === "ready" && state.planning.selectedEventId) lnLaunchOpen(state.planning.selectedEventId);
+  });
+  const r = document.getElementById("cw-lexnote-recheck");
+  if(r) r.addEventListener("click", ()=>{ state.lexnote.launch.error = null; state.lexnote.conn = null; state.lexnote.error = null; state.lexnote.loaded = false; lnRefreshLaunchBlock(); lnLoad({ probe: true, render: false }); });
+  // Première ouverture : vérification RÉELLE de la liaison auprès du serveur (« Connecté » exige les deux côtés).
+  if(lnAvailable() && !state.lexnote.loaded && !state.lexnote.busy) lnLoad({ probe: true, render: false });
+}
+
+function lnLaunchToSettings(){
+  flushCourseModalSaves();
+  state.planning.selectedEventId = null;
+  switchTab("settings");
+  setTimeout(()=>{ const el = document.getElementById("connected-apps"); if(el && el.scrollIntoView) el.scrollIntoView({ block: "start" }); }, 60);
+}
+
+let lnLaunchLock = false;
+async function lnLaunchOpen(eventId){
+  if(lnLaunchLock || !lnAvailable()) return;           // aucun double clic, aucun deuxième envoi
+  lnLaunchLock = true;
+  const userAtStart = currentAuthId();
+  state.lexnote.launch = { busy: true, error: null };
+  lnRefreshLaunchBlock();
+  try{
+    flushCourseModalSaves();
+    await cloudFlushNow(6000);                            // le serveur relit le cours dans le compte en ligne : il doit y être
+    const tz = (function(){ try{ return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; }catch(e){ return ""; } })();
+    const res = await lnInvoke("launch-start", { eventId: String(eventId), tz: tz });
+    if(currentAuthId() !== userAtStart) return;
+    const url = RevemLinks.safeConfirmUrl(res && res.launchUrl);
+    if(!url) throw Object.assign(new Error("INTERNAL"), { code: "INTERNAL" });
+    window.location.assign(url);                          // même onglet ; l'état « ouverture » reste affiché jusqu'au départ
+  }catch(e){
+    if(currentAuthId() !== userAtStart){ lnLaunchLock = false; return; }
+    const code = e && e.code || "UNAVAILABLE";
+    state.lexnote.launch = { busy: false, error: code };
+    if(RevemLinks.launchErrorReason(code) === "notlinked"){ state.lexnote.conn = null; state.lexnote.loaded = false; }   // l'état affiché n'était plus vrai : on revérifie
+    lnLaunchLock = false;
+    lnRefreshLaunchBlock();
+  }
+}
+// Retour arrière (cache de navigation) : l'état « ouverture » ne doit pas rester figé.
+window.addEventListener("pageshow", (ev)=>{
+  if(ev.persisted && state.lexnote && state.lexnote.launch && state.lexnote.launch.busy){ state.lexnote.launch = { busy: false, error: null }; lnLaunchLock = false; lnRefreshLaunchBlock(); }
+});
 
 async function lnConnect(){
   if(!lnAvailable() || state.lexnote.busy) return;
@@ -22871,6 +22961,7 @@ function courseWorkspaceModalHtml(e, opts){
         ${e.organizer ? `<li><span>Professeur</span><b>${escapeHtml(e.organizer)}</b></li>` : ""}
       </ul>
       ${e.description ? `<p style="font-size:var(--text-metadata);color:var(--ink-soft);margin:12px 0 0;line-height:1.6;">${escapeHtml(e.description)}</p>` : ""}
+      <div class="cw-lexnote" id="cw-lexnote" data-testid="cw-lexnote">${lnLaunchHtml(e)}</div>
       ${subj ? `<button class="btn outline small" data-open-event-subject="${subj.id}" style="margin-top:16px;">Voir la matière : ${escapeHtml(subj.name)}</button>` : ""}
 
       <div class="cw-section">
@@ -22929,6 +23020,7 @@ function renderGlobalCourseModal(){
 
 function attachCourseModalEvents(){
   if(state.aiStatus === "checking") checkAIStatus();
+  lnAttachLaunchEvents();
 
   const modalClose = document.getElementById("cal-modal-close");
   if(modalClose) modalClose.addEventListener("click", closeCourseModal);

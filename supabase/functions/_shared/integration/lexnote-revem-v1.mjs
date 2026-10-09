@@ -1,5 +1,5 @@
 // GÉNÉRÉ par scripts/build-integration-bundle.mjs — NE PAS MODIFIER À LA MAIN. Contrat lexnote-revem/v1 (zod inclus).
-// sha256 du code : 94f5ad8715488360c07c37b5f1cacb157f3c66548dbb134d03d37efd4e1bff12
+// sha256 du code : 8b0bbde61a555ce6fd4e777229e15909811480bff5122abae37e2ab03070ec88
 //#region src/integration/version.ts
 /**
 * Version du contrat d'intégration REV-EM ⇄ LexNote.
@@ -5898,6 +5898,29 @@ const linkResponseSchema = object({
 	displayHint: string().max(40).optional(),
 	expiresAt: isoDateTime.optional()
 });
+const LAUNCH_OPERATIONS = ["REDEEM_LAUNCH"];
+/** Requête SERVEUR → SERVEUR : LexNote demande à REV-EM le cours désigné par une intention. */
+const courseLaunchRequestSchema = object({
+	integrationVersion: string(),
+	kind: literal("course-launch-request"),
+	operation: _enum(LAUNCH_OPERATIONS),
+	launchIntentId: intentId,
+	/** Capacité à usage unique remise à l'étudiant dans le fragment d'URL ; seule son empreinte est stockée côté REV-EM. */
+	nonce,
+	linkId: ref,
+	/** Pseudonyme de l'EXPÉDITEUR (LexNote) dans cette liaison. */
+	senderReference: ref
+});
+const courseLaunchResponseSchema = object({
+	integrationVersion: string(),
+	kind: literal("course-launch-response"),
+	operation: _enum(LAUNCH_OPERATIONS),
+	ok: boolean(),
+	linkId: ref.optional(),
+	/** Le cours à ouvrir (même contrat que le planning : `external-course-event`). */
+	event: externalCourseEventSchema.optional(),
+	expiresAt: isoDateTime.optional()
+});
 
 //#endregion
 //#region src/integration/errors.ts
@@ -6015,7 +6038,9 @@ const payloadSchema = discriminatedUnion("kind", [
 	integrationErrorSchema,
 	linkRequestSchema,
 	linkResponseSchema,
-	connectionStateSchema
+	connectionStateSchema,
+	courseLaunchRequestSchema,
+	courseLaunchResponseSchema
 ]);
 /**
 * Enveloppe : la SEULE forme qui circule entre les deux applications. Elle identifie la liaison (`linkId`) mais n'authentifie rien par elle-même :
@@ -6455,106 +6480,188 @@ function createRpcStore(db) {
 		}
 	};
 }
+function createRpcLaunchStore(db) {
+	async function call(fn, args) {
+		const { data, error } = await db.rpc(fn, args);
+		if (error) {
+			console.error("[integration] rpc", fn, error.message);
+			return fail("UNAVAILABLE", "Base de données indisponible.");
+		}
+		return data ?? {};
+	}
+	return {
+		async startLaunch(a) {
+			const r = await call("integration_launch_start", {
+				p_user: a.userId,
+				p_link_id: a.linkId,
+				p_event_key: a.eventKey,
+				p_event: a.event,
+				p_nonce_hash: a.nonceHash,
+				p_ttl_seconds: a.ttlSeconds
+			});
+			return {
+				reason: r.reason,
+				intentId: r.intent_id,
+				expiresAt: r.expires_at
+			};
+		},
+		async redeemLaunch(a) {
+			const r = await call("integration_launch_redeem", {
+				p_intent: a.intentId,
+				p_nonce_hash: a.nonceHash,
+				p_link_id: a.linkId
+			});
+			return {
+				reason: r.reason,
+				event: r.event,
+				expiresAt: r.expires_at
+			};
+		},
+		async openCourse(a) {
+			const r = await call("integration_course_open", {
+				p_user: a.userId,
+				p_provider: a.provider,
+				p_link_id: a.linkId,
+				p_event_key: a.eventKey,
+				p_subject_key: a.subjectKey,
+				p_subject_name: a.subjectName,
+				p_type: a.type,
+				p_title: a.title,
+				p_date: a.date,
+				p_start: a.startTime,
+				p_end: a.endTime,
+				p_teacher: a.teacher,
+				p_room: a.room
+			});
+			return {
+				reason: r.reason,
+				sessionId: r.session_id,
+				subjectId: r.subject_id,
+				createdSubject: r.created_subject,
+				createdSession: r.created_session,
+				number: r.number ?? null
+			};
+		}
+	};
+}
 
 //#endregion
 //#region src/integration/peer.ts
 function createPeerClient(cfg, opts = {}) {
 	const now = opts.now ?? (() => /* @__PURE__ */ new Date());
 	const doFetch = opts.fetch ?? ((u, i) => fetch(u, i));
-	return { async send(payload) {
-		const linkId = payload.linkId ?? payload.linkIntentId ?? "pairing";
-		const env = makeEnvelope({
-			from: cfg.self,
-			to: cfg.peer,
-			linkId,
-			payload,
-			ttlSeconds: 120,
-			now: now()
-		});
-		const body = JSON.stringify(env);
-		const headers = {
-			"content-type": "application/json",
-			...await signRequest({
-				body,
+	/** Échange signé serveur → serveur ; `expected` = `kind` de la réponse attendue (toute autre charge utile est refusée). */
+	async function exchange(payload, linkId, expected) {
+		{
+			const env = makeEnvelope({
 				from: cfg.self,
 				to: cfg.peer,
-				kid: cfg.keyId,
-				secret: cfg.keys[cfg.keyId],
-				now: now()
-			})
-		};
-		let res;
-		try {
-			res = await doFetch(cfg.peerGatewayUrl, {
-				method: "POST",
-				headers,
-				body,
-				redirect: "error",
-				signal: AbortSignal.timeout(opts.timeoutMs ?? 8e3)
-			});
-		} catch (e) {
-			const timeout = e?.name === "TimeoutError" || e?.name === "AbortError";
-			return {
-				ok: false,
-				error: integrationError(timeout ? "TIMEOUT" : "UNAVAILABLE", "Passerelle du partenaire injoignable.")
-			};
-		}
-		const text = await res.text();
-		let verified = false;
-		try {
-			await verifyRequest({
-				method: "POST",
-				headers: res.headers,
-				body: text,
-				self: cfg.self,
-				expectedSender: cfg.peer,
-				keys: cfg.keys,
+				linkId,
+				payload,
+				ttlSeconds: 120,
 				now: now()
 			});
-			verified = true;
-		} catch {}
-		if (!verified) {
-			const code = res.status === 401 ? "UNAUTHENTICATED" : res.status === 403 ? "FORBIDDEN" : res.status === 429 ? "RATE_LIMITED" : res.status >= 500 ? "UNAVAILABLE" : "INVALID_PAYLOAD";
-			return {
+			const body = JSON.stringify(env);
+			const headers = {
+				"content-type": "application/json",
+				...await signRequest({
+					body,
+					from: cfg.self,
+					to: cfg.peer,
+					kid: cfg.keyId,
+					secret: cfg.keys[cfg.keyId],
+					now: now()
+				})
+			};
+			let res;
+			try {
+				res = await doFetch(cfg.peerGatewayUrl, {
+					method: "POST",
+					headers,
+					body,
+					redirect: "error",
+					signal: AbortSignal.timeout(opts.timeoutMs ?? 8e3)
+				});
+			} catch (e) {
+				const timeout = e?.name === "TimeoutError" || e?.name === "AbortError";
+				return {
+					ok: false,
+					error: integrationError(timeout ? "TIMEOUT" : "UNAVAILABLE", "Passerelle du partenaire injoignable.")
+				};
+			}
+			const text = await res.text();
+			let verified = false;
+			try {
+				await verifyRequest({
+					method: "POST",
+					headers: res.headers,
+					body: text,
+					self: cfg.self,
+					expectedSender: cfg.peer,
+					keys: cfg.keys,
+					now: now()
+				});
+				verified = true;
+			} catch {}
+			if (!verified) {
+				const code = res.status === 401 ? "UNAUTHENTICATED" : res.status === 403 ? "FORBIDDEN" : res.status === 429 ? "RATE_LIMITED" : res.status >= 500 ? "UNAVAILABLE" : "INVALID_PAYLOAD";
+				return {
+					ok: false,
+					error: integrationError(code, `Réponse non authentifiée du partenaire (HTTP ${res.status}).`)
+				};
+			}
+			let raw;
+			try {
+				raw = JSON.parse(text);
+			} catch {
+				return {
+					ok: false,
+					error: integrationError("INVALID_PAYLOAD", "Réponse illisible.")
+				};
+			}
+			const parsed = parseEnvelope(raw, now());
+			if (!parsed.ok) return {
 				ok: false,
-				error: integrationError(code, `Réponse non authentifiée du partenaire (HTTP ${res.status}).`)
+				error: parsed.error
+			};
+			const p = parsed.envelope.payload;
+			if (p.kind === "integration-error") return {
+				ok: false,
+				error: p
+			};
+			if (p.kind !== expected) return {
+				ok: false,
+				error: integrationError("INVALID_PAYLOAD", "Charge utile inattendue.")
+			};
+			return {
+				ok: true,
+				payload: p
 			};
 		}
-		let raw;
-		try {
-			raw = JSON.parse(text);
-		} catch {
-			return {
-				ok: false,
-				error: integrationError("INVALID_PAYLOAD", "Réponse illisible.")
-			};
+	}
+	return {
+		async send(payload) {
+			const r = await exchange(payload, payload.linkId ?? payload.linkIntentId ?? "pairing", "link-response");
+			return r.ok ? {
+				ok: true,
+				response: r.payload
+			} : r;
+		},
+		async sendLaunch(payload) {
+			const r = await exchange(payload, payload.linkId, "course-launch-response");
+			return r.ok ? {
+				ok: true,
+				response: r.payload
+			} : r;
 		}
-		const parsed = parseEnvelope(raw, now());
-		if (!parsed.ok) return {
-			ok: false,
-			error: parsed.error
-		};
-		const p = parsed.envelope.payload;
-		if (p.kind === "integration-error") return {
-			ok: false,
-			error: p
-		};
-		if (p.kind !== "link-response") return {
-			ok: false,
-			error: integrationError("INVALID_PAYLOAD", "Charge utile inattendue.")
-		};
-		return {
-			ok: true,
-			response: p
-		};
-	} };
+	};
 }
 
 //#endregion
 //#region src/integration/linking.ts
 const INTENT_TTL_SECONDS = 300;
 const CONFIRM_PATH = (initiator) => `integrations/${initiator}/connect`;
-const REASON_TO_CODE = {
+const REASON_TO_CODE$1 = {
 	NOT_FOUND: "NOT_FOUND",
 	NONCE_MISMATCH: "FORBIDDEN",
 	EXPIRED: "LINK_EXPIRED",
@@ -6566,7 +6673,7 @@ const REASON_TO_CODE = {
 	ERROR: "CONFLICT",
 	PENDING: "LINK_PENDING"
 };
-const failReason = (r) => fail(REASON_TO_CODE[r] ?? "INTERNAL", r === "ALREADY_LINKED" ? "Un compte est déjà lié." : "Opération de liaison refusée.", { details: { reason: r } });
+const failReason$1 = (r) => fail(REASON_TO_CODE$1[r] ?? "INTERNAL", r === "ALREADY_LINKED" ? "Un compte est déjà lié." : "Opération de liaison refusée.", { details: { reason: r } });
 function createLinkService(d) {
 	const { cfg, store, peer } = d;
 	const now = d.now ?? (() => /* @__PURE__ */ new Date());
@@ -6637,7 +6744,7 @@ function createLinkService(d) {
 		async startLink(userId) {
 			const nonce = token(32);
 			const r = await store.startIntent(userId, await sha256Hex(nonce), 300);
-			if (r.reason !== "OK" || !r.intentId) return failReason(r.reason);
+			if (r.reason !== "OK" || !r.intentId) return failReason$1(r.reason);
 			const url = new URL(CONFIRM_PATH(cfg.self), cfg.peerAppUrl.endsWith("/") ? cfg.peerAppUrl : `${cfg.peerAppUrl}/`);
 			url.searchParams.set("intent", r.intentId);
 			url.hash = `n=${nonce}`;
@@ -6662,7 +6769,7 @@ function createLinkService(d) {
 		},
 		async confirm(userId, intentId, nonce) {
 			const existing = await store.getUserLink(userId);
-			if (existing && existing.status === "CONNECTED") return failReason("ALREADY_LINKED");
+			if (existing && existing.status === "CONNECTED") return failReason$1("ALREADY_LINKED");
 			const localRef = `ref_${token(24)}`;
 			const redeemed = await unwrap(req("REDEEM", {
 				linkIntentId: intentId,
@@ -6683,7 +6790,7 @@ function createLinkService(d) {
 					linkId,
 					senderReference: localRef
 				}));
-				return failReason(created.reason);
+				return failReason$1(created.reason);
 			}
 			try {
 				await unwrap(req("ACTIVATE", {
@@ -6699,7 +6806,7 @@ function createLinkService(d) {
 				throw e;
 			}
 			const act = await store.activateLink(linkId, redeemed.receiverReference);
-			if (act.reason !== "OK") return failReason(act.reason);
+			if (act.reason !== "OK") return failReason$1(act.reason);
 			return stateOf(await store.getUserLink(userId), "CONNECTED", true);
 		},
 		async getState(userId, opts = {}) {
@@ -6769,7 +6876,7 @@ function createLinkService(d) {
 			switch (r.operation) {
 				case "INSPECT": {
 					const x = await store.inspectIntent(need(r.linkIntentId, "linkIntentId"), await sha256Hex(need(r.nonce, "nonce")));
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						displayHint: x.displayHint,
 						expiresAt: x.expiresAt
@@ -6786,7 +6893,7 @@ function createLinkService(d) {
 						linkId,
 						localRef
 					});
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						linkId,
 						receiverReference: localRef,
@@ -6795,7 +6902,7 @@ function createLinkService(d) {
 				}
 				case "ACTIVATE": {
 					const x = await store.activateLink(need(r.linkId, "linkId"), need(r.senderReference, "senderReference"));
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						linkId: r.linkId,
 						status: "CONNECTED"
@@ -6803,7 +6910,7 @@ function createLinkService(d) {
 				}
 				case "REVOKE": {
 					const x = await store.revokeLink(need(r.linkId, "linkId"), need(r.senderReference, "senderReference"), "partner");
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						linkId: r.linkId,
 						status: "REVOKED"
@@ -6811,7 +6918,7 @@ function createLinkService(d) {
 				}
 				case "STATUS": {
 					const link = await store.getLink(need(r.linkId, "linkId"), need(r.senderReference, "senderReference"));
-					if (!link) return failReason("NOT_FOUND");
+					if (!link) return failReason$1("NOT_FOUND");
 					return ok({
 						linkId: link.linkId,
 						status: link.status
@@ -6830,6 +6937,158 @@ function createLinkService(d) {
 			if (link.status === "PENDING") return fail("LINK_PENDING", "Liaison non confirmée.");
 			if (link.status === "ERROR") return fail("FORBIDDEN", "Liaison en erreur.");
 			return link;
+		}
+	};
+}
+
+//#endregion
+//#region src/integration/launch.ts
+/**
+* Ouverture d'un cours REV-EM dans LexNote — « Prendre mes notes dans LexNote » (extension de `lexnote-revem/v1`, aucune architecture parallèle).
+*
+*   REV-EM (initiateur)                                   LexNote (répondant)
+*   startLaunch ─ vérifie la liaison (sonde signée), établit le cours depuis SES données,
+*                 fige une intention (≤ 5 min, usage unique) ─▶ URL  /integrations/revem/launch?intent=<uuid>#n=<nonce>
+*                                                         openLaunch ─▶ REDEEM_LAUNCH (signé) ─▶ [REV-EM] consomme l'intention, renvoie le cours
+*                                                                    ─▶ openCourse (RPC) : matière + séance, IDEMPOTENTES (contraintes UNIQUE en base)
+*                                                                    ─▶ { sessionId } → le navigateur ouvre /session/<id>?panel=transcript
+*
+* Sécurité : le navigateur ne transmet jamais le cours (seulement un identifiant d'événement à REV-EM, puis intention + nonce à LexNote) ;
+* le cours vient du serveur de REV-EM (`LaunchSource`), il est validé par zod, borné et normalisé ici avant tout usage.
+*/
+const LAUNCH_TTL_SECONDS = 300;
+const LAUNCH_PATH = (initiator) => `integrations/${initiator}/launch`;
+const REASON_TO_CODE = {
+	NOT_FOUND: "NOT_FOUND",
+	EXPIRED: "LINK_EXPIRED",
+	NONCE_MISMATCH: "FORBIDDEN",
+	USED: "GONE",
+	CANCELLED: "GONE",
+	LINK_NOT_CONNECTED: "LINK_REVOKED",
+	RATE_LIMITED: "RATE_LIMITED",
+	INVALID: "INVALID_PAYLOAD"
+};
+const failReason = (r) => fail(REASON_TO_CODE[r] ?? "INTERNAL", "Ouverture du cours refusée.", { details: { reason: r } });
+const clean = (v, max) => {
+	const t = (v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+	return t ? t.slice(0, max) : null;
+};
+/** Clé de rapprochement par défaut quand REV-EM n'a pas d'identifiant de matière : le nom normalisé (sans accents, minuscules). */
+const subjectKeyFromName = (name) => `name:${name.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100)}`;
+/** Normalise un cours REÇU (donnée non fiable) en paramètres sûrs pour la base. Wall-clock de l'émetteur conservé (date et HH:MM tels qu'affichés dans REV-EM). */
+function planCourseOpen(raw, ctx) {
+	const parsed = externalCourseEventSchema.safeParse(raw);
+	if (!parsed.success) return fail("INVALID_PAYLOAD", "Cours invalide.", { details: { issues: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`).join(" | ").slice(0, 290) } });
+	const e = parsed.data;
+	if (e.cancelled) return fail("GONE", "Ce cours est annulé.");
+	const title = clean(e.title, 300) ?? "Cours";
+	const subjectName = clean(e.subject?.name, 160) ?? clean(e.title, 160) ?? "Cours";
+	const type = SESSION_TYPE_HINTS.includes(e.sessionTypeHint ?? "") ? e.sessionTypeHint : "OTHER";
+	const date = e.startsAt.slice(0, 10);
+	const t = (iso) => iso.slice(11, 16);
+	return {
+		userId: ctx.userId,
+		provider: ctx.provider,
+		linkId: ctx.linkId,
+		eventKey: e.externalId,
+		subjectKey: e.subject?.ref ?? subjectKeyFromName(subjectName),
+		subjectName,
+		type,
+		title,
+		date,
+		startTime: e.allDay ? null : t(e.startsAt),
+		endTime: e.allDay ? null : t(e.endsAt),
+		teacher: clean(e.teacher, 120),
+		room: clean(e.location, 120)
+	};
+}
+function createLaunchService(d) {
+	const { cfg, links, linkStore, launchStore, peer } = d;
+	const token = d.token ?? randomToken;
+	return {
+		/** REV-EM · action de l'étudiant (JWT vérifié) : prépare l'ouverture et renvoie l'URL de LexNote. */
+		async startLaunch(userId, input) {
+			if (!d.source) return fail("INTERNAL", "Source de planning non configurée.");
+			const state = await links.getState(userId, { probe: true });
+			if (state.state !== "CONNECTED" || !state.linkId) {
+				const code = state.state === "NOT_CONNECTED" ? "LINK_NOT_FOUND" : state.state === "PENDING" ? "LINK_PENDING" : state.state === "REVOKED" ? "LINK_REVOKED" : "UNAVAILABLE";
+				return fail(code, "LexNote n’est pas connecté.", { details: {
+					state: state.state,
+					...state.errorCode ? { errorCode: state.errorCode } : {}
+				} });
+			}
+			const event = await d.source.resolveEvent(userId, input);
+			if (!event) return fail("NOT_FOUND", "Évènement introuvable.");
+			const nonce = token(32);
+			const r = await launchStore.startLaunch({
+				userId,
+				linkId: state.linkId,
+				eventKey: event.externalId,
+				event,
+				nonceHash: await sha256Hex(nonce),
+				ttlSeconds: 300
+			});
+			if (r.reason !== "OK" || !r.intentId) return failReason(r.reason);
+			const url = new URL(LAUNCH_PATH(cfg.self), cfg.peerAppUrl.endsWith("/") ? cfg.peerAppUrl : `${cfg.peerAppUrl}/`);
+			url.searchParams.set("intent", r.intentId);
+			url.hash = `n=${nonce}`;
+			return {
+				launchIntentId: r.intentId,
+				expiresAt: r.expiresAt,
+				launchUrl: url.toString()
+			};
+		},
+		/** LexNote · action de l'étudiant (JWT vérifié) : consomme l'intention auprès de REV-EM puis crée / retrouve matière et séance. */
+		async openLaunch(userId, intentId, nonce) {
+			if (!d.courses) return fail("INTERNAL", "Création de séances non configurée.");
+			const link = await linkStore.getUserLink(userId);
+			if (!link) return fail("LINK_NOT_FOUND", "REV-EM n’est pas connecté.");
+			if (link.status !== "CONNECTED") return fail(link.status === "REVOKED" ? "LINK_REVOKED" : "LINK_PENDING", "Liaison non active.");
+			const res = await peer.sendLaunch({
+				integrationVersion: INTEGRATION_VERSION,
+				kind: "course-launch-request",
+				operation: "REDEEM_LAUNCH",
+				launchIntentId: intentId,
+				nonce,
+				linkId: link.linkId,
+				senderReference: link.localReference
+			});
+			if (!res.ok) throw new IntegrationFailure({
+				...res.error,
+				code: normalizeErrorCode(res.error.code)
+			});
+			if (!res.response.ok || !res.response.event) return fail("NOT_FOUND", "Cours introuvable.");
+			const params = planCourseOpen(res.response.event, {
+				userId,
+				linkId: link.linkId,
+				provider: cfg.peer
+			});
+			const out = await d.courses.openCourse(params);
+			if (out.reason !== "OK" || !out.sessionId || !out.subjectId) return failReason(out.reason);
+			return {
+				...out,
+				sessionId: out.sessionId,
+				subjectId: out.subjectId
+			};
+		},
+		/** REV-EM · côté serveur (requête signée de LexNote, déjà authentifiée) : consomme l'intention, renvoie le cours figé. */
+		async handlePeerLaunch(r) {
+			const link = await links.assertLinkUsable(r.linkId, r.senderReference);
+			const x = await launchStore.redeemLaunch({
+				intentId: r.launchIntentId,
+				nonceHash: await sha256Hex(r.nonce),
+				linkId: link.linkId
+			});
+			if (x.reason !== "OK") return failReason(x.reason);
+			return {
+				integrationVersion: INTEGRATION_VERSION,
+				kind: "course-launch-response",
+				operation: r.operation,
+				ok: true,
+				linkId: link.linkId,
+				event: x.event,
+				expiresAt: x.expiresAt
+			};
 		}
 	};
 }
@@ -6903,10 +7162,12 @@ async function handleGatewayRequest(req, deps) {
 		if (!parsed.ok) throw new IntegrationFailure(parsed.error);
 		const env = parsed.envelope;
 		if (env.from !== v.from || env.to !== cfg.self) return fail("FORBIDDEN", "Enveloppe incohérente avec la signature.");
-		const payload = expectPayload(env, "link-request");
 		let out;
 		try {
-			out = await service.handlePeerRequest(payload);
+			if (env.payload.kind === "course-launch-request") {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Ouverture de cours non prise en charge ici.");
+				out = await deps.launch.handlePeerLaunch(env.payload);
+			} else out = await service.handlePeerRequest(expectPayload(env, "link-request"));
 		} catch (e) {
 			const err = e instanceof IntegrationFailure ? e.error : integrationError("INTERNAL", "Erreur interne.");
 			if (!(e instanceof IntegrationFailure)) console.error("[integration-gateway]", e);
@@ -6945,7 +7206,9 @@ const ACTIONS = [
 	"inspect",
 	"confirm",
 	"status",
-	"revoke"
+	"revoke",
+	"launch-start",
+	"launch-open"
 ];
 function cors(origin) {
 	return origin ? {
@@ -7014,6 +7277,29 @@ async function handleUserRequest(req, deps) {
 				ok: true,
 				...await service.revoke(userId)
 			});
+			case "launch-start": {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Action non disponible.");
+				const eventId = typeof body.eventId === "string" && /^[A-Za-z0-9._:~@-]{1,128}$/.test(body.eventId) ? body.eventId : fail("INVALID_PAYLOAD", "Évènement invalide.");
+				const tz = typeof body.tz === "string" && body.tz.length <= 64 ? body.tz : void 0;
+				return reply({
+					ok: true,
+					...await deps.launch.startLaunch(userId, {
+						eventId,
+						tz
+					})
+				});
+			}
+			case "launch-open": {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Action non disponible.");
+				const r = await deps.launch.openLaunch(userId, uuid(body.launchIntentId), nonce(body.nonce));
+				return reply({
+					ok: true,
+					sessionId: r.sessionId,
+					subjectId: r.subjectId,
+					createdSession: !!r.createdSession,
+					createdSubject: !!r.createdSubject
+				});
+			}
 		}
 	} catch (e) {
 		const err = e instanceof IntegrationFailure ? e.error : integrationError("INTERNAL", "Erreur interne.");
@@ -7026,4 +7312,4 @@ async function handleUserRequest(req, deps) {
 }
 
 //#endregion
-export { APPS, ARTIFACT_KINDS, CALENDAR_SOURCES, CONFIRM_PATH, CONNECTION_STATES, DEEP_LINK_KINDS, DEV_ORIGINS, ERROR_CODES, GATEWAY_ROUTE, H, INTEGRATION_NAMESPACE, INTEGRATION_VERSION, INTENT_TTL_SECONDS, IntegrationFailure, LINK_OPERATIONS, LINK_STATUSES, MAX_SKEW_SECONDS, OFFICIAL_APP_URLS, PEER_STATUSES, PRODUCTION_ORIGINS, PROGRESS_KINDS, SCOPES, SESSION_TYPE_HINTS, SIGNATURE_SCHEME, SUPPORTED_MAJORS, allowedBrowserOrigin, canonicalString, checkOrigin, connectionStateSchema, corsHeadersFor, courseProgressEventSchema, createLinkService, createPeerClient, createRpcStore, deepLinkTargetSchema, envelopeSchema, expectPayload, externalCourseEventSchema, externalSubjectRefSchema, fail, findSecrets, handleGatewayRequest, handleUserRequest, httpStatusOf, integrationError, integrationErrorSchema, integrationIdentitySchema, isSupportedVersion, lexNoteSessionReferenceSchema, linkRequestSchema, linkResponseSchema, majorOf, makeEnvelope, normalizeErrorCode, parseEnvelope, progressEventId, randomToken, readBrowserOrigins, readIntegrationConfig, sha256Hex, signRequest, studyArtifactReferenceSchema, timingSafeEqual, verifyRequest };
+export { APPS, ARTIFACT_KINDS, CALENDAR_SOURCES, CONFIRM_PATH, CONNECTION_STATES, DEEP_LINK_KINDS, DEV_ORIGINS, ERROR_CODES, GATEWAY_ROUTE, H, INTEGRATION_NAMESPACE, INTEGRATION_VERSION, INTENT_TTL_SECONDS, IntegrationFailure, LAUNCH_OPERATIONS, LAUNCH_PATH, LAUNCH_TTL_SECONDS, LINK_OPERATIONS, LINK_STATUSES, MAX_SKEW_SECONDS, OFFICIAL_APP_URLS, PEER_STATUSES, PRODUCTION_ORIGINS, PROGRESS_KINDS, SCOPES, SESSION_TYPE_HINTS, SIGNATURE_SCHEME, SUPPORTED_MAJORS, allowedBrowserOrigin, canonicalString, checkOrigin, connectionStateSchema, corsHeadersFor, courseLaunchRequestSchema, courseLaunchResponseSchema, courseProgressEventSchema, createLaunchService, createLinkService, createPeerClient, createRpcLaunchStore, createRpcStore, deepLinkTargetSchema, envelopeSchema, expectPayload, externalCourseEventSchema, externalSubjectRefSchema, fail, findSecrets, handleGatewayRequest, handleUserRequest, httpStatusOf, integrationError, integrationErrorSchema, integrationIdentitySchema, isSupportedVersion, lexNoteSessionReferenceSchema, linkRequestSchema, linkResponseSchema, majorOf, makeEnvelope, normalizeErrorCode, parseEnvelope, planCourseOpen, progressEventId, randomToken, readBrowserOrigins, readIntegrationConfig, sha256Hex, signRequest, studyArtifactReferenceSchema, subjectKeyFromName, timingSafeEqual, verifyRequest };
