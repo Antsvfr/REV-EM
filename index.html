@@ -4933,7 +4933,7 @@
   .cw-lx-btn{ min-height:44px; max-width:100%; white-space:normal; text-align:center; gap:var(--space-xs); }
   .cw-lx-hint{ margin:var(--space-xs) 0 0; }
   .cw-lx-spin{ width:14px; height:14px; border-radius:50%; border:2px solid currentColor; border-top-color:transparent; display:inline-block; flex-shrink:0; animation: ds-spin 0.7s linear infinite; }
-  @media (prefers-reduced-motion: reduce){ .cw-lx-spin{ animation-duration: 2.4s; } }
+  @media (prefers-reduced-motion: reduce){ .cw-lx-spin{ animation: none; border-top-color: currentColor; } }
 
   /* ---- fiche de cours : disposition à deux volets (notes + assistant IA) ---- */
   .cal-modal-workspace{
