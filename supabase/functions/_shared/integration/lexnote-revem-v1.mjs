@@ -1,5 +1,5 @@
 // GÉNÉRÉ par scripts/build-integration-bundle.mjs — NE PAS MODIFIER À LA MAIN. Contrat lexnote-revem/v1 (zod inclus).
-// sha256 du code : 008aa7bc82798861a417f22b2912fd346068d7ffffdc9c31ef6243300d47ba10
+// sha256 du code : 5fac3a317ae9d0ff86e3a34fcde5a6e77f71df3b5c48c7fa128c97dbf32c57c2
 //#region src/integration/version.ts
 /**
 * Version du contrat d'intégration REV-EM ⇄ LexNote.
@@ -24,7 +24,7 @@ const isSupportedVersion = (version) => {
 };
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/util.js
+//#region node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
 	const numericValues = Object.values(entries).filter((v) => typeof v === "number");
 	return Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
@@ -548,7 +548,7 @@ function constantCatch(value) {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/core.js
+//#region node_modules/zod/v4/core/core.js
 var _a$1;
 const _zodDesc = {
 	value: void 0,
@@ -655,7 +655,7 @@ function config(newConfig) {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/errors.js
+//#region node_modules/zod/v4/core/errors.js
 function _getMessage() {
 	const internals = this._zod;
 	internals.message ?? (internals.message = JSON.stringify(internals.def, jsonStringifyReplacer, 2));
@@ -772,7 +772,7 @@ function formatError(error, mapper = (issue) => issue.message) {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/parse.js
+//#region node_modules/zod/v4/core/parse.js
 function finalizeParams(callee, params) {
 	return {
 		callee: params?.callee ?? callee,
@@ -976,7 +976,7 @@ const _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
 };
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/regexes.js
+//#region node_modules/zod/v4/core/regexes.js
 /**
 * @deprecated CUID v1 is deprecated by its authors due to information leakage
 * (timestamps embedded in the id). Use {@link cuid2} instead.
@@ -1049,7 +1049,7 @@ const lowercase = /^[^A-Z]*$/;
 const uppercase = /^[^a-z]*$/;
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/checks.js
+//#region node_modules/zod/v4/core/checks.js
 const $ZodCheck = /*@__PURE__*/ $constructor("$ZodCheck", (inst, def) => {
 	var _a;
 	inst._zod ?? (inst._zod = {});
@@ -1346,7 +1346,7 @@ const $ZodCheckOverwrite = /*@__PURE__*/ $constructor("$ZodCheckOverwrite", (ins
 });
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/doc.js
+//#region node_modules/zod/v4/core/doc.js
 var Doc = class {
 	constructor(args = [], closed = {}) {
 		this.content = [];
@@ -1381,7 +1381,7 @@ var Doc = class {
 };
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/versions.js
+//#region node_modules/zod/v4/core/versions.js
 const version = {
 	major: 4,
 	minor: 6,
@@ -1389,7 +1389,7 @@ const version = {
 };
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/schemas.js
+//#region node_modules/zod/v4/core/schemas.js
 const $ZodType = /*@__PURE__*/ $constructor("$ZodType", (inst, def) => {
 	var _a;
 	inst ?? (inst = {});
@@ -2829,7 +2829,7 @@ function handleRefineResult(result, payload, input, inst) {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/memoizer.js
+//#region node_modules/zod/v4/core/memoizer.js
 var $ZodCyclicError = class extends Error {
 	constructor() {
 		super(`Cannot parse a reference cycle that closes through a transform`);
@@ -3083,7 +3083,7 @@ function isBackEdge(ctx, value) {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/locales/en.js
+//#region node_modules/zod/v4/locales/en.js
 const error = () => {
 	const Sizable = {
 		string: {
@@ -3192,7 +3192,7 @@ function en_default() {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/registries.js
+//#region node_modules/zod/v4/core/registries.js
 var _a;
 var $ZodRegistry = class {
 	constructor() {
@@ -3240,7 +3240,7 @@ function registry() {
 const globalRegistry = globalThis.__zod_globalRegistry;
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/api.js
+//#region node_modules/zod/v4/core/api.js
 function snapshotChecks(def) {
 	if (def.checks) def.checks = [...def.checks];
 	return def;
@@ -3750,7 +3750,7 @@ function _check(fn, params) {
 }
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/to-json-schema.js
+//#region node_modules/zod/v4/core/to-json-schema.js
 function assignProps(target, ...sources) {
 	for (const source of sources) for (const key of Reflect.ownKeys(source)) if (Object.prototype.propertyIsEnumerable.call(source, key)) assignProp(target, key, source[key]);
 	return target;
@@ -4196,7 +4196,7 @@ const createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params)
 };
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/core/json-schema-processors.js
+//#region node_modules/zod/v4/core/json-schema-processors.js
 const narrowMin = (agg, key, value) => {
 	if (agg[key] === void 0 || value > agg[key]) agg[key] = value;
 };
@@ -4646,7 +4646,7 @@ const optionalProcessor = (schema, ctx, _json, params) => {
 };
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/classic/errors.js
+//#region node_modules/zod/v4/classic/errors.js
 const _installedErrorProtos = /* @__PURE__ */ new WeakSet([Object.prototype, Error.prototype]);
 function _lazyMethod(proto, key, make) {
 	Object.defineProperty(proto, key, {
@@ -4697,7 +4697,7 @@ const initializer = (inst, issues) => {
 const ZodRealError = /*@__PURE__*/ $constructor("ZodError", initializer, void 0, { Parent: Error });
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/classic/parse.js
+//#region node_modules/zod/v4/classic/parse.js
 const parse = /* @__PURE__ */ _parse(ZodRealError);
 const parseAsync = /* @__PURE__ */ _parseAsync(ZodRealError);
 const safeParse = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -4712,7 +4712,7 @@ const safeEncodeAsync = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 const safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
 //#endregion
-//#region ../lexnote/node_modules/zod/v4/classic/schemas.js
+//#region node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale() {
 	if (!globalConfig.localeError) config(en_default());
 }
