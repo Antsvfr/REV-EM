@@ -21163,6 +21163,8 @@ function renderConnectedApps(){
     else if(view.kind === "connected"){
       badge = `<span class="src-state src-ok" data-testid="lnk-status">${t("lnk.connected")}</span>`;
       msg = `<p class="meta">${t("lnk.connected_since", { date: escapeHtml(lnFmtDate(view.since)) })} ${t("lnk.privacy")}</p>`;
+      /* Consentement « connexion automatique » : accordé et réglé dans LexNote (seul côté qui crée des sessions LexNote) ; affiché ici pour information. */
+      msg += `<p class="meta" data-testid="lnk-auto">${t(view.autoLogin ? "lnk.auto_on" : "lnk.auto_off")}</p>`;
     } else if(view.kind === "not_connected"){
       badge = `<span class="src-state" data-testid="lnk-status">${t("lnk.not_connected")}</span>`;
       msg = `<p class="section-sub">${t("lnk.pitch")}</p>`;

@@ -153,3 +153,33 @@ Non connecté à LexNote → intention gardée (10 min) puis reprise après conn
 1. REV-EM : appliquer `supabase/migrations/008_integration_launch.sql` ; LexNote : appliquer `20261012000000_revem_course_refs.sql` (après toutes les migrations antérieures).
 2. Redéployer `integration-link` et `integration-gateway` (`--no-verify-jwt`) des **deux** projets (le paquet `lexnote-revem-v1.mjs` est régénéré : `node scripts/build-integration-bundle.mjs --revem <chemin REV-EM>`) ; secrets inchangés.
 3. Publier les deux fronts, puis vérifier avec un compte réel de bout en bout (les tests automatisés sont en simulation : PGlite, double de Supabase, Chromium).
+
+## Connexion automatique à LexNote depuis REV-EM (extension compatible de `lexnote-revem/v1`)
+
+Objectif : après la PREMIÈRE liaison, « Prendre mes notes dans LexNote » ouvre LexNote **sans écran de connexion**, y compris sur un
+nouvel appareil, si — et seulement si — l'étudiant l'a **autorisé explicitement dans LexNote** (case « Autoriser REV-EM à me reconnecter
+automatiquement », jamais cochée d'office ; désactivable à tout moment dans LexNote › Réglages › Applications connectées).
+
+### Ce que fait REV-EM (et ce qu'il ne fait pas)
+- REV-EM **ne crée jamais** de session LexNote et ne voit **aucun** jeton LexNote : il continue de produire l'intention de lancement à usage
+  unique (`008`), dont le nonce voyage dans le fragment d'URL.
+- Nouvelle opération signée **`IDENTIFY_LAUNCH`** (migration `009_integration_launch_identify.sql`) : LexNote, quand le navigateur n'a pas de
+  session, demande à quelle liaison appartient l'intention. Réponse : `linkId` + référence de REV-EM dans la liaison (pseudonyme). **Lecture
+  seule** (l'intention n'est pas consommée), nonce vérifié (empreinte), intention **récente (≤ 120 s)**, liaison `CONNECTED`. Jamais
+  d'identifiant d'utilisateur, d'e-mail ni de jeton.
+- LexNote vérifie alors le consentement de SON côté, consomme l'intention par le `REDEEM_LAUNCH` habituel (usage unique inchangé), puis crée
+  lui-même une session Supabase ordinaire pour le compte LexNote lié.
+- L'état « connexion automatique activée / désactivée » est renvoyé par LexNote dans `STATUS` (champ `autoLogin`) et affiché dans
+  Réglages › Applications connectées › LexNote (information ; le réglage se fait dans LexNote).
+- Une révocation (de n'importe quel côté) retire immédiatement le consentement (garde en base côté LexNote).
+
+### Refus entre serveurs ≠ « session expirée »
+Un 401 non signé de la passerelle partenaire (signature, clé, horloge, rejeu, ou passerelle déployée **avec** vérification JWT) devient
+`PEER_AUTH_FAILED` (+ `details.reason`, ex. `gateway-verify-jwt`) au lieu de `UNAUTHENTICATED`. REV-EM l'affiche comme une erreur de
+configuration (« Ta session n'est pas en cause »). `supabase/config.toml` fixe désormais `verify_jwt = false` pour `integration-gateway`.
+
+### Déploiement (rien n'est déployé par cette PR)
+1. Appliquer `009_integration_launch_identify.sql` (après `008`).
+2. Redéployer `integration-gateway` (`config.toml` porte `verify_jwt = false`) et `integration-link` avec le paquet régénéré.
+3. Ordre indifférent avec LexNote : un LexNote récent face à un REV-EM ancien retombe sur la connexion normale ; un REV-EM récent face à
+   un LexNote ancien ne reçoit simplement jamais `IDENTIFY_LAUNCH`.
