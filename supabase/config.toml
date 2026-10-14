@@ -1,0 +1,15 @@
+# Configuration versionnée des Edge Functions de REV-EM (lue par `supabase functions deploy`).
+#
+# Sans `verify_jwt = false`, la plateforme Supabase exige un JWT UTILISATEUR et répond 401 AVANT d'exécuter la fonction.
+#  * integration-gateway : appelée UNIQUEMENT par le serveur de LexNote, authentifiée par la signature HMAC lexnote-revem/v1 (jamais par un JWT).
+#    Un redéploiement sans `--no-verify-jwt` la rendait silencieusement inaccessible : côté LexNote, ce refus apparaissait comme
+#    « Votre session a expiré » pendant l'autorisation. Le fixer ici rend le réglage durable.
+#  * brightspace-callback : redirection OAuth d'un navigateur, sans JWT (déjà documenté dans BRIGHTSPACE_SETUP.md).
+# Les autres fonctions gardent la vérification par défaut.
+project_id = "rev-em"
+
+[functions.integration-gateway]
+verify_jwt = false
+
+[functions.brightspace-callback]
+verify_jwt = false

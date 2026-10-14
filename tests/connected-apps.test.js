@@ -12,7 +12,8 @@ const scenario = (n) => console.log("\n── " + n + " ──");
 const conn = (o) => Object.assign({ integrationVersion: "lexnote-revem/v1", kind: "connection-state", partner: "lexnote", state: "CONNECTED", localStatus: "CONNECTED", peerStatus: "CONNECTED", verified: true, linkedAt: "2026-10-08T10:00:00Z", checkedAt: "x" }, o || {});
 
 scenario("« Connecté » exige les DEUX côtés vérifiés");
-eq("connecté + vérifié", L.describe(conn()), { kind: "connected", since: "2026-10-08T10:00:00Z" });
+eq("connecté + vérifié", L.describe(conn()), { kind: "connected", since: "2026-10-08T10:00:00Z", autoLogin: false });
+eq("connexion automatique accordée dans LexNote → affichée", L.describe(conn({ autoLogin: true })), { kind: "connected", since: "2026-10-08T10:00:00Z", autoLogin: true });
 eq("CONNECTED non vérifié → pas connecté", L.describe(conn({ verified: false })).kind, "pending");
 eq("CONNECTED mais le partenaire ne confirme pas → pas connecté", L.describe(conn({ peerStatus: "UNKNOWN" })).kind, "pending");
 eq("chargement", L.describe(null, null), { kind: "loading" });
@@ -49,6 +50,10 @@ eq("intention expirée", L.errorReason("INTENT_EXPIRED"), "expired");
 eq("intention utilisée", L.errorReason("INTENT_USED"), "used");
 eq("réseau coupé", L.errorReason("OFFLINE"), "network");
 eq("session expirée", L.errorReason("UNAUTHENTICATED"), "session");
+eq("refus entre SERVEURS → jamais « session expirée »", L.errorReason("PEER_AUTH_FAILED"), "peer_auth");
+eq("lancement : refus entre serveurs → raison dédiée", L.launchErrorReason("PEER_AUTH_FAILED"), "peer_auth");
+eq("refus entre serveurs : badge « Erreur de configuration »", L.statusKey({ kind: "error", reason: "peer_auth" }), "lnk.config_error");
+eq("refus entre serveurs : ni connecter ni déconnecter (ce n'est pas la liaison)", [L.actions({ kind: "error", reason: "peer_auth" }).connect, L.actions({ kind: "error", reason: "peer_auth" }).disconnect], [false, false]);
 
 scenario("Retour de LexNote (?lexnote_link=connected)");
 eq("paramètre lu et retiré", L.parseReturn("?lexnote_link=connected&x=1"), { status: "connected", cleanSearch: "?x=1" });

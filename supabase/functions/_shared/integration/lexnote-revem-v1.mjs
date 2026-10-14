@@ -1,5 +1,5 @@
 // GÉNÉRÉ par scripts/build-integration-bundle.mjs — NE PAS MODIFIER À LA MAIN. Contrat lexnote-revem/v1 (zod inclus).
-// sha256 du code : 94f5ad8715488360c07c37b5f1cacb157f3c66548dbb134d03d37efd4e1bff12
+// sha256 du code : 5fac3a317ae9d0ff86e3a34fcde5a6e77f71df3b5c48c7fa128c97dbf32c57c2
 //#region src/integration/version.ts
 /**
 * Version du contrat d'intégration REV-EM ⇄ LexNote.
@@ -5853,7 +5853,9 @@ const connectionStateSchema = object({
 	]).nullable(),
 	peerStatus: _enum(PEER_STATUSES),
 	verified: boolean(),
-	checkedAt: isoDateTime
+	checkedAt: isoDateTime,
+	/** Connexion automatique depuis REV-EM autorisée par l'étudiant (consentement stocké côté LexNote, sur la liaison). Absent = non. */
+	autoLogin: boolean().optional()
 }).refine((c) => c.state !== "CONNECTED" || c.verified && c.peerStatus === "CONNECTED" && c.localStatus === "CONNECTED", {
 	message: "CONNECTED exige les deux côtés vérifiés",
 	path: ["state"]
@@ -5896,6 +5898,40 @@ const linkResponseSchema = object({
 	]).optional(),
 	/** INSPECT : prénom / pseudo de l'étudiant qui a initié la liaison — affiché pour qu'il reconnaisse son propre compte. */
 	displayHint: string().max(40).optional(),
+	expiresAt: isoDateTime.optional(),
+	/** STATUS (réponse de LexNote) : l'étudiant a autorisé la connexion automatique depuis REV-EM. */
+	autoLogin: boolean().optional()
+});
+/**
+* IDENTIFY_LAUNCH (connexion automatique) : LexNote, SANS session dans le navigateur, demande à REV-EM à quelle liaison appartient l'intention.
+* Lecture seule, nonce vérifié, intention récente (≤ 120 s) ; ne la consomme PAS. LexNote vérifie ensuite le consentement « connexion
+* automatique » de SON côté, puis consomme l'intention par REDEEM_LAUNCH (usage unique inchangé). Un REV-EM qui ne connaît pas cette
+* opération la refuse (INVALID_PAYLOAD, réponse signée) : LexNote revient alors à la connexion normale.
+*/
+const LAUNCH_OPERATIONS = ["REDEEM_LAUNCH", "IDENTIFY_LAUNCH"];
+/** Requête SERVEUR → SERVEUR : LexNote demande à REV-EM le cours désigné par une intention. */
+const courseLaunchRequestSchema = object({
+	integrationVersion: string(),
+	kind: literal("course-launch-request"),
+	operation: _enum(LAUNCH_OPERATIONS),
+	launchIntentId: intentId,
+	/** Capacité à usage unique remise à l'étudiant dans le fragment d'URL ; seule son empreinte est stockée côté REV-EM. */
+	nonce,
+	/** REDEEM_LAUNCH : obligatoire. IDENTIFY_LAUNCH : absent (c'est précisément ce que LexNote demande). */
+	linkId: ref.optional(),
+	/** Pseudonyme de l'EXPÉDITEUR (LexNote) dans cette liaison. REDEEM_LAUNCH : obligatoire. */
+	senderReference: ref.optional()
+});
+const courseLaunchResponseSchema = object({
+	integrationVersion: string(),
+	kind: literal("course-launch-response"),
+	operation: _enum(LAUNCH_OPERATIONS),
+	ok: boolean(),
+	linkId: ref.optional(),
+	/** IDENTIFY_LAUNCH : pseudonyme de REV-EM dans la liaison (LexNote le connaît comme référence du partenaire). */
+	receiverReference: ref.optional(),
+	/** Le cours à ouvrir (même contrat que le planning : `external-course-event`). */
+	event: externalCourseEventSchema.optional(),
 	expiresAt: isoDateTime.optional()
 });
 
@@ -5920,7 +5956,10 @@ const ERROR_CODES = [
 	"UNAVAILABLE",
 	"OFFLINE",
 	"TIMEOUT",
-	"INTERNAL"
+	"INTERNAL",
+	"PEER_AUTH_FAILED",
+	"AUTO_LOGIN_DISABLED",
+	"WRONG_ACCOUNT"
 ];
 /** Codes pour lesquels réessayer a un sens (avec délai croissant) ; les autres exigent une action de l'utilisateur ou un correctif. */
 const RETRYABLE = /* @__PURE__ */ new Set([
@@ -6015,7 +6054,9 @@ const payloadSchema = discriminatedUnion("kind", [
 	integrationErrorSchema,
 	linkRequestSchema,
 	linkResponseSchema,
-	connectionStateSchema
+	connectionStateSchema,
+	courseLaunchRequestSchema,
+	courseLaunchResponseSchema
 ]);
 /**
 * Enveloppe : la SEULE forme qui circule entre les deux applications. Elle identifie la liaison (`linkId`) mais n'authentifie rien par elle-même :
@@ -6355,7 +6396,8 @@ const toRow = (j) => ({
 	revokedBy: j.revoked_by ?? null,
 	errorCode: j.error_code ?? null,
 	createdAt: j.created_at,
-	updatedAt: j.updated_at
+	updatedAt: j.updated_at,
+	autoLogin: j.auto_login === true
 });
 function createRpcStore(db) {
 	async function call(fn, args) {
@@ -6446,6 +6488,12 @@ function createRpcStore(db) {
 			const r = await call("integration_get_user_link", { p_user: userId });
 			return r.reason === "OK" ? toRow(r.link) : null;
 		},
+		async setAutoLogin(userId, enabled) {
+			return { reason: (await call("integration_set_auto_login", {
+				p_user: userId,
+				p_enabled: enabled
+			})).reason };
+		},
 		async registerNonce(sender, nonce, expiresAt) {
 			return (await call("integration_register_nonce", {
 				p_sender: sender,
@@ -6455,106 +6503,221 @@ function createRpcStore(db) {
 		}
 	};
 }
+function createRpcLaunchStore(db) {
+	async function call(fn, args) {
+		const { data, error } = await db.rpc(fn, args);
+		if (error) {
+			console.error("[integration] rpc", fn, error.message);
+			return fail("UNAVAILABLE", "Base de données indisponible.");
+		}
+		return data ?? {};
+	}
+	return {
+		async startLaunch(a) {
+			const r = await call("integration_launch_start", {
+				p_user: a.userId,
+				p_link_id: a.linkId,
+				p_event_key: a.eventKey,
+				p_event: a.event,
+				p_nonce_hash: a.nonceHash,
+				p_ttl_seconds: a.ttlSeconds
+			});
+			return {
+				reason: r.reason,
+				intentId: r.intent_id,
+				expiresAt: r.expires_at
+			};
+		},
+		async redeemLaunch(a) {
+			const r = await call("integration_launch_redeem", {
+				p_intent: a.intentId,
+				p_nonce_hash: a.nonceHash,
+				p_link_id: a.linkId
+			});
+			return {
+				reason: r.reason,
+				event: r.event,
+				expiresAt: r.expires_at
+			};
+		},
+		async identifyLaunch(a) {
+			const r = await call("integration_launch_identify", {
+				p_intent: a.intentId,
+				p_nonce_hash: a.nonceHash,
+				p_max_age_seconds: 120
+			});
+			return {
+				reason: r.reason,
+				linkId: r.link_id,
+				localReference: r.local_reference,
+				expiresAt: r.expires_at
+			};
+		},
+		async openCourse(a) {
+			const r = await call("integration_course_open", {
+				p_user: a.userId,
+				p_provider: a.provider,
+				p_link_id: a.linkId,
+				p_event_key: a.eventKey,
+				p_subject_key: a.subjectKey,
+				p_subject_name: a.subjectName,
+				p_type: a.type,
+				p_title: a.title,
+				p_date: a.date,
+				p_start: a.startTime,
+				p_end: a.endTime,
+				p_teacher: a.teacher,
+				p_room: a.room
+			});
+			return {
+				reason: r.reason,
+				sessionId: r.session_id,
+				subjectId: r.subject_id,
+				createdSubject: r.created_subject,
+				createdSession: r.created_session,
+				number: r.number ?? null
+			};
+		}
+	};
+}
 
 //#endregion
 //#region src/integration/peer.ts
 function createPeerClient(cfg, opts = {}) {
 	const now = opts.now ?? (() => /* @__PURE__ */ new Date());
 	const doFetch = opts.fetch ?? ((u, i) => fetch(u, i));
-	return { async send(payload) {
-		const linkId = payload.linkId ?? payload.linkIntentId ?? "pairing";
-		const env = makeEnvelope({
-			from: cfg.self,
-			to: cfg.peer,
-			linkId,
-			payload,
-			ttlSeconds: 120,
-			now: now()
-		});
-		const body = JSON.stringify(env);
-		const headers = {
-			"content-type": "application/json",
-			...await signRequest({
-				body,
+	/** Échange signé serveur → serveur ; `expected` = `kind` de la réponse attendue (toute autre charge utile est refusée). */
+	async function exchange(payload, linkId, expected) {
+		{
+			const env = makeEnvelope({
 				from: cfg.self,
 				to: cfg.peer,
-				kid: cfg.keyId,
-				secret: cfg.keys[cfg.keyId],
-				now: now()
-			})
-		};
-		let res;
-		try {
-			res = await doFetch(cfg.peerGatewayUrl, {
-				method: "POST",
-				headers,
-				body,
-				redirect: "error",
-				signal: AbortSignal.timeout(opts.timeoutMs ?? 8e3)
-			});
-		} catch (e) {
-			const timeout = e?.name === "TimeoutError" || e?.name === "AbortError";
-			return {
-				ok: false,
-				error: integrationError(timeout ? "TIMEOUT" : "UNAVAILABLE", "Passerelle du partenaire injoignable.")
-			};
-		}
-		const text = await res.text();
-		let verified = false;
-		try {
-			await verifyRequest({
-				method: "POST",
-				headers: res.headers,
-				body: text,
-				self: cfg.self,
-				expectedSender: cfg.peer,
-				keys: cfg.keys,
+				linkId,
+				payload,
+				ttlSeconds: 120,
 				now: now()
 			});
-			verified = true;
-		} catch {}
-		if (!verified) {
-			const code = res.status === 401 ? "UNAUTHENTICATED" : res.status === 403 ? "FORBIDDEN" : res.status === 429 ? "RATE_LIMITED" : res.status >= 500 ? "UNAVAILABLE" : "INVALID_PAYLOAD";
-			return {
+			const body = JSON.stringify(env);
+			const headers = {
+				"content-type": "application/json",
+				...await signRequest({
+					body,
+					from: cfg.self,
+					to: cfg.peer,
+					kid: cfg.keyId,
+					secret: cfg.keys[cfg.keyId],
+					now: now()
+				})
+			};
+			let res;
+			try {
+				res = await doFetch(cfg.peerGatewayUrl, {
+					method: "POST",
+					headers,
+					body,
+					redirect: "error",
+					signal: AbortSignal.timeout(opts.timeoutMs ?? 8e3)
+				});
+			} catch (e) {
+				const timeout = e?.name === "TimeoutError" || e?.name === "AbortError";
+				return {
+					ok: false,
+					error: integrationError(timeout ? "TIMEOUT" : "UNAVAILABLE", "Passerelle du partenaire injoignable.")
+				};
+			}
+			const text = await res.text();
+			let verified = false;
+			try {
+				await verifyRequest({
+					method: "POST",
+					headers: res.headers,
+					body: text,
+					self: cfg.self,
+					expectedSender: cfg.peer,
+					keys: cfg.keys,
+					now: now()
+				});
+				verified = true;
+			} catch {}
+			if (!verified) return {
 				ok: false,
-				error: integrationError(code, `Réponse non authentifiée du partenaire (HTTP ${res.status}).`)
+				error: classifyUnsigned(res.status, text)
+			};
+			let raw;
+			try {
+				raw = JSON.parse(text);
+			} catch {
+				return {
+					ok: false,
+					error: integrationError("INVALID_PAYLOAD", "Réponse illisible.")
+				};
+			}
+			const parsed = parseEnvelope(raw, now());
+			if (!parsed.ok) return {
+				ok: false,
+				error: parsed.error
+			};
+			const p = parsed.envelope.payload;
+			if (p.kind === "integration-error") return {
+				ok: false,
+				error: p
+			};
+			if (p.kind !== expected) return {
+				ok: false,
+				error: integrationError("INVALID_PAYLOAD", "Charge utile inattendue.")
+			};
+			return {
+				ok: true,
+				payload: p
 			};
 		}
-		let raw;
-		try {
-			raw = JSON.parse(text);
-		} catch {
-			return {
-				ok: false,
-				error: integrationError("INVALID_PAYLOAD", "Réponse illisible.")
-			};
+	}
+	return {
+		async send(payload) {
+			const r = await exchange(payload, payload.linkId ?? payload.linkIntentId ?? "pairing", "link-response");
+			return r.ok ? {
+				ok: true,
+				response: r.payload
+			} : r;
+		},
+		async sendLaunch(payload) {
+			const r = await exchange(payload, payload.linkId ?? "launch-identify", "course-launch-response");
+			return r.ok ? {
+				ok: true,
+				response: r.payload
+			} : r;
 		}
-		const parsed = parseEnvelope(raw, now());
-		if (!parsed.ok) return {
-			ok: false,
-			error: parsed.error
-		};
-		const p = parsed.envelope.payload;
-		if (p.kind === "integration-error") return {
-			ok: false,
-			error: p
-		};
-		if (p.kind !== "link-response") return {
-			ok: false,
-			error: integrationError("INVALID_PAYLOAD", "Charge utile inattendue.")
-		};
-		return {
-			ok: true,
-			response: p
-		};
-	} };
+	};
+}
+/**
+* Réponse NON signée du partenaire = il n'a pas pu (ou pas voulu) authentifier NOTRE serveur, ou la requête n'a jamais atteint son code.
+* Avant : un 401 devenait `UNAUTHENTICATED`, affiché à l'étudiant comme « Votre session a expiré » alors que sa session LexNote était valide.
+* Désormais la cause serveur ↔ serveur est explicite (`PEER_AUTH_FAILED` + raison), pour l'interface comme pour les journaux.
+*/
+function classifyUnsigned(status, text) {
+	let body = null;
+	try {
+		body = JSON.parse(text);
+	} catch {}
+	const ours = body?.kind === "integration-error" && typeof body.code === "string";
+	const reason = ours && typeof body?.details?.reason === "string" ? body.details.reason.slice(0, 60) : void 0;
+	const at = `HTTP ${status}`;
+	if (status === 401) {
+		if (!ours) return integrationError("PEER_AUTH_FAILED", `Passerelle du partenaire protégée par JWT (${at}) : redéployer avec --no-verify-jwt.`, { details: { reason: "gateway-verify-jwt" } });
+		return integrationError("PEER_AUTH_FAILED", `Authentification serveur refusée par le partenaire (${at}).`, { details: { reason: reason ?? "signature" } });
+	}
+	if (status === 403 && ours) return integrationError(String(body.code) === "FORBIDDEN" ? "PEER_AUTH_FAILED" : "FORBIDDEN", `Requête serveur refusée par le partenaire (${at}).`, { details: { reason: reason ?? "forbidden" } });
+	if (status === 404) return integrationError("UNAVAILABLE", `Passerelle du partenaire introuvable (${at}) : fonction non déployée ?`, { details: { reason: "gateway-not-found" } });
+	if (status === 429) return integrationError("RATE_LIMITED", `Partenaire saturé (${at}).`);
+	if (status >= 500) return integrationError("UNAVAILABLE", `Partenaire indisponible (${at}).`, { details: { reason: ours && reason ? reason : "server-error" } });
+	return integrationError("INVALID_PAYLOAD", `Réponse non authentifiée du partenaire (${at}).`, reason ? { details: { reason } } : {});
 }
 
 //#endregion
 //#region src/integration/linking.ts
 const INTENT_TTL_SECONDS = 300;
 const CONFIRM_PATH = (initiator) => `integrations/${initiator}/connect`;
-const REASON_TO_CODE = {
+const REASON_TO_CODE$1 = {
 	NOT_FOUND: "NOT_FOUND",
 	NONCE_MISMATCH: "FORBIDDEN",
 	EXPIRED: "LINK_EXPIRED",
@@ -6566,7 +6729,7 @@ const REASON_TO_CODE = {
 	ERROR: "CONFLICT",
 	PENDING: "LINK_PENDING"
 };
-const failReason = (r) => fail(REASON_TO_CODE[r] ?? "INTERNAL", r === "ALREADY_LINKED" ? "Un compte est déjà lié." : "Opération de liaison refusée.", { details: { reason: r } });
+const failReason$1 = (r) => fail(REASON_TO_CODE$1[r] ?? "INTERNAL", r === "ALREADY_LINKED" ? "Un compte est déjà lié." : "Opération de liaison refusée.", { details: { reason: r } });
 function createLinkService(d) {
 	const { cfg, store, peer } = d;
 	const now = d.now ?? (() => /* @__PURE__ */ new Date());
@@ -6613,7 +6776,8 @@ function createLinkService(d) {
 			case "CONNECTED": return {
 				...common,
 				state: "CONNECTED",
-				linkedAt: link.linkedAt ?? void 0
+				linkedAt: link.linkedAt ?? void 0,
+				autoLogin: link.autoLogin === true
 			};
 			case "PENDING": return {
 				...common,
@@ -6637,7 +6801,7 @@ function createLinkService(d) {
 		async startLink(userId) {
 			const nonce = token(32);
 			const r = await store.startIntent(userId, await sha256Hex(nonce), 300);
-			if (r.reason !== "OK" || !r.intentId) return failReason(r.reason);
+			if (r.reason !== "OK" || !r.intentId) return failReason$1(r.reason);
 			const url = new URL(CONFIRM_PATH(cfg.self), cfg.peerAppUrl.endsWith("/") ? cfg.peerAppUrl : `${cfg.peerAppUrl}/`);
 			url.searchParams.set("intent", r.intentId);
 			url.hash = `n=${nonce}`;
@@ -6660,9 +6824,10 @@ function createLinkService(d) {
 				expiresAt: r.expiresAt ?? ""
 			};
 		},
-		async confirm(userId, intentId, nonce) {
+		/** `autoLogin` : case « Autoriser REV-EM à me reconnecter automatiquement », cochée EXPLICITEMENT par l'étudiant (jamais par défaut). */
+		async confirm(userId, intentId, nonce, opts = {}) {
 			const existing = await store.getUserLink(userId);
-			if (existing && existing.status === "CONNECTED") return failReason("ALREADY_LINKED");
+			if (existing && existing.status === "CONNECTED") return failReason$1("ALREADY_LINKED");
 			const localRef = `ref_${token(24)}`;
 			const redeemed = await unwrap(req("REDEEM", {
 				linkIntentId: intentId,
@@ -6683,7 +6848,7 @@ function createLinkService(d) {
 					linkId,
 					senderReference: localRef
 				}));
-				return failReason(created.reason);
+				return failReason$1(created.reason);
 			}
 			try {
 				await unwrap(req("ACTIVATE", {
@@ -6699,8 +6864,19 @@ function createLinkService(d) {
 				throw e;
 			}
 			const act = await store.activateLink(linkId, redeemed.receiverReference);
-			if (act.reason !== "OK") return failReason(act.reason);
+			if (act.reason !== "OK") return failReason$1(act.reason);
+			if (opts.autoLogin === true) await store.setAutoLogin(userId, true);
 			return stateOf(await store.getUserLink(userId), "CONNECTED", true);
+		},
+		/** Active / désactive la seule connexion automatique, sans toucher à la liaison. Effet immédiat (lu à chaque lancement). */
+		async setAutoLogin(userId, enabled) {
+			if ((await store.setAutoLogin(userId, enabled)).reason !== "OK") return fail("LINK_NOT_FOUND", "Aucune liaison active.");
+			const link = await store.getUserLink(userId);
+			return {
+				...stateOf(link, "UNKNOWN", false),
+				state: "PENDING",
+				...link ? { autoLogin: link.autoLogin } : {}
+			};
 		},
 		async getState(userId, opts = {}) {
 			const link = await store.getUserLink(userId);
@@ -6717,7 +6893,10 @@ function createLinkService(d) {
 					linkId: link.linkId,
 					senderReference: link.localReference
 				}));
-				if (r.status === "CONNECTED") return stateOf(link, "CONNECTED", true);
+				if (r.status === "CONNECTED") return {
+					...stateOf(link, "CONNECTED", true),
+					autoLogin: link.autoLogin === true || r.autoLogin === true
+				};
 				if (r.status === "REVOKED") {
 					await store.revokeLink(link.linkId, null, "partner");
 					return stateOf(await store.getUserLink(userId), "REVOKED", false);
@@ -6769,7 +6948,7 @@ function createLinkService(d) {
 			switch (r.operation) {
 				case "INSPECT": {
 					const x = await store.inspectIntent(need(r.linkIntentId, "linkIntentId"), await sha256Hex(need(r.nonce, "nonce")));
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						displayHint: x.displayHint,
 						expiresAt: x.expiresAt
@@ -6786,7 +6965,7 @@ function createLinkService(d) {
 						linkId,
 						localRef
 					});
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						linkId,
 						receiverReference: localRef,
@@ -6795,7 +6974,7 @@ function createLinkService(d) {
 				}
 				case "ACTIVATE": {
 					const x = await store.activateLink(need(r.linkId, "linkId"), need(r.senderReference, "senderReference"));
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						linkId: r.linkId,
 						status: "CONNECTED"
@@ -6803,7 +6982,7 @@ function createLinkService(d) {
 				}
 				case "REVOKE": {
 					const x = await store.revokeLink(need(r.linkId, "linkId"), need(r.senderReference, "senderReference"), "partner");
-					if (x.reason !== "OK") return failReason(x.reason);
+					if (x.reason !== "OK") return failReason$1(x.reason);
 					return ok({
 						linkId: r.linkId,
 						status: "REVOKED"
@@ -6811,10 +6990,11 @@ function createLinkService(d) {
 				}
 				case "STATUS": {
 					const link = await store.getLink(need(r.linkId, "linkId"), need(r.senderReference, "senderReference"));
-					if (!link) return failReason("NOT_FOUND");
+					if (!link) return failReason$1("NOT_FOUND");
 					return ok({
 						linkId: link.linkId,
-						status: link.status
+						status: link.status,
+						...link.autoLogin ? { autoLogin: true } : {}
 					});
 				}
 			}
@@ -6832,6 +7012,236 @@ function createLinkService(d) {
 			return link;
 		}
 	};
+}
+
+//#endregion
+//#region src/integration/launch.ts
+/**
+* Ouverture d'un cours REV-EM dans LexNote — « Prendre mes notes dans LexNote » (extension de `lexnote-revem/v1`, aucune architecture parallèle).
+*
+*   REV-EM (initiateur)                                   LexNote (répondant)
+*   startLaunch ─ vérifie la liaison (sonde signée), établit le cours depuis SES données,
+*                 fige une intention (≤ 5 min, usage unique) ─▶ URL  /integrations/revem/launch?intent=<uuid>#n=<nonce>
+*                                                         openLaunch ─▶ REDEEM_LAUNCH (signé) ─▶ [REV-EM] consomme l'intention, renvoie le cours
+*                                                                    ─▶ openCourse (RPC) : matière + séance, IDEMPOTENTES (contraintes UNIQUE en base)
+*                                                                    ─▶ { sessionId } → le navigateur ouvre /session/<id>?panel=transcript
+*
+* Connexion automatique (aucune session LexNote dans ce navigateur, consentement explicite de l'étudiant) :
+*   signInLaunch ─▶ IDENTIFY_LAUNCH (signé, lecture seule, ≤ 120 s) ─▶ [REV-EM] renvoie la liaison de l'intention, sans la consommer
+*                ─▶ liaison CONNECTED + consentement « connexion automatique » vérifiés ICI (base LexNote)
+*                ─▶ openLaunch habituel (REDEEM_LAUNCH : usage unique) ─▶ session Supabase ordinaire créée par le serveur (voir sessions.ts)
+*
+* Sécurité : le navigateur ne transmet jamais le cours (seulement un identifiant d'événement à REV-EM, puis intention + nonce à LexNote) ;
+* le cours vient du serveur de REV-EM (`LaunchSource`), il est validé par zod, borné et normalisé ici avant tout usage.
+*/
+const LAUNCH_TTL_SECONDS = 300;
+const LAUNCH_PATH = (initiator) => `integrations/${initiator}/launch`;
+const REASON_TO_CODE = {
+	NOT_FOUND: "NOT_FOUND",
+	EXPIRED: "LINK_EXPIRED",
+	NONCE_MISMATCH: "FORBIDDEN",
+	USED: "GONE",
+	CANCELLED: "GONE",
+	LINK_NOT_CONNECTED: "LINK_REVOKED",
+	RATE_LIMITED: "RATE_LIMITED",
+	INVALID: "INVALID_PAYLOAD"
+};
+const failReason = (r) => fail(REASON_TO_CODE[r] ?? "INTERNAL", "Ouverture du cours refusée.", { details: { reason: r } });
+const clean = (v, max) => {
+	const t = (v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+	return t ? t.slice(0, max) : null;
+};
+/** Clé de rapprochement par défaut quand REV-EM n'a pas d'identifiant de matière : le nom normalisé (sans accents, minuscules). */
+const subjectKeyFromName = (name) => `name:${name.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100)}`;
+/** Normalise un cours REÇU (donnée non fiable) en paramètres sûrs pour la base. Wall-clock de l'émetteur conservé (date et HH:MM tels qu'affichés dans REV-EM). */
+function planCourseOpen(raw, ctx) {
+	const parsed = externalCourseEventSchema.safeParse(raw);
+	if (!parsed.success) return fail("INVALID_PAYLOAD", "Cours invalide.", { details: { issues: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`).join(" | ").slice(0, 290) } });
+	const e = parsed.data;
+	if (e.cancelled) return fail("GONE", "Ce cours est annulé.");
+	const title = clean(e.title, 300) ?? "Cours";
+	const subjectName = clean(e.subject?.name, 160) ?? clean(e.title, 160) ?? "Cours";
+	const type = SESSION_TYPE_HINTS.includes(e.sessionTypeHint ?? "") ? e.sessionTypeHint : "OTHER";
+	const date = e.startsAt.slice(0, 10);
+	const t = (iso) => iso.slice(11, 16);
+	return {
+		userId: ctx.userId,
+		provider: ctx.provider,
+		linkId: ctx.linkId,
+		eventKey: e.externalId,
+		subjectKey: e.subject?.ref ?? subjectKeyFromName(subjectName),
+		subjectName,
+		type,
+		title,
+		date,
+		startTime: e.allDay ? null : t(e.startsAt),
+		endTime: e.allDay ? null : t(e.endsAt),
+		teacher: clean(e.teacher, 120),
+		room: clean(e.location, 120)
+	};
+}
+function createLaunchService(d) {
+	const { cfg, links, linkStore, launchStore, peer } = d;
+	const token = d.token ?? randomToken;
+	/** LexNote → REV-EM : à quelle liaison appartient cette intention ? (lecture seule ; erreurs du partenaire propagées telles quelles) */
+	async function identify(intentId, nonce) {
+		const res = await peer.sendLaunch({
+			integrationVersion: INTEGRATION_VERSION,
+			kind: "course-launch-request",
+			operation: "IDENTIFY_LAUNCH",
+			launchIntentId: intentId,
+			nonce
+		});
+		if (!res.ok) throw new IntegrationFailure({
+			...res.error,
+			code: normalizeErrorCode(res.error.code)
+		});
+		if (!res.response.ok || !res.response.linkId || !res.response.receiverReference) return fail("NOT_FOUND", "Lancement introuvable.");
+		return {
+			linkId: res.response.linkId,
+			partnerRef: res.response.receiverReference
+		};
+	}
+	/** Le lancement vise-t-il une AUTRE liaison que celle de l'utilisateur connecté ? (seulement après un nonce vérifié par REV-EM) */
+	async function belongsToAnotherAccount(intentId, nonce, ownLinkId) {
+		try {
+			return (await identify(intentId, nonce)).linkId !== ownLinkId;
+		} catch {
+			return false;
+		}
+	}
+	const service = {
+		/** REV-EM · action de l'étudiant (JWT vérifié) : prépare l'ouverture et renvoie l'URL de LexNote. */
+		async startLaunch(userId, input) {
+			if (!d.source) return fail("INTERNAL", "Source de planning non configurée.");
+			const state = await links.getState(userId, { probe: true });
+			if (state.state !== "CONNECTED" || !state.linkId) {
+				const code = state.state === "NOT_CONNECTED" ? "LINK_NOT_FOUND" : state.state === "PENDING" ? "LINK_PENDING" : state.state === "REVOKED" ? "LINK_REVOKED" : "UNAVAILABLE";
+				return fail(code, "LexNote n’est pas connecté.", { details: {
+					state: state.state,
+					...state.errorCode ? { errorCode: state.errorCode } : {}
+				} });
+			}
+			const event = await d.source.resolveEvent(userId, input);
+			if (!event) return fail("NOT_FOUND", "Évènement introuvable.");
+			const nonce = token(32);
+			const r = await launchStore.startLaunch({
+				userId,
+				linkId: state.linkId,
+				eventKey: event.externalId,
+				event,
+				nonceHash: await sha256Hex(nonce),
+				ttlSeconds: 300
+			});
+			if (r.reason !== "OK" || !r.intentId) return failReason(r.reason);
+			const url = new URL(LAUNCH_PATH(cfg.self), cfg.peerAppUrl.endsWith("/") ? cfg.peerAppUrl : `${cfg.peerAppUrl}/`);
+			url.searchParams.set("intent", r.intentId);
+			url.hash = `n=${nonce}`;
+			return {
+				launchIntentId: r.intentId,
+				expiresAt: r.expiresAt,
+				launchUrl: url.toString()
+			};
+		},
+		/** LexNote · action de l'étudiant (JWT vérifié) : consomme l'intention auprès de REV-EM puis crée / retrouve matière et séance. */
+		async openLaunch(userId, intentId, nonce) {
+			if (!d.courses) return fail("INTERNAL", "Création de séances non configurée.");
+			const link = await linkStore.getUserLink(userId);
+			if (!link || link.status !== "CONNECTED") {
+				if (await belongsToAnotherAccount(intentId, nonce, null)) return fail("WRONG_ACCOUNT", "Ce cours est lié à un autre compte LexNote.");
+				if (!link) return fail("LINK_NOT_FOUND", "REV-EM n’est pas connecté.");
+				return fail(link.status === "REVOKED" ? "LINK_REVOKED" : "LINK_PENDING", "Liaison non active.");
+			}
+			const res = await peer.sendLaunch({
+				integrationVersion: INTEGRATION_VERSION,
+				kind: "course-launch-request",
+				operation: "REDEEM_LAUNCH",
+				launchIntentId: intentId,
+				nonce,
+				linkId: link.linkId,
+				senderReference: link.localReference
+			});
+			if (!res.ok) {
+				const code = normalizeErrorCode(res.error.code);
+				if (code === "NOT_FOUND" && await belongsToAnotherAccount(intentId, nonce, link.linkId)) return fail("WRONG_ACCOUNT", "Ce cours est lié à un autre compte LexNote.");
+				throw new IntegrationFailure({
+					...res.error,
+					code
+				});
+			}
+			if (!res.response.ok || !res.response.event) return fail("NOT_FOUND", "Cours introuvable.");
+			const params = planCourseOpen(res.response.event, {
+				userId,
+				linkId: link.linkId,
+				provider: cfg.peer
+			});
+			const out = await d.courses.openCourse(params);
+			if (out.reason !== "OK" || !out.sessionId || !out.subjectId) return failReason(out.reason);
+			return {
+				...out,
+				sessionId: out.sessionId,
+				subjectId: out.subjectId
+			};
+		},
+		/**
+		* LexNote · SANS session (route publique) : connexion automatique depuis un lancement REV-EM.
+		* Refus explicites et sans effet de bord tant que l'intention n'est pas consommée : consentement absent → AUTO_LOGIN_DISABLED,
+		* liaison révoquée → LINK_REVOKED, intention trop ancienne / déjà utilisée / mauvais nonce → erreur de REV-EM.
+		*/
+		async signInLaunch(intentId, nonce) {
+			if (!d.sessions) return fail("INTERNAL", "Connexion automatique non configurée.");
+			const id = await identify(intentId, nonce);
+			const link = await linkStore.getLink(id.linkId, id.partnerRef);
+			if (!link || link.status !== "CONNECTED") return fail("LINK_REVOKED", "Liaison non active.");
+			if (!link.autoLogin) return fail("AUTO_LOGIN_DISABLED", "Connexion automatique non autorisée.");
+			const opened = await service.openLaunch(link.userId, intentId, nonce);
+			const again = await linkStore.getLink(id.linkId, id.partnerRef);
+			if (!again || again.status !== "CONNECTED" || !again.autoLogin) return fail("AUTO_LOGIN_DISABLED", "Connexion automatique retirée.");
+			const session = await d.sessions.mint(link.userId);
+			return {
+				...opened,
+				userId: link.userId,
+				session
+			};
+		},
+		/** REV-EM · côté serveur (requête signée de LexNote, déjà authentifiée) : consomme l'intention, renvoie le cours figé. */
+		async handlePeerLaunch(r) {
+			if (r.operation === "IDENTIFY_LAUNCH") {
+				const x = await launchStore.identifyLaunch({
+					intentId: r.launchIntentId,
+					nonceHash: await sha256Hex(r.nonce)
+				});
+				if (x.reason !== "OK" || !x.linkId || !x.localReference) return failReason(x.reason === "OK" ? "NOT_FOUND" : x.reason);
+				return {
+					integrationVersion: INTEGRATION_VERSION,
+					kind: "course-launch-response",
+					operation: r.operation,
+					ok: true,
+					linkId: x.linkId,
+					receiverReference: x.localReference,
+					expiresAt: x.expiresAt
+				};
+			}
+			if (!r.linkId || !r.senderReference) return fail("INVALID_PAYLOAD", "Liaison manquante.");
+			const link = await links.assertLinkUsable(r.linkId, r.senderReference);
+			const x = await launchStore.redeemLaunch({
+				intentId: r.launchIntentId,
+				nonceHash: await sha256Hex(r.nonce),
+				linkId: link.linkId
+			});
+			if (x.reason !== "OK") return failReason(x.reason);
+			return {
+				integrationVersion: INTEGRATION_VERSION,
+				kind: "course-launch-response",
+				operation: r.operation,
+				ok: true,
+				linkId: link.linkId,
+				event: x.event,
+				expiresAt: x.expiresAt
+			};
+		}
+	};
+	return service;
 }
 
 //#endregion
@@ -6903,10 +7313,12 @@ async function handleGatewayRequest(req, deps) {
 		if (!parsed.ok) throw new IntegrationFailure(parsed.error);
 		const env = parsed.envelope;
 		if (env.from !== v.from || env.to !== cfg.self) return fail("FORBIDDEN", "Enveloppe incohérente avec la signature.");
-		const payload = expectPayload(env, "link-request");
 		let out;
 		try {
-			out = await service.handlePeerRequest(payload);
+			if (env.payload.kind === "course-launch-request") {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Ouverture de cours non prise en charge ici.");
+				out = await deps.launch.handlePeerLaunch(env.payload);
+			} else out = await service.handlePeerRequest(expectPayload(env, "link-request"));
 		} catch (e) {
 			const err = e instanceof IntegrationFailure ? e.error : integrationError("INTERNAL", "Erreur interne.");
 			if (!(e instanceof IntegrationFailure)) console.error("[integration-gateway]", e);
@@ -6945,8 +7357,14 @@ const ACTIONS = [
 	"inspect",
 	"confirm",
 	"status",
-	"revoke"
+	"revoke",
+	"auto-login",
+	"launch-start",
+	"launch-open",
+	"launch-signin"
 ];
+/** Seule action SANS session : la connexion automatique. Elle n'accepte qu'une intention + nonce (capacité à usage unique, ≤ 120 s). */
+const PUBLIC_ACTIONS = /* @__PURE__ */ new Set(["launch-signin"]);
 function cors(origin) {
 	return origin ? {
 		"access-control-allow-origin": origin,
@@ -6978,10 +7396,10 @@ async function handleUserRequest(req, deps) {
 			ok: false,
 			error: integrationError("INVALID_PAYLOAD", "Méthode non autorisée.")
 		}, 405);
-		const userId = await deps.authenticate(req);
 		const body = await req.json().catch(() => ({}));
 		const action = String(body.action ?? "");
 		if (!ACTIONS.includes(action)) return fail("INVALID_PAYLOAD", "Action inconnue.");
+		const userId = PUBLIC_ACTIONS.has(action) ? "" : await deps.authenticate(req);
 		const uuid = (v) => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : fail("INVALID_PAYLOAD", "Identifiant invalide.");
 		const nonce = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{32,100}$/.test(v) ? v : fail("INVALID_PAYLOAD", "Code invalide.");
 		switch (action) {
@@ -6997,7 +7415,7 @@ async function handleUserRequest(req, deps) {
 				...await service.inspect(uuid(body.linkIntentId), nonce(body.nonce))
 			});
 			case "confirm": {
-				const state = await service.confirm(userId, uuid(body.linkIntentId), nonce(body.nonce));
+				const state = await service.confirm(userId, uuid(body.linkIntentId), nonce(body.nonce), { autoLogin: body.autoLogin === true });
 				const back = new URL(cfg.peerAppUrl);
 				back.searchParams.set(`${cfg.self}_link`, "connected");
 				return reply({
@@ -7014,6 +7432,47 @@ async function handleUserRequest(req, deps) {
 				ok: true,
 				...await service.revoke(userId)
 			});
+			case "auto-login":
+				if (typeof body.enabled !== "boolean") return fail("INVALID_PAYLOAD", "Valeur attendue : enabled (booléen).");
+				return reply({
+					ok: true,
+					state: await service.setAutoLogin(userId, body.enabled)
+				});
+			case "launch-start": {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Action non disponible.");
+				const eventId = typeof body.eventId === "string" && /^[A-Za-z0-9._:~@-]{1,128}$/.test(body.eventId) ? body.eventId : fail("INVALID_PAYLOAD", "Évènement invalide.");
+				const tz = typeof body.tz === "string" && body.tz.length <= 64 ? body.tz : void 0;
+				return reply({
+					ok: true,
+					...await deps.launch.startLaunch(userId, {
+						eventId,
+						tz
+					})
+				});
+			}
+			case "launch-open": {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Action non disponible.");
+				const r = await deps.launch.openLaunch(userId, uuid(body.launchIntentId), nonce(body.nonce));
+				return reply({
+					ok: true,
+					sessionId: r.sessionId,
+					subjectId: r.subjectId,
+					createdSession: !!r.createdSession,
+					createdSubject: !!r.createdSubject
+				});
+			}
+			case "launch-signin": {
+				if (!deps.launch) return fail("INVALID_PAYLOAD", "Action non disponible.");
+				const r = await deps.launch.signInLaunch(uuid(body.launchIntentId), nonce(body.nonce));
+				return reply({
+					ok: true,
+					session: r.session,
+					sessionId: r.sessionId,
+					subjectId: r.subjectId,
+					createdSession: !!r.createdSession,
+					createdSubject: !!r.createdSubject
+				});
+			}
 		}
 	} catch (e) {
 		const err = e instanceof IntegrationFailure ? e.error : integrationError("INTERNAL", "Erreur interne.");
@@ -7026,4 +7485,58 @@ async function handleUserRequest(req, deps) {
 }
 
 //#endregion
-export { APPS, ARTIFACT_KINDS, CALENDAR_SOURCES, CONFIRM_PATH, CONNECTION_STATES, DEEP_LINK_KINDS, DEV_ORIGINS, ERROR_CODES, GATEWAY_ROUTE, H, INTEGRATION_NAMESPACE, INTEGRATION_VERSION, INTENT_TTL_SECONDS, IntegrationFailure, LINK_OPERATIONS, LINK_STATUSES, MAX_SKEW_SECONDS, OFFICIAL_APP_URLS, PEER_STATUSES, PRODUCTION_ORIGINS, PROGRESS_KINDS, SCOPES, SESSION_TYPE_HINTS, SIGNATURE_SCHEME, SUPPORTED_MAJORS, allowedBrowserOrigin, canonicalString, checkOrigin, connectionStateSchema, corsHeadersFor, courseProgressEventSchema, createLinkService, createPeerClient, createRpcStore, deepLinkTargetSchema, envelopeSchema, expectPayload, externalCourseEventSchema, externalSubjectRefSchema, fail, findSecrets, handleGatewayRequest, handleUserRequest, httpStatusOf, integrationError, integrationErrorSchema, integrationIdentitySchema, isSupportedVersion, lexNoteSessionReferenceSchema, linkRequestSchema, linkResponseSchema, majorOf, makeEnvelope, normalizeErrorCode, parseEnvelope, progressEventId, randomToken, readBrowserOrigins, readIntegrationConfig, sha256Hex, signRequest, studyArtifactReferenceSchema, timingSafeEqual, verifyRequest };
+//#region src/integration/sessions.ts
+/**
+* Création d'une session Supabase LexNote NORMALE pour un utilisateur déjà identifié par une liaison REV-EM ⇄ LexNote
+* (connexion automatique, consentement explicite). Côté serveur LexNote uniquement.
+*
+* Mécanisme (aucun mot de passe, aucun secret vers le navigateur) :
+*   1. Auth admin (service_role, dans l'Edge Function) génère un lien de connexion à usage unique pour CET utilisateur
+*      (`generateLink` — aucun e-mail n'est envoyé) et n'en garde que l'empreinte `hashed_token` ;
+*   2. le serveur l'échange IMMÉDIATEMENT (`verifyOtp`, client public) : le jeton est consommé côté serveur, il n'existe plus nulle part ;
+*   3. il renvoie au navigateur, dans le CORPS d'une réponse HTTPS (jamais dans une URL), la paire access / refresh d'une session ordinaire —
+*      exactement ce que renverrait une connexion par mot de passe. Le navigateur l'installe avec `auth.setSession`.
+* Le jeton d'accès est un JWT utilisateur standard (rôle `authenticated`, durée Supabase habituelle), jamais un JWT administratif.
+*/
+function createSessionMinter(admin, publicAuth, now = () => Date.now()) {
+	return { async mint(userId) {
+		const u = await admin.getUserById(userId);
+		const email = u.data.user?.email;
+		if (u.error || !u.data.user || !email) return fail("UNAVAILABLE", "Compte LexNote introuvable pour la connexion automatique.");
+		if (u.data.user.banned_until && Date.parse(u.data.user.banned_until) > now()) return fail("FORBIDDEN", "Compte suspendu.");
+		const link = await admin.generateLink({
+			type: "magiclink",
+			email
+		});
+		const hashed = link.data.properties?.hashed_token;
+		if (link.error || !hashed || link.data.user && link.data.user.id !== userId) {
+			console.error("[integration] generateLink", link.error?.message);
+			return fail("UNAVAILABLE", "Connexion automatique indisponible.");
+		}
+		let v = await publicAuth().verifyOtp({
+			token_hash: hashed,
+			type: "magiclink"
+		});
+		if (v.error && /type/i.test(v.error.message)) v = await publicAuth().verifyOtp({
+			token_hash: hashed,
+			type: "email"
+		});
+		const s = v.data.session;
+		if (v.error || !s?.access_token || !s.refresh_token) {
+			console.error("[integration] verifyOtp", v.error?.message);
+			return fail("UNAVAILABLE", "Connexion automatique indisponible.");
+		}
+		if (s.user && s.user.id !== userId) return fail("FORBIDDEN", "Session inattendue.");
+		const expiresIn = typeof s.expires_in === "number" ? s.expires_in : 3600;
+		return {
+			access_token: s.access_token,
+			refresh_token: s.refresh_token,
+			expires_in: expiresIn,
+			expires_at: s.expires_at ?? Math.floor(now() / 1e3) + expiresIn,
+			token_type: "bearer"
+		};
+	} };
+}
+
+//#endregion
+export { APPS, ARTIFACT_KINDS, CALENDAR_SOURCES, CONFIRM_PATH, CONNECTION_STATES, DEEP_LINK_KINDS, DEV_ORIGINS, ERROR_CODES, GATEWAY_ROUTE, H, INTEGRATION_NAMESPACE, INTEGRATION_VERSION, INTENT_TTL_SECONDS, IntegrationFailure, LAUNCH_OPERATIONS, LAUNCH_PATH, LAUNCH_TTL_SECONDS, LINK_OPERATIONS, LINK_STATUSES, MAX_SKEW_SECONDS, OFFICIAL_APP_URLS, PEER_STATUSES, PRODUCTION_ORIGINS, PROGRESS_KINDS, SCOPES, SESSION_TYPE_HINTS, SIGNATURE_SCHEME, SUPPORTED_MAJORS, allowedBrowserOrigin, canonicalString, checkOrigin, classifyUnsigned, connectionStateSchema, corsHeadersFor, courseLaunchRequestSchema, courseLaunchResponseSchema, courseProgressEventSchema, createLaunchService, createLinkService, createPeerClient, createRpcLaunchStore, createRpcStore, createSessionMinter, deepLinkTargetSchema, envelopeSchema, expectPayload, externalCourseEventSchema, externalSubjectRefSchema, fail, findSecrets, handleGatewayRequest, handleUserRequest, httpStatusOf, integrationError, integrationErrorSchema, integrationIdentitySchema, isSupportedVersion, lexNoteSessionReferenceSchema, linkRequestSchema, linkResponseSchema, majorOf, makeEnvelope, normalizeErrorCode, parseEnvelope, planCourseOpen, progressEventId, randomToken, readBrowserOrigins, readIntegrationConfig, sha256Hex, signRequest, studyArtifactReferenceSchema, subjectKeyFromName, timingSafeEqual, verifyRequest };

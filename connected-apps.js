@@ -26,7 +26,7 @@
     switch(conn.state){
       case "CONNECTED":
         return conn.verified === true && conn.peerStatus === "CONNECTED"
-          ? { kind: "connected", since: conn.linkedAt || null }
+          ? { kind: "connected", since: conn.linkedAt || null, autoLogin: conn.autoLogin === true }
           : { kind: "pending" };
       case "NOT_CONNECTED": return { kind: "not_connected" };
       case "PENDING":       return { kind: "pending" };
@@ -43,7 +43,9 @@
       case "INTERNAL": case "NOT_DEPLOYED": case "NOT_CONFIGURED": return "unconfigured";
       case "INTENT_EXPIRED": case "EXPIRED": return "expired";
       case "INTENT_USED": case "USED": return "used";
-      case "UNAUTHENTICATED": case "UNAUTHORIZED": return "session";
+      case "UNAUTHENTICATED": case "UNAUTHORIZED": case "SESSION_REQUIRED": return "session";
+      /* Refus entre les deux SERVEURS (signature, clé, horloge, passerelle protégée par JWT) : ce n'est pas la session de l'étudiant. */
+      case "PEER_AUTH_FAILED": return "peer_auth";
       default: return "generic";
     }
   }
@@ -51,8 +53,8 @@
   /* Seules les actions suivantes sont proposées à l'étudiant selon l'état affiché. */
   function actions(view){
     return {
-      connect:    view.kind === "not_connected" || view.kind === "revoked" || (view.kind === "error" && ["unreachable", "unconfigured", "network", "session"].indexOf(view.reason) < 0),
-      disconnect: view.kind === "connected" || view.kind === "pending" || (view.kind === "error" && ["unconfigured", "network", "session"].indexOf(view.reason) < 0),
+      connect:    view.kind === "not_connected" || view.kind === "revoked" || (view.kind === "error" && ["unreachable", "unconfigured", "network", "session", "peer_auth"].indexOf(view.reason) < 0),
+      disconnect: view.kind === "connected" || view.kind === "pending" || (view.kind === "error" && ["unconfigured", "network", "session", "peer_auth"].indexOf(view.reason) < 0),
       verify:     view.kind !== "loading",
     };
   }
@@ -68,7 +70,7 @@
       case "loading":       return "lnk.checking";
       default:
         return view.reason === "unreachable" || view.reason === "network" ? "lnk.unavailable"
-             : view.reason === "unconfigured" ? "lnk.config_error" : "lnk.error";
+             : view.reason === "unconfigured" || view.reason === "peer_auth" ? "lnk.config_error" : "lnk.error";
     }
   }
 
@@ -94,5 +96,35 @@
     return { status: v === "connected" ? "connected" : "unknown", cleanSearch: rest ? "?" + rest : "" };
   }
 
-  global.RevemLinks = { RETURN_PARAM: RETURN_PARAM, describe: describe, statusKey: statusKey, actions: actions, safeConfirmUrl: safeConfirmUrl, parseReturn: parseReturn, errorReason: errorReason };
+  /* Bouton « Prendre mes notes dans LexNote » (fiche d'un cours du planning). Un seul état à la fois, jamais deux boutons :
+       opening     → ouverture en cours (désactivé : aucun double clic)
+       checking    → connexion pas encore vérifiée auprès du serveur (désactivé)
+       ready       → connecté et confirmé par les DEUX côtés : un clic suffit
+       connect     → pas connecté / en attente / révoqué : mène à Réglages › Applications connectées (rien n'est créé)
+       unavailable → LexNote injoignable ou non configuré : message + revérification */
+  function launchView(view, launch, loaded){
+    if(launch && launch.busy) return { kind: "opening", disabled: true };
+    if(!view || view.kind === "loading") return { kind: loaded ? "unavailable" : "checking", disabled: !loaded };
+    switch(view.kind){
+      case "connected": return { kind: "ready", disabled: false };
+      case "not_connected": case "pending": case "revoked": return { kind: "connect", disabled: false };
+      default: return { kind: "unavailable", disabled: false };
+    }
+  }
+
+  /* Échec de « launch-start » → raison d'affichage. NOT_FOUND = le cours n'est pas (encore) dans le compte en ligne. */
+  function launchErrorReason(code){
+    switch(code){
+      case "NOT_FOUND": return "notfound";
+      case "LINK_REVOKED": case "LINK_NOT_FOUND": case "FORBIDDEN": return "notlinked";
+      case "RATE_LIMITED": return "rate";
+      case "OFFLINE": case "NETWORK": return "network";
+      case "UNAUTHENTICATED": case "UNAUTHORIZED": case "SESSION_REQUIRED": return "session";
+      case "PEER_AUTH_FAILED": return "peer_auth";
+      case "UNAVAILABLE": case "TIMEOUT": case "PEER_UNREACHABLE": case "NOT_DEPLOYED": case "NOT_CONFIGURED": case "INTERNAL": return "unavailable";
+      default: return "generic";
+    }
+  }
+
+  global.RevemLinks = { launchView: launchView, launchErrorReason: launchErrorReason, RETURN_PARAM: RETURN_PARAM, describe: describe, statusKey: statusKey, actions: actions, safeConfirmUrl: safeConfirmUrl, parseReturn: parseReturn, errorReason: errorReason };
 })(typeof globalThis !== "undefined" ? globalThis : this);
