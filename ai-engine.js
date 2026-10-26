@@ -365,7 +365,10 @@
      Plafonner la réserve évite de rogner un contexte de cours (≈7 000 signes,
      ≈2 200 jetons) pour garantir une réponse que le modèle n'aurait de toute
      façon pas dépassée : la fenêtre de 4096 jetons reste le vrai plafond. */
-  function promptBudgetTokens(maxNewTokens){ return Math.max(600, CONTEXT_TOKENS - Math.min(maxNewTokens || 800, 1000) - 150); }
+  /* Place laissée au prompt = fenêtre − réponse demandée − marge (modèle de conversation, jetons spéciaux). La réponse n'est plus
+     plafonnée à 1 000 dans ce calcul : la fiche et les JSON des supports demandent 1 600 jetons, et l'ancien plafond laissait un prompt
+     dont la somme avec la réponse dépassait la fenêtre de 4 096 — la réponse était alors coupée (finish_reason « length »). */
+  function promptBudgetTokens(maxNewTokens){ return Math.max(600, CONTEXT_TOKENS - Math.min(maxNewTokens || 800, 2000) - 150); }
   var TASK_MAX_TOKENS = { chat: 1000, json: 1600, condense: 700, detect: 400, fiche: 1600, summary: 900 };
   function maxTokensFor(task){ return TASK_MAX_TOKENS[task] || TASK_MAX_TOKENS.chat; }
 

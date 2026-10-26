@@ -228,3 +228,13 @@ Prépare : ouvre **Diagnostic** (la ligne *activeModel* et la ligne **output** t
 1. Poser `x² - 5x + 6 = 0`, `2x + 4 = 10`, `x² = 4`, `c'est quoi l'inflation ?`, `explique moi l'écart type`, `calcule un taux de variation de 100 à 120`, puis une question longue.
 2. Pour chacune, panneau de diagnostic : `generationCount` (attendu 1), `attempts`, `stopReason`, `firstRepeatStage` (attendu : `null`), `chunks.deltaChars` = `hostChars`.
 3. Pour `x² - 5x + 6 = 0` : la réponse suit le format (méthode, équations, résultat, vérification, fin), sans texte coupé ni `<think>`, en français naturel. Notez `rawModelOutput` via `revemLastRawOutput()` si une répétition réapparaît : `firstRepeatStage = raw` désigne le modèle (envisager alors une pénalité de répétition, **non activée ici** car elle risque de fausser des chiffres qui reviennent légitimement).
+
+## 16. JSON des supports d'un cours : lecture tolérante (`parseJsonLenient`)
+
+Les supports d'un cours (fiche, banques de questions et de flashcards, questions de révision) sont demandés en JSON
+(assembleur en mode `light` : seuls le raisonnement et les balises sont filtrés, jamais la structure). `RevemOutput.parseJsonLenient(texte,
+"array" | "object")` retire le texte et les clôtures ```json, tolère les virgules traînantes et, quand la réponse est COUPÉE
+(limite de jetons ou fenêtre de 4 096 jetons atteinte), garde les éléments complets déjà écrits — jamais un élément partiel complété.
+Un élément illisible n'emporte plus les autres. Rien n'est inventé : sans JSON lisible, la fonction renvoie `null` et l'étape échoue
+avec la cause `BAD_FORMAT` (« Réponse illisible »). Voir `COURSE_HUB.md`, « Panne “Erreur — à relancer” », et
+`tests/output-processor.test.js`.

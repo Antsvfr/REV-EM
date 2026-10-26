@@ -474,7 +474,80 @@
     return a.finish(o || {});
   }
 
+  /* ── 9. JSON D'UN PETIT MODÈLE : lecture tolérante, jamais d'invention ─────────────────────────────────────
+     Les supports d'un cours (fiche, banques de questions et de flashcards, questions de révision) sont demandés en JSON. Un petit modèle
+     local s'en écarte de façons connues : texte ou bloc ```json autour, virgules traînantes, et surtout réponse COUPÉE (limite de jetons ou
+     fenêtre de contexte atteinte : finish_reason « length »). L'ancien code rejetait alors TOUT. Ici :
+       • on retire le texte autour et les clôtures de code ;
+       • on lit la valeur complète si elle est valide (virgules traînantes retirées) ;
+       • sinon, on garde les éléments COMPLETS déjà écrits (un tableau coupé au 7e élément rend les 6 premiers ; un objet coupé rend ses
+         sections terminées) et on referme ce qui reste ouvert. Aucun élément partiel n'est jamais complété ni inventé.
+     `want` : "array" | "object". Retourne la valeur lue, ou null. */
+  function stripFences(s){ return String(s == null ? "" : s).replace(/```(?:json|JSON)?\s*/g, "").replace(/```/g, ""); }
+  function noTrailingCommas(s){ return s.replace(/,\s*([}\]])/g, "$1"); }
+  function tryParse(s){ try{ return { ok: true, v: JSON.parse(s) }; }catch(e){ try{ return { ok: true, v: JSON.parse(noTrailingCommas(s)) }; }catch(e2){ return { ok: false }; } } }
+  /* Parcourt une valeur JSON à partir de `start` (un « [ » ou un « { ») en respectant les chaînes. Renvoie la fin si elle est fermée, et
+     les « points de coupe sûrs » : juste après un élément complet d'un conteneur, avec la pile des conteneurs encore ouverts. */
+  function scanJson(s, start){
+    var stack = [], inStr = false, esc = false, cuts = [];
+    for(var i = start; i < s.length; i++){
+      var c = s[i];
+      if(inStr){
+        if(esc) esc = false;
+        else if(c === "\\") esc = true;
+        else if(c === "\""){ inStr = false; if(stack.length && stack[stack.length - 1] === "[") cuts.push({ at: i + 1, stack: stack.slice() }); }
+        continue;
+      }
+      if(c === "\""){ inStr = true; continue; }
+      if(c === "[" || c === "{"){ stack.push(c); continue; }
+      if(c === "]" || c === "}"){
+        stack.pop();
+        if(!stack.length) return { end: i + 1, cuts: cuts };
+        cuts.push({ at: i + 1, stack: stack.slice() });
+      }
+    }
+    return { end: -1, cuts: cuts };
+  }
+  function closeAt(s, start, cut){
+    var head = s.slice(start, cut.at).replace(/[\s,:]+$/, "");
+    var tail = "";
+    for(var j = cut.stack.length - 1; j >= 0; j--) tail += cut.stack[j] === "[" ? "]" : "}";
+    return tryParse(head + tail);
+  }
+  function parseJsonLenient(text, want){
+    var s = stripFences(text);
+    var open = want === "object" ? "{" : "[";
+    var start = s.indexOf(open);
+    if(start < 0) return null;
+    var sc = scanJson(s, start);
+    if(sc.end > 0){
+      var whole = tryParse(s.slice(start, sc.end));
+      if(whole.ok) return whole.v;
+    }
+    if(want !== "object"){
+      /* Tableau coupé, ou dont un élément est illisible : on lit CHAQUE élément complet du premier niveau séparément. Un élément coupé
+         (le dernier) ou mal formé est écarté ; les autres sont gardés tels quels. */
+      var out = [], from = start + 1;
+      sc.cuts.forEach(function(c){
+        if(c.stack.length !== 1) return;
+        var seg = s.slice(from, c.at).replace(/^[\s,]+/, "");
+        from = c.at;
+        if(!seg) return;
+        var r = tryParse(seg);
+        if(r.ok) out.push(r.v);
+      });
+      return out.length ? out : null;
+    }
+    /* Objet coupé : du point de coupe le plus tardif au plus précoce, la première version qui se lit (sections déjà terminées). */
+    for(var k = sc.cuts.length - 1; k >= 0; k--){
+      var r = closeAt(s, start, sc.cuts[k]);
+      if(r.ok && r.v && typeof r.v === "object") return r.v;
+    }
+    return null;
+  }
+
   global.RevemOutput = {
+    parseJsonLenient: parseJsonLenient,
     extract: extract, trimPartial: trimPartial, removeSpecial: removeSpecial, findLoop: findLoop, collapseLoop: collapseLoop, findRepeat: findRepeat, trimIncompleteTail: trimIncompleteTail, repetitionStats: repetitionStats, tidy: tidy, dedupe: dedupe,
     scriptStats: scriptStats, detectForeignScript: detectForeignScript, foreignAllowed: foreignAllowed,
     createAssembler: createAssembler, validate: validate, processComplete: processComplete,
