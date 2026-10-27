@@ -524,7 +524,8 @@
   }
   function courseSentences(text){
     var flat = String(text || "").replace(/\r/g, "").replace(/(\w)-\n(\w)/g, "$1$2").replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
-    return flat.split(/(?<=[.!?…])\s+(?=[A-ZÀ-Ý0-9«"(])/).map(function(x){ return x.trim(); }).filter(function(x){ return x.length >= 40 && x.length <= 260 && /[a-zà-ÿ]{3}/i.test(x); });
+    /* Sans lookbehind (`(?<=…)` : Safari / WKWebView < 16.4 refusent tout le fichier) : on marque les fins de phrase, puis on coupe. */
+    return flat.replace(/([.!?…])\s+(?=[A-ZÀ-Ý0-9«"(])/g, "$1\u0001").split("\u0001").map(function(x){ return x.trim(); }).filter(function(x){ return x.length >= 40 && x.length <= 260 && /[a-zà-ÿ]{3}/i.test(x); });
   }
   function keyTerms(text, max){
     var counts = {}, sentences = courseSentences(text);

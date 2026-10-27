@@ -239,20 +239,46 @@ await scenario("4. Réponses COUPÉES (limite de jetons) et JSON entouré de tex
   await ctx.close();
 });
 
-await scenario("5. IA indisponible au moment de l'import : chaque carte dit pourquoi, rien n'est perdu", async () => {
+/* Un cours SANS aucun support (seulement son texte) dont une génération a été demandée alors que l'IA était indisponible. */
+async function emptyCourseWithAiError(page){
+  return page.evaluate(() => {
+    state.userSubjects.push({ id: "subj_e", name: "Économie", semesterId: SEMESTERS[0].id, builtin: false });
+    state.userChapters.push({ id: "chap_e", subjectId: "subj_e", num: "1", title: "Le marché", desc: "", content: "", summary: "", originalText: "Un marché est le lieu de rencontre entre l'offre et la demande. ".repeat(30), aiQuiz: [], aiFlashcards: [], aiReviewQuestions: [], keyNotions: [] });
+    state.aiStatus = "nogpu"; state.aiGpuDiag = { message: "WebGPU indisponible." };
+    libGoto("chapterDetail", { chapterId: "chap_e" }); switchTab("library");
+    return courseHubGenerate("chap_e", ["fiche", "summary", "quiz", "flashcards"]);
+  });
+}
+
+await scenario("5. IA indisponible au moment de l'import : supports simplifiés TOUT DE SUITE, version IA ensuite", async () => {
   const { ctx, page } = await open();
   await importPdf(page);
-  await page.evaluate(() => { state.aiStatus = "nogpu"; state.aiGpuDiag = { message: "WebGPU indisponible." }; });
+  await page.evaluate(() => { state.aiStatus = "nogpu"; state.aiGpuDiag = { message: "WebGPU indisponible." }; window.__ENG.sent = 0; });
   await page.click("#import-confirm-generate-btn");
   await page.waitForFunction(() => state.library.view === "chapterDetail" && !state.courseGen.running, null, { timeout: 10000 });
-  const st = await cards(page);
-  check("les cinq ressources générables sont en erreur", ["fiche", "summary", "quiz", "quizflash", "flashcards"].every(k => st[k] === "ERROR"), st);
-  check("la carte dit « Assistant IA indisponible » (pas une erreur générique)", /Assistant IA indisponible/.test(await cardText(page, "quiz")), await cardText(page, "quiz"));
-  check("le texte du cours est conservé", (await course(page)).originalText > 1000);
-  /* l'IA redevient prête : la préparation reprend TOUTE SEULE */
+  eq("le cours se révise tout de suite (supports simplifiés, jamais « Erreur — à relancer »)", await cards(page), READY5);
+  const c0 = await course(page);
+  check("quiz et flashcards tirés du texte du cours", c0.quiz >= 3 && c0.flashcards >= 3, c0);
+  check("le texte du cours est conservé", c0.originalText > 1000);
+  eq("aucun appel au moteur depuis la confirmation (IA indisponible)", await page.evaluate(() => window.__ENG.sent), 0);
+  /* l'IA redevient prête : « Générer tout » remplace les supports simplifiés par la version IA */
   await page.evaluate(() => { window.__ENG.tokMs = 2; window.__ENG.prefillMs = 50; state.aiStatus = "ready"; render(); });
-  await page.waitForFunction(() => { const c = findAnyChapter(state.library.chapterId); return c.content && c.summary && c.aiQuiz.length && c.aiFlashcards.length; }, null, { timeout: 30000 });
-  check("reprise automatique : les supports sont produits", true);
+  await page.click("#lib-generate-ai-btn");
+  await page.clock.runFor(100);
+  await runQueue(page);
+  const c1 = await page.evaluate(() => { const c = findAnyChapter(state.library.chapterId); return { simple: !!c.heuristicMode, aiQuiz: c.aiQuiz.some(q => q.ai !== false && !q.heuristic), fiche: /Partie 1/.test(c.content || "") }; });
+  check("« Générer tout » : version IA produite, mode simplifié levé", !c1.simple && c1.aiQuiz && c1.fiche, c1);
+  eq("tout est prêt", await cards(page), READY5);
+  await ctx.close();
+});
+
+await scenario("5b. Un cours SANS support, IA indisponible : la carte dit pourquoi", async () => {
+  const { ctx, page } = await open();
+  await emptyCourseWithAiError(page);
+  await page.waitForFunction(() => !state.courseGen.running, null, { timeout: 10000 });
+  const st = await cards(page);
+  check("les ressources demandées sont en erreur", ["fiche", "summary", "quiz", "flashcards"].every(k => st[k] === "ERROR"), st);
+  check("la carte dit « Assistant IA indisponible » (pas une erreur générique)", /Assistant IA indisponible/.test(await cardText(page, "quiz")), await cardText(page, "quiz"));
   await ctx.close();
 });
 
@@ -283,10 +309,8 @@ await scenario("7. Raisons traduites (5 langues) et carte lisible sur mobile", a
     return out;
   });
   eq("aucune clé manquante", missing, []);
-  await importPdf(page);
-  await page.evaluate(() => { state.aiStatus = "nogpu"; });
-  await page.click("#import-confirm-generate-btn");
-  await page.waitForFunction(() => state.library.view === "chapterDetail" && !state.courseGen.running, null, { timeout: 10000 });
+  await emptyCourseWithAiError(page);
+  await page.waitForFunction(() => !state.courseGen.running, null, { timeout: 10000 });
   for (const l of ["fr", "de"]) {
     await page.evaluate((x) => { LyonI18n.setLang(x); render(); }, l);
     const o = await page.evaluate(() => { const b = document.querySelector('#course-hub [data-hub-open="flashcards"]'); return { over: b.scrollWidth > b.clientWidth + 1, page: document.documentElement.scrollWidth > window.innerWidth + 1 }; });
