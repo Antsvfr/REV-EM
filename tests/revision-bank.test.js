@@ -242,5 +242,33 @@ const correctText = (q) => q.opts[q.correct];
   check("instruction flashcards", /Qu'est-ce que/.test(B.cardBatchInstruction({ count: 5 })));
 }
 
+/* ── Banque EXTRACTIVE (sans IA) : un cours rédigé en phrases doit se réviser, sans rien inventer ── */
+{
+  console.log("\n── banque extractive (extractiveBank) ──");
+  const T = ("Chapitre 3 — Le marché. Un marché est le lieu de rencontre entre l’offre et la demande d’un bien ou d’un service. " +
+    "Le prix d’équilibre est celui pour lequel la quantité offerte égale la quantité demandée. Au-dessus du prix d’équilibre, il y a excès " +
+    "d’offre ; en dessous, excès de demande. La concurrence pure et parfaite suppose l’atomicité des agents, l’homogénéité des produits, la " +
+    "libre entrée, la transparence de l’information et la mobilité des facteurs. L’élasticité-prix de la demande mesure la sensibilité de la " +
+    "quantité demandée à une variation du prix. Une hausse de la demande déplace la courbe de demande vers la droite et augmente le prix " +
+    "d’équilibre. Sur un marché en concurrence pure et parfaite, aucun agent ne peut influencer le prix. L’offre augmente lorsque le prix " +
+    "augmente, la demande diminue lorsque le prix augmente.");
+  const r = B.extractiveBank(T, {});
+  const sentences = B.courseSentences(T);
+  check("un cours rédigé en phrases produit un quiz (≥ 5 questions)", r.quiz.length >= 5, r.quiz.length);
+  check("… et des flashcards (≥ 5)", r.flashcards.length >= 5, r.flashcards.length);
+  check("chaque question cite une phrase EXACTE du cours", r.quiz.every(q => sentences.includes(q.sourceQuote)));
+  check("la bonne réponse est bien le mot retiré de cette phrase", r.quiz.every(q => q.sourceQuote.toLowerCase().includes(q.opts[q.correct].toLowerCase())));
+  check("aucun mauvais choix ne figure dans la phrase (aucune ambiguïté)", r.quiz.every(q => q.opts.every((o, i) => i === q.correct || !q.sourceQuote.toLowerCase().includes(o.toLowerCase()))));
+  check("les mauvais choix sont des notions RÉELLES du même cours", r.quiz.every(q => q.opts.every(o => T.toLowerCase().includes(o.toLowerCase()))));
+  check("la phrase de la question n'affiche pas la réponse", r.quiz.every(q => !q.q.toLowerCase().includes(q.opts[q.correct].toLowerCase())));
+  check("élision conservée : « prix d’équilibre » est une notion", r.quiz.some(q => q.opts[q.correct] === "prix d’équilibre"), r.quiz.map(q => q.opts[q.correct]));
+  check("deux morceaux qui se recouvrent → UNE notion « concurrence pure et parfaite »", r.terms.includes("concurrence pure et parfaite") && !r.terms.includes("pure et parfaite") && !r.terms.includes("concurrence pure"), r.terms);
+  check("un verbe (« augmente ») n'est jamais une notion", !r.terms.includes("augmente"), r.terms);
+  check("éléments marqués sans IA (heuristic) et validés comme ceux de l'IA", r.quiz.every(q => q.heuristic && !q.ai && B.validateQuestion(q).ok) && r.flashcards.every(c => c.heuristic && B.playableCard(c)));
+  eq("déterministe : même texte → même banque", JSON.stringify(B.extractiveBank(T, {}).quiz), JSON.stringify(r.quiz));
+  eq("texte vide → rien (jamais d'invention)", [B.extractiveBank("", {}).quiz.length, B.extractiveBank("", {}).flashcards.length], [0, 0]);
+  check("les sessions de révision savent jouer cette banque", r.quiz.every(B.playableQuestion));
+}
+
 console.log("\n" + pass + " vérifications réussies, " + fail + " échec(s).");
 process.exit(fail ? 1 : 0);

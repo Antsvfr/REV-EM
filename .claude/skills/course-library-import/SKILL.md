@@ -116,11 +116,16 @@ Chromium.
      (`courseImportApplyGeneratedToChapter(ch, item, [key])`) — une étape en
      échec n'empêche pas les suivantes, et n'efface jamais un contenu déjà
      obtenu.
+   - **Jamais de chargement de modèle depuis l'import** : la détection n'utilise l'IA que si
+     `state.aiStatus === "ready"` ; sinon `courseImportGenerate` passe par `courseImportSaveWithoutAI`
+     (un téléchargement implicite de plusieurs Go figeait l'import — voir `COURSE_HUB.md`).
    - **Sans IA** : `courseImportSaveWithoutAI(index)` → règles locales
      `buildHeuristicCourseMaterials()` (mode simplifié, voir `ai-system`),
+     complétées par la banque EXTRACTIVE `RevemBank.extractiveBank` (phrases exactes du cours à
+     compléter, jamais d'invention) pour qu'un cours rédigé en phrases ait quiz et flashcards,
      qui déclare honnêtement dans `item.failedSteps` les étapes qu'elle
-     n'a pas pu produire (`summary`/`reviewQuestions` toujours absents en
-     mode heuristique) plutôt que de simuler un résultat.
+     n'a pas pu produire (`reviewQuestions` toujours absent en mode heuristique ;
+     résumé simplifié par `heuristicSummary`) plutôt que de simuler un résultat.
 5. **Reprise** (`libGenerateChapterAI`, bandeau "Génération IA en attente"
    du chapitre) : `coursePendingStepKeys(ch)` calcule ce qui manque
    réellement à partir des champs déjà présents (`ch.content`,

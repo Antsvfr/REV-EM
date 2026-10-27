@@ -121,6 +121,39 @@ fidèle au protocole d'`ai-host.js` (horloge accélérée). Avant la correction 
 moteur qui ne rend jamais la main → échec borné et cause claire ; réponses coupées ou en ```json → éléments complets gardés.
 **PASS MOCK** : NOT TESTED avec un vrai WebLLM / GPU / Mac.
 
+## Import sans IA chargée (corrigé) : le cours est importé ET révisable tout de suite
+
+**Symptôme.** « L'importation dans la bibliothèque ne fonctionne toujours pas » : après « Importer le cours », l'écran
+restait sur « Analyse du contenu… » ; aucun cours n'apparaissait.
+
+**Causes (reproduites avec le vrai code).**
+1. L'étape de détection appelait `tryEnsureImportAIReady()` → `aiLoadModel()` : quand le modèle n'était pas encore chargé
+   (cas normal au premier import), **l'import lançait le téléchargement du modèle (0,9 à 5 Go)** et l'attendait —
+   des minutes, ou indéfiniment dans l'app Mac — sans l'avoir demandé (contraire à la règle « jamais de téléchargement
+   implicite », `revem-ai`). Essai : chargement simulé interminable → toujours « detecting » après 90 s, 0 cours.
+2. Même enregistré « sans IA », un cours rédigé en phrases (un PDF, presque toujours) n'avait **ni quiz ni flashcards** :
+   le mode simplifié ne reconnaissait que les définitions « Terme : … » / « Terme est … » en DÉBUT de ligne.
+
+**Correction.**
+- Détection : l'IA n'est utilisée que si `state.aiStatus === "ready"` ; sinon détection simple, immédiate. L'import ne
+  déclenche plus jamais le chargement du modèle.
+- Écran de confirmation, IA pas prête : un seul bouton « Importer le cours » (même `id`, `import-confirm-generate-btn`) +
+  une phrase d'explication ; `courseImportGenerate` passe alors par `courseImportSaveWithoutAI` (le chemin existant). IA
+  prête : inchangé (« Générer avec l'IA » / « Enregistrer sans IA »).
+- Mode simplifié enrichi, **extractif, jamais inventé** : `RevemBank.extractiveBank(texte)` (pur, `revision-bank.js`) —
+  notions = groupes nominaux qui reviennent dans le cours ; chaque flashcard / question = une PHRASE EXACTE du cours avec
+  une notion à compléter ; mauvais choix = autres notions réelles du cours, absentes de la phrase ; validation par
+  `parseQuizBatch` / `parseCardBatch` (mêmes contrôles que l'IA), `heuristic: true`. Résumé simplifié (`heuristicSummary`)
+  et « Phrases clés du cours » dans la fiche.
+- La version IA reste à un clic : « Générer tout » sur la page du cours (le cours est en `heuristicMode` : les cinq
+  supports sont régénérés, voir `libGenerateChapterAI`).
+
+**Preuve.** `tests/import-without-ai.test.mjs` (vrai PDF, vrai bouton de la bibliothèque, chargement du modèle simulé
+interminable) : confirmation en < 10 s, 0 chargement de modèle, cours + PDF enregistrés, ≥ 5 questions et ≥ 5 flashcards,
+une question jouée, Quiz Flash et Flashcards ouverts, tout présent après rechargement. `tests/revision-bank.test.js` :
+aucune invention (citations exactes, bonne réponse dans la phrase, mauvais choix absents de la phrase), déterminisme.
+**PASS MOCK** pour l'état du modèle ; NOT TESTED Safari / REV-EM.app.
+
 ## Après un import
 
 `courseImportFinishAfterGeneration` : pour **un seul** fichier importé, on

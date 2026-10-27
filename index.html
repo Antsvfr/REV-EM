@@ -11541,6 +11541,16 @@ function buildHeuristicCourseMaterials(rawText){
       quiz.push({ q: "Quelle est la définition de « " + d.term + " » ?", opts, correct: opts.indexOf(d.def), exp: "", heuristic: true, sourceQuote: d.line });
     });
   }
+  /* Un cours rédigé en phrases (le cas d'un PDF) n'a souvent AUCUNE définition « Terme : … » repérable : sans ceci, le
+     mode simplifié ne produisait ni quiz ni flashcards, et le cours importé ne se révisait pas. Complément EXTRACTIF
+     (RevemBank.extractiveBank) : phrases exactes du cours à compléter, mauvais choix = autres notions du même cours. */
+  const RB = window.RevemBank;
+  if(RB && RB.extractiveBank){
+    const ex = RB.extractiveBank(text, { extraTerms: defs.map(d => d.term) });
+    ex.flashcards.forEach(c => { if(flashcards.length < 14) flashcards.push(c); });
+    ex.quiz.forEach(q => { if(quiz.length < 12) quiz.push(q); });
+    if(ex.sentences.length) fiche += `<h3>Phrases clés du cours</h3><ul class="fiche-list">${ex.sentences.slice(0, 10).map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+  }
   return { fiche, flashcards, quiz };
 }
 
@@ -11676,7 +11686,10 @@ async function courseImportProcessFile(index){
   // optionnelle apportée par l'IA quand elle est prête ; sinon, on retombe
   // sur une détection simple basée sur le nom du fichier et la structure du
   // texte, et l'utilisateur complète/valide les champs à la main.
-  const aiReady = await tryEnsureImportAIReady();
+  /* L'IA n'est utilisée que si elle est DÉJÀ prête. L'import ne lance JAMAIS le chargement du modèle : c'était un
+     téléchargement de 0,9 à 5 Go déclenché sans le demander, pendant lequel l'import restait figé sur « Analyse du
+     contenu… » (des minutes, ou indéfiniment dans l'app Mac). Sans IA prête : détection simple, immédiate. */
+  const aiReady = state.aiStatus === "ready";
   // Contexte prioritaire : import lancé depuis une matière déjà ouverte (voir
   // goToCourseImport/renderSubjectDetail). Ni l'IA ni la détection heuristique
   // ne doivent pouvoir en proposer une autre.
@@ -11971,6 +11984,10 @@ async function courseImportGenerate(index){
   const ci = state.courseImport;
   const item = ci.files[index];
   if(!item || item.status !== "review" || aiEngineBusy()) return;
+  /* IA pas prête : le cours est enregistré TOUT DE SUITE avec des supports simplifiés (fiche, quiz, flashcards construits
+     à partir du texte du cours, sans rien inventer) — les révisions sont possibles immédiatement ; la version IA se lance
+     ensuite depuis la page du cours (« Générer tout »), quand l'assistant est chargé. Jamais de téléchargement implicite. */
+  if(state.aiStatus !== "ready") return courseImportSaveWithoutAI(index);
   item.aiError = null;
   ci.busy = true;
   item.status = "generating"; // avant la résolution de cible : la confirmation de doublon est asynchrone
@@ -12021,7 +12038,10 @@ async function courseImportSaveWithoutAI(index){
   ci.step = "generating";
   const h = buildHeuristicCourseMaterials(item.extractedText);
   item.generated.fiche = h.fiche;
-  item.failedSteps = ["summary", "reviewQuestions"];
+  item.failedSteps = ["reviewQuestions"];
+  /* Résumé simplifié : la première phrase de chaque partie du cours, sans reformulation (heuristicSummary). */
+  const sum = heuristicSummary(item.extractedText);
+  if(sum) item.generated.summary = sum; else item.failedSteps.push("summary");
   if(h.flashcards.length) item.generated.flashcards = h.flashcards; else item.failedSteps.push("flashcards");
   if(h.quiz.length) item.generated.quiz = h.quiz; else item.failedSteps.push("quiz");
   const ch = findAnyChapter(chapterId);
@@ -13204,10 +13224,13 @@ function renderImportDetectOrReview(){
     ${item.warning ? `<p class="ai-hint" style="margin-top:12px;">${escapeHtml(item.warning)}</p>` : ""}
 
     <div class="actions" style="justify-content:flex-start;margin-top:16px;flex-wrap:wrap;">
-      <button class="btn red" id="import-confirm-generate-btn">Générer avec l'IA</button>
-      <button class="btn outline" id="import-save-noai-btn">Enregistrer sans IA</button>
+      ${state.aiStatus === "ready"
+        ? `<button class="btn red" id="import-confirm-generate-btn">Générer avec l'IA</button>
+      <button class="btn outline" id="import-save-noai-btn">Enregistrer sans IA</button>`
+        : `<button class="btn red" id="import-confirm-generate-btn">${escapeHtml(t("imp.review.import"))}</button>`}
       <button class="btn-text" id="import-skip-file-btn">Annuler ce fichier</button>
     </div>
+    ${state.aiStatus === "ready" ? "" : `<p class="ai-hint" id="import-noai-hint" style="margin-top:8px;">${escapeHtml(t("imp.review.no_ai"))}</p>`}
   </div>`;
   return html;
 }

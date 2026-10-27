@@ -505,7 +505,118 @@
       "Réponds UNIQUEMENT par un tableau JSON, sans texte autour : [{\"front\":\"...\",\"back\":\"...\",\"concept\":\"...\",\"sourceQuote\":\"...\",\"exampleQuote\":\"...\"}]";
   }
 
+  /* ── 9. BANQUE EXTRACTIVE (sans IA) ──────────────────────────────────────────────
+     Quand l'assistant IA n'est pas chargé, le cours importé doit QUAND MÊME pouvoir se réviser. Rien n'est inventé :
+       • les NOTIONS sont des groupes de mots qui reviennent dans le cours (au moins 2 fois), jamais déduites ;
+       • chaque flashcard / question est une PHRASE EXACTE du cours dont une notion est remplacée par « _____ » ;
+       • les mauvais choix d'un QCM sont d'AUTRES notions réelles du même cours, absentes de la phrase.
+     Les éléments passent ensuite par les MÊMES contrôles que ceux de l'IA (parseQuizBatch / parseCardBatch) et sont
+     marqués `heuristic: true`. Déterministe (même texte → même banque). */
+  var STOP = {};
+  ("a à au aux avec ce ces cet cette dans de des du elle elles en entre est et été être eux il ils je la le les leur leurs lui " +
+   "ma mais me même mes moi mon ne ni nos notre nous on ou où par pas peut plus pour qu que quel quelle quels qui sa sans se " +
+   "ses si son sont sous sur ta te tes toi ton tous tout toute toutes très tu un une vos votre vous y ainsi alors aussi autre " +
+   "autres avant après bien car celle celui ceux chaque comme comment dont donc doit elle encore enfin fait faire font ici " +
+   "leurs lors moins non peu puis quand quelque selon soit tant tel telle trop vers via voici voilà c d j l m n s t qu " +
+   "chapitre section partie exemple page figure tableau the of and to in is for on that with as by an be are this or from").split(" ").forEach(function(w){ STOP[w] = 1; });
+  function plainWords(sentence){
+    return String(sentence).toLowerCase().replace(/[’`]/g, "'").split(/[^a-zà-ÿœæ0-9'-]+/).map(function(w){ return w.replace(/^[a-z]'/, "").replace(/^-+|-+$/g, ""); }).filter(Boolean);
+  }
+  function courseSentences(text){
+    var flat = String(text || "").replace(/\r/g, "").replace(/(\w)-\n(\w)/g, "$1$2").replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+    return flat.split(/(?<=[.!?…])\s+(?=[A-ZÀ-Ý0-9«"(])/).map(function(x){ return x.trim(); }).filter(function(x){ return x.length >= 40 && x.length <= 260 && /[a-zà-ÿ]{3}/i.test(x); });
+  }
+  function keyTerms(text, max){
+    var counts = {}, sentences = courseSentences(text);
+    sentences.forEach(function(sn){
+      var ws = plainWords(sn), seen = {};
+      for(var n = 1; n <= 4; n++){
+        for(var i = 0; i + n <= ws.length; i++){
+          var g = ws.slice(i, i + n);
+          if(STOP[g[0]] || STOP[g[n - 1]] || g.some(function(w){ return w.length < 2 || /^\d+$/.test(w); })) continue;
+          if(!g.some(function(w){ return w.length >= 5; })) continue;
+          var key = g.join(" ");
+          if(seen[key]) continue;                                   // compté une fois par phrase
+          seen[key] = 1; counts[key] = (counts[key] || 0) + 1;
+        }
+      }
+    });
+    var flat = sentences.join(" ");
+    /* Une NOTION est un groupe nominal : précédé au moins une fois d'un article ou d'un déterminant (« la demande »,
+       « le prix d'équilibre ») — écarte les verbes (« augmente ») et les morceaux de phrase. */
+    var nominal = function(k){ return new RegExp("(^|[^a-zà-ÿœæ])(le|la|les|l['’]|un|une|des|du|d['’]|de la|ce|cette|ces|son|sa|ses|leur|leurs)\\s*" + termPattern(k), "i").test(flat); };
+    var cands = Object.keys(counts).filter(function(k){ return counts[k] >= 2 && nominal(k); }).map(function(k){
+      var n = k.split(" ").length; return { key: k, n: n, freq: counts[k], score: counts[k] * (1 + 0.7 * (n - 1)) };
+    }).sort(function(a, b){ return b.score - a.score || b.n - a.n || (a.key < b.key ? -1 : 1); });
+    var out = [];
+    cands.forEach(function(c){
+      if(out.length >= (max || 14)) return;
+      /* « prix » et « prix d'équilibre » : on garde le plus long s'il revient presque aussi souvent. */
+      if(out.some(function(o){ return (o.key.indexOf(c.key) >= 0 && c.freq <= o.freq + 1) || (c.key.indexOf(o.key) >= 0 && o.freq <= c.freq + 1) || overlaps(o.key, c.key); })) return;
+      out.push(c);
+    });
+    return out.map(function(c){ return c.key; });
+  }
+  function escapeRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  /* Les mots d'une notion dans le texte : séparés par des espaces / tirets, avec une élision possible (« prix d'équilibre »). */
+  function termPattern(term){ return term.split(" ").map(escapeRe).join("(?:[\\s'’-]+(?:[a-zà-ÿ]{1,2}['’])?)"); }
+  function termRegex(term){ return new RegExp("(^|[^a-zà-ÿœæ0-9])(" + termPattern(term) + ")(?=$|[^a-zà-ÿœæ0-9])", "gi"); }
+  /* « pure et parfaite » / « concurrence pure » : deux morceaux qui se recouvrent (fin de l'un = début de l'autre). */
+  function overlaps(a, b){
+    var x = a.split(" "), y = b.split(" ");
+    for(var k = 1; k < Math.min(x.length, y.length) + 1; k++){
+      if(x.slice(-k).join(" ") === y.slice(0, k).join(" ") && !STOP[x[x.length - 1]]) return true;
+      if(y.slice(-k).join(" ") === x.slice(0, k).join(" ") && !STOP[y[y.length - 1]]) return true;
+    }
+    return false;
+  }
+  function extractiveBank(text, ctx){
+    ctx = ctx || {};
+    var rng = seededRng(hashText(String(text || "").slice(0, 5000)));
+    var terms = (ctx.extraTerms || []).map(function(t){ return plainWords(t).join(" "); }).filter(Boolean).concat(keyTerms(text, 16));
+    terms = terms.filter(function(t, i){ return terms.indexOf(t) === i; });
+    var sentences = courseSentences(text), used = {}, items = [];
+    terms.forEach(function(term){
+      var re = termRegex(term);
+      for(var i = 0; i < sentences.length; i++){
+        if(used[i]) continue;
+        var sn = sentences[i];
+        re.lastIndex = 0;
+        var m = re.exec(sn);
+        if(!m) continue;
+        var shown = m[2];
+        re.lastIndex = 0;
+        var blanked = sn.replace(re, function(_, pre){ return pre + "_____"; });
+        if(blanked.replace(/_____/g, "").replace(/\s+/g, " ").trim().length < 25) continue;
+        used[i] = 1;
+        items.push({ term: term, shown: shown, sentence: sn, blanked: blanked });
+        break;
+      }
+    });
+    var display = function(it){ return it.shown.charAt(0).toLowerCase() === it.shown.charAt(0) ? it.shown : it.shown.charAt(0).toLowerCase() + it.shown.slice(1); };
+    var cardsRaw = items.map(function(it){
+      return { front: "Complète la phrase du cours : « " + it.blanked + " »", back: display(it), concept: display(it), sourceQuote: it.sentence };
+    });
+    var quizRaw = [];
+    items.forEach(function(it){
+      var others = items.filter(function(o){ return o !== it && normalizeText(o.term) !== normalizeText(it.term) && !termRegex(o.term).test(it.sentence); }).map(display);
+      others = others.filter(function(o, i){ return others.indexOf(o) === i; });
+      if(others.length < 2) return;
+      var opts = shuffleArray([display(it)].concat(shuffleArray(others, rng).slice(0, 3)), rng);
+      quizRaw.push({ q: "Quel mot ou groupe de mots du cours complète cette phrase ? « " + it.blanked + " »", opts: opts, correct: opts.indexOf(display(it)),
+        exp: "Phrase exacte du cours : « " + it.sentence + " »", concept: display(it), type: "comprehension", difficulty: "medium", sourceQuote: it.sentence });
+    });
+    var mark = function(list){ list.forEach(function(x){ x.ai = false; x.heuristic = true; }); return list; };
+    return {
+      terms: terms,
+      quiz: mark(parseQuizBatch(quizRaw, ctx, ctx.existingQuiz || []).items),
+      flashcards: mark(parseCardBatch(cardsRaw, ctx, ctx.existingCards || []).items),
+      sentences: items.map(function(it){ return it.sentence; }),
+    };
+  }
+
   global.RevemBank = {
+    extractiveBank: extractiveBank, keyTerms: keyTerms, courseSentences: courseSentences,
     QUIZ_SESSION_SIZE: QUIZ_SESSION_SIZE, QUIZ_FLASH_SIZE: QUIZ_FLASH_SIZE, FLASH_DECK_SIZE: FLASH_DECK_SIZE,
     MIN_VIABLE: MIN_VIABLE, REVERSE_RATE: REVERSE_RATE, BANK_MAX: BANK_MAX, MAX_BATCHES: MAX_BATCHES,
     DIFFICULTIES: DIFFICULTIES, TYPES: TYPES,
