@@ -353,5 +353,25 @@ function stream(chunks, o, fin) {
   check("repetitionStats : situe le premier doublon", O.repetitionStats(raw).restartAt === (a + "\n\n").length && O.repetitionStats(a).repeated === false);
 }
 
+/* ── JSON d'un petit modèle : lecture tolérante (supports d'un cours) ──────────── */
+{
+  console.log("\n── JSON tolérant (parseJsonLenient) ──");
+  const P = O.parseJsonLenient;
+  eq("tableau valide", P('[{"q":"a"},{"q":"b"}]', "array"), [{ q: "a" }, { q: "b" }]);
+  eq("texte + bloc ```json + virgule traînante", P('Voici :\n```json\n[{"q":"a"},{"q":"b"},]\n```\nBonne révision', "array"), [{ q: "a" }, { q: "b" }]);
+  eq("tableau COUPÉ : les éléments complets sont gardés, l'élément coupé est écarté (jamais complété)",
+    P('[{"q":"a","opts":["x","y"]},{"q":"b","opts":["x","y"]},{"q":"c","opts":["x","y', "array"), [{ q: "a", opts: ["x", "y"] }, { q: "b", opts: ["x", "y"] }]);
+  eq("un élément illisible n'emporte pas les autres", P('[{"q":"a"},{"q": oops},{"q":"c"}]', "array"), [{ q: "a" }, { q: "c" }]);
+  eq("tableau enveloppé dans un objet", P('{"questions":[{"q":"a"}]}', "array"), [{ q: "a" }]);
+  eq("crochets et guillemets échappés DANS une chaîne", P('[{"q":"le ] crochet \\" guillemet"}]', "array"), [{ q: 'le ] crochet " guillemet' }]);
+  eq("aucun JSON → null (rien n'est inventé)", P("désolé, je ne peux pas", "array"), null);
+  eq("vide → null", P("", "array"), null);
+  eq("objet COUPÉ (fiche) : sections terminées gardées",
+    P('{"introduction":"intro","sections":[{"type":"notions","title":"A","items":[{"title":"t","content":"c"}]},{"type":"notions","title":"B","items":[{"title":"t2","cont', "object"),
+    { introduction: "intro", sections: [{ type: "notions", title: "A", items: [{ title: "t", content: "c" }] }] });
+  eq("objet en bloc ```json", P('```json\n{"introduction":"i","keyPoints":["k"]}\n```', "object"), { introduction: "i", keyPoints: ["k"] });
+  eq("objet demandé mais seulement un tableau → null", P('[1,2]', "object"), null);
+}
+
 console.log("\n" + pass + " vérifications réussies, " + fail + " échec(s).");
 process.exit(fail ? 1 : 0);

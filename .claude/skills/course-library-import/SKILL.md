@@ -60,7 +60,9 @@ cloisonnement de stockage + RLS, jamais d'un `userId` stocké côté client).
 ## Import Center — le SEUL point d'entrée de l'import (Phase 1)
 
 Tous les boutons « Importer un cours » appellent `openImportCenter({contextSubjectId,
-origin})` (ou portent `data-import-center="<origine>"`, géré par UN écouteur global) :
+origin, pick})` (ou portent `data-import-center="<origine>"`, géré par UN écouteur global ; `pick: true` ouvre le
+sélecteur de fichiers DANS le même geste, et chaque ouverture est surveillée par `icWatchPicker` — sur macOS, WKWebView
+n'ouvre rien sans `webView(_:runOpenPanelWith:…)` côté app, voir `IMPORT_CENTER.md` §9 et `macos/REVEMOpenPanel.swift`) :
 jamais une zone de dépôt ou un `<input type="file">` de plus. La fenêtre choisit et
 **valide** le fichier (`import-center.js`, moteur pur : `validateMeta`, `validateContent`,
 machine d'états `IDLE/DRAGGING/VALIDATING/READY/PROCESSING/SUCCESS/ERROR`), en lit le
@@ -114,11 +116,16 @@ Chromium.
      (`courseImportApplyGeneratedToChapter(ch, item, [key])`) — une étape en
      échec n'empêche pas les suivantes, et n'efface jamais un contenu déjà
      obtenu.
+   - **Jamais de chargement de modèle depuis l'import** : la détection n'utilise l'IA que si
+     `state.aiStatus === "ready"` ; sinon `courseImportGenerate` passe par `courseImportSaveWithoutAI`
+     (un téléchargement implicite de plusieurs Go figeait l'import — voir `COURSE_HUB.md`).
    - **Sans IA** : `courseImportSaveWithoutAI(index)` → règles locales
      `buildHeuristicCourseMaterials()` (mode simplifié, voir `ai-system`),
+     complétées par la banque EXTRACTIVE `RevemBank.extractiveBank` (phrases exactes du cours à
+     compléter, jamais d'invention) pour qu'un cours rédigé en phrases ait quiz et flashcards,
      qui déclare honnêtement dans `item.failedSteps` les étapes qu'elle
-     n'a pas pu produire (`summary`/`reviewQuestions` toujours absents en
-     mode heuristique) plutôt que de simuler un résultat.
+     n'a pas pu produire (`reviewQuestions` toujours absent en mode heuristique ;
+     résumé simplifié par `heuristicSummary`) plutôt que de simuler un résultat.
 5. **Reprise** (`libGenerateChapterAI`, bandeau "Génération IA en attente"
    du chapitre) : `coursePendingStepKeys(ch)` calcule ce qui manque
    réellement à partir des champs déjà présents (`ch.content`,
@@ -142,9 +149,19 @@ Chromium.
   bibliothèque : le contenu précédent n'est remplacé qu'après succès de
   la nouvelle génération, jamais avant).
 - **Gérer les erreurs explicitement.** `classifyGenerationError(e)`
-  distingue mémoire/WebGPU/annulation/timeout/générique avec un message
-  utilisateur adapté à chacun (voir `ai-system`) — ne jamais afficher un
-  message d'erreur générique quand la cause réelle est identifiable.
+  distingue mémoire/WebGPU/annulation/timeout/moteur occupé (`busy`)/format
+  illisible (`format`)/générique avec un message utilisateur adapté à chacun
+  (voir `ai-system`) — ne jamais afficher un message d'erreur générique quand
+  la cause réelle est identifiable. La carte du hub en erreur affiche la
+  raison courte (`hub.reason.<CODE>`), la cause est gardée PAR étape
+  (`item.stepErrors`).
+- **Délais : jamais sur le temps total d'une génération qui avance.**
+  `withGenTimeout(promise, ms)` mesure le silence du moteur (aucun jeton
+  pendant `ms`), et n'échoue qu'APRÈS l'arrêt réel du moteur
+  (`aiWaitGenIdle`) — sinon l'étape suivante le trouve occupé et tout
+  échoue en cascade (panne « Erreur — à relancer » sur les cinq supports,
+  voir `COURSE_HUB.md`). Le JSON d'un modèle se lit avec
+  `RevemOutput.parseJsonLenient`, jamais `JSON.parse` brut.
 - **États de chargement visibles.** `courseImportRunAllSteps` avance étape
   par étape avec un état affiché (`item.status`, `item.genStepIndex`) —
   toute nouvelle étape longue doit avoir un état intermédiaire visible,

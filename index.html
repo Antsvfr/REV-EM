@@ -11176,8 +11176,16 @@ function classifyGenerationError(e){
   if(/cancelled/i.test(low)){
     return { kind:"cancelled", message:"Génération annulée." };
   }
+  /* Le moteur n'a jamais reçu l'étape : il terminait encore la précédente (voir aiHostGenerate). */
+  if(e && e.code === "ENGINE_BUSY"){
+    return { kind:"busy", message:"L'assistant IA était encore occupé par une génération précédente. Réessaie : il est de nouveau disponible.", detail: msg };
+  }
   if(/^timeout:/i.test(msg)){
     return { kind:"timeout", message:"Cette étape a pris trop de temps et a été interrompue. Ton cours original est conservé — tu peux réessayer cette étape, ou choisir le modèle léger." };
+  }
+  /* Le modèle a répondu, mais rien d'exploitable n'a pu être lu (JSON absent, vide ou illisible même en lecture tolérante). */
+  if((e && e.code === "BAD_FORMAT") || /format inattendu|vide ou dans un format|est vide|aucune (question|flashcard)/i.test(low)){
+    return { kind:"format", message:"Le modèle n'a pas répondu dans le format attendu. Réessaie ; si cela se répète, choisis un autre modèle.", detail: msg };
   }
   return { kind:"generic", message:"La génération a rencontré un problème. Ton cours original est conservé. Tu peux réessayer.", detail: msg };
 }
@@ -11230,12 +11238,16 @@ function matchSubjectByName(name){
    pour un JSON imparfait : chaque champ a un repli sûr côté appelant. */
 function extractJsonObject(text){
   const match = String(text || "").match(/\{[\s\S]*\}/);
-  if(!match) return null;
-  try{ return JSON.parse(match[0]); }
-  catch(e){
-    try{ return JSON.parse(match[0].replace(/,\s*([}\]])/g, "$1")); } // virgules traînantes
-    catch(e2){ return null; }
+  if(match){
+    try{ return JSON.parse(match[0]); }
+    catch(e){
+      try{ return JSON.parse(match[0].replace(/,\s*([}\]])/g, "$1")); } // virgules traînantes
+      catch(e2){ /* lecture tolérante ci-dessous */ }
+    }
   }
+  /* Objet coupé (limite de jetons) ou mal fermé : on garde ce qui est complet (voir RevemOutput.parseJsonLenient). */
+  const v = window.RevemOutput ? RevemOutput.parseJsonLenient(text, "object") : null;
+  return (v && typeof v === "object" && !Array.isArray(v)) ? v : null;
 }
 
 /* `lockedSubjectName` : la matière est déjà connue (import lancé depuis
@@ -11290,21 +11302,43 @@ function courseItemCounts(charCount){
   return { quiz: 8, flashcards: 10, reviewQ: 6 };
 }
 
-/* Empêche un appel IA de bloquer indéfiniment l'interface (device GPU
-   figé, promesse WebLLM jamais résolue…) : au-delà de `ms`, on considère
-   l'appel en échec, on tente d'interrompre proprement la génération en
-   cours côté moteur (best-effort, sans erreur si rien n'est en cours), et
-   on relance une erreur "timeout" classifiable comme les autres échecs —
-   jamais un blocage silencieux et permanent. */
+/* Empêche un appel IA de bloquer indéfiniment l'interface (device GPU figé, promesse WebLLM jamais résolue…), SANS couper une
+   génération qui avance. `ms` est la durée maximale SANS PROGRÈS : depuis le début de l'appel jusqu'au premier jeton
+   (pré-remplissage du prompt compris), puis entre deux jetons. Un modèle lent qui écrit toujours n'est donc jamais interrompu
+   (l'ancienne version comptait le temps TOTAL : la fiche d'un modèle « Avancé » sur un Mac modeste, ~1 600 jetons à 10–20 jetons/s,
+   dépassait 90 s alors qu'elle progressait). Plafond absolu : GEN_HARD_CAP_MS. Une génération qui ne passe pas par le moteur (double
+   de test) garde l'ancien comportement : `ms` au total.
+   Au dépassement : arrêt demandé au moteur, puis ATTENTE de son arrêt réel (bornée) AVANT de signaler l'échec — c'est ce qui empêche
+   l'étape suivante de trouver le moteur encore occupé et d'échouer à son tour (la cascade qui mettait les cinq supports en erreur).
+   L'erreur reste « timeout:… », classifiable comme avant. */
+const GEN_HARD_CAP_MS = 10 * 60 * 1000;
 function withGenTimeout(promise, ms, label){
-  let timer = null;
+  const t0 = Date.now();
+  let timer = null, done = false, expired = null;
+  const fail = () => expired;
+  /* Une fois le délai déclaré dépassé, l'issue EST le dépassement : la génération arrêtée peut encore rendre une réponse vide ou
+     partielle avant que l'attente se termine ; elle ne doit pas être prise pour la réponse (sinon « format illisible » au lieu
+     de « délai dépassé »). */
+  const guarded = Promise.resolve(promise).then(v => { if(expired) throw fail(); return v; }, e => { if(expired) throw fail(); throw e; });
   const timeout = new Promise((_, reject)=>{
-    timer = setTimeout(async ()=>{
+    const check = async ()=>{
+      if(done) return;
+      const now = Date.now();
+      const g = (aiGen && !aiGen.stopping) ? aiGen : null;                      // une seule génération à la fois : l'active est celle de cet appel
+      const lastProgress = g ? Math.max(t0, g.lastActivity || 0) : t0;
+      const silent = now - lastProgress;
+      const overCap = !!g && now - t0 >= Math.max(ms, GEN_HARD_CAP_MS);
+      if(silent < ms && !overCap){ timer = setTimeout(check, Math.max(50, Math.min(1000, ms - silent))); return; }
+      expired = new Error("timeout:" + (label || "génération") + (overCap
+        ? " a dépassé " + Math.round(GEN_HARD_CAP_MS / 60000) + " min."
+        : " a dépassé " + Math.round(ms/1000) + " s sans réponse."));
       try{ aiAbortGeneration(); }catch(e){}
-      reject(new Error("timeout:" + (label || "génération") + " a dépassé " + Math.round(ms/1000) + " s sans réponse."));
-    }, ms);
+      try{ await aiWaitGenIdle(AI_STOP_WAIT_MS); }catch(e){}
+      if(!done) reject(expired);
+    };
+    timer = setTimeout(check, ms);
   });
-  return Promise.race([promise, timeout]).finally(()=>{ if(timer) clearTimeout(timer); });
+  return Promise.race([guarded, timeout]).finally(()=>{ done = true; if(timer) clearTimeout(timer); });
 }
 
 /* Repère les tournures creuses qu'un modèle peut produire pour une section
@@ -11507,6 +11541,16 @@ function buildHeuristicCourseMaterials(rawText){
       quiz.push({ q: "Quelle est la définition de « " + d.term + " » ?", opts, correct: opts.indexOf(d.def), exp: "", heuristic: true, sourceQuote: d.line });
     });
   }
+  /* Un cours rédigé en phrases (le cas d'un PDF) n'a souvent AUCUNE définition « Terme : … » repérable : sans ceci, le
+     mode simplifié ne produisait ni quiz ni flashcards, et le cours importé ne se révisait pas. Complément EXTRACTIF
+     (RevemBank.extractiveBank) : phrases exactes du cours à compléter, mauvais choix = autres notions du même cours. */
+  const RB = window.RevemBank;
+  if(RB && RB.extractiveBank){
+    const ex = RB.extractiveBank(text, { extraTerms: defs.map(d => d.term) });
+    ex.flashcards.forEach(c => { if(flashcards.length < 14) flashcards.push(c); });
+    ex.quiz.forEach(q => { if(quiz.length < 12) quiz.push(q); });
+    if(ex.sentences.length) fiche += `<h3>Phrases clés du cours</h3><ul class="fiche-list">${ex.sentences.slice(0, 10).map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+  }
   return { fiche, flashcards, quiz };
 }
 
@@ -11642,7 +11686,10 @@ async function courseImportProcessFile(index){
   // optionnelle apportée par l'IA quand elle est prête ; sinon, on retombe
   // sur une détection simple basée sur le nom du fichier et la structure du
   // texte, et l'utilisateur complète/valide les champs à la main.
-  const aiReady = await tryEnsureImportAIReady();
+  /* L'IA n'est utilisée que si elle est DÉJÀ prête. L'import ne lance JAMAIS le chargement du modèle : c'était un
+     téléchargement de 0,9 à 5 Go déclenché sans le demander, pendant lequel l'import restait figé sur « Analyse du
+     contenu… » (des minutes, ou indéfiniment dans l'app Mac). Sans IA prête : détection simple, immédiate. */
+  const aiReady = state.aiStatus === "ready";
   // Contexte prioritaire : import lancé depuis une matière déjà ouverte (voir
   // goToCourseImport/renderSubjectDetail). Ni l'IA ni la détection heuristique
   // ne doivent pouvoir en proposer une autre.
@@ -11806,12 +11853,14 @@ async function courseImportRunAllSteps(item, signal, onlyKeys){
       if(signal && signal.cancelled) return;
       item.failedSteps = item.failedSteps.filter(k => k !== steps[i].key);
       item.lastStepError = null;
+      if(item.stepErrors) delete item.stepErrors[steps[i].key];
       if(ch) courseImportApplyGeneratedToChapter(ch, item, [steps[i].key]);
     }catch(e){
       if(signal && signal.cancelled) return;
       if(!item.failedSteps.includes(steps[i].key)) item.failedSteps.push(steps[i].key);
       const classified = classifyGenerationError(e);
       item.lastStepError = classified;
+      (item.stepErrors = item.stepErrors || {})[steps[i].key] = classified;     // la cause de CHAQUE étape (pas seulement de la dernière)
       console.error("[REV-EM · IA] Erreur de génération :", steps[i].key, e);
     }
   }
@@ -11935,6 +11984,10 @@ async function courseImportGenerate(index){
   const ci = state.courseImport;
   const item = ci.files[index];
   if(!item || item.status !== "review" || aiEngineBusy()) return;
+  /* IA pas prête : le cours est enregistré TOUT DE SUITE avec des supports simplifiés (fiche, quiz, flashcards construits
+     à partir du texte du cours, sans rien inventer) — les révisions sont possibles immédiatement ; la version IA se lance
+     ensuite depuis la page du cours (« Générer tout »), quand l'assistant est chargé. Jamais de téléchargement implicite. */
+  if(state.aiStatus !== "ready") return courseImportSaveWithoutAI(index);
   item.aiError = null;
   ci.busy = true;
   item.status = "generating"; // avant la résolution de cible : la confirmation de doublon est asynchrone
@@ -11985,7 +12038,10 @@ async function courseImportSaveWithoutAI(index){
   ci.step = "generating";
   const h = buildHeuristicCourseMaterials(item.extractedText);
   item.generated.fiche = h.fiche;
-  item.failedSteps = ["summary", "reviewQuestions"];
+  item.failedSteps = ["reviewQuestions"];
+  /* Résumé simplifié : la première phrase de chaque partie du cours, sans reformulation (heuristicSummary). */
+  const sum = heuristicSummary(item.extractedText);
+  if(sum) item.generated.summary = sum; else item.failedSteps.push("summary");
   if(h.flashcards.length) item.generated.flashcards = h.flashcards; else item.failedSteps.push("flashcards");
   if(h.quiz.length) item.generated.quiz = h.quiz; else item.failedSteps.push("quiz");
   const ch = findAnyChapter(chapterId);
@@ -12035,6 +12091,8 @@ function courseHubErrorCode(classified){
   if(classified.kind === "memory") return "OUT_OF_MEMORY";
   if(classified.kind === "timeout") return "TIMEOUT";
   if(classified.kind === "webgpu") return "DEVICE_LOST";
+  if(classified.kind === "busy") return "ENGINE_BUSY";
+  if(classified.kind === "format") return "BAD_FORMAT";
   return "GENERATION_FAILED";
 }
 
@@ -12210,7 +12268,11 @@ function courseHubFlags(ch){
 /* ── la section « Outils de révision » ── */
 function courseHubCardHtml(ch, r, st){
   const lab = HUB.statusLabel(st);
-  const title = t("hub." + r.key + ".title"), sub = t("hub." + r.key + ".sub");
+  const title = t("hub." + r.key + ".title");
+  /* En erreur, la carte dit POURQUOI (raison courte, traduite) au lieu du seul « Erreur — à relancer » : le détail et « Réessayer »
+     sont dans la vue de la ressource. */
+  const reasonKey = st.state === "ERROR" && st.error ? "hub.reason." + st.error.code : "";
+  const sub = (reasonKey && t(reasonKey) !== reasonKey) ? t(reasonKey) : t("hub." + r.key + ".sub");
   const stateText = t(lab.key, lab.vars);
   const ready = st.state === "READY" && r.key !== "questions";
   const busy = st.state === "GENERATING" || st.state === "QUEUED";
@@ -12371,7 +12433,7 @@ function courseHubOpenAfterImport(item){
   courseImportStopTimer();
   const chapterId = item.resultChapterId;
   if(HUB && !item.heuristicMode && item.failedSteps){
-    item.failedSteps.forEach(k => HUB.recordError(state.courseGen, chapterId, k, { code: courseHubErrorCode(item.lastStepError) }));
+    item.failedSteps.forEach(k => HUB.recordError(state.courseGen, chapterId, k, { code: courseHubErrorCode((item.stepErrors && item.stepErrors[k]) || item.lastStepError) }));
   }
   state.courseImport = freshCourseImportState();
   libGoto("chapterDetail", { chapterId });
@@ -12441,7 +12503,7 @@ function courseImportHasActiveWork(){
 /* API historique, conservée : « goToCourseImport(subjectId) » ouvre maintenant
    l'Import Center (plus une page de la bibliothèque). */
 function goToCourseImport(subjectId){
-  openImportCenter({ contextSubjectId: subjectId || null, origin: subjectId ? "subject" : "legacy" });
+  openImportCenter({ contextSubjectId: subjectId || null, origin: subjectId ? "subject" : "legacy", pick: true });
 }
 
 /* opts : { contextSubjectId, origin }
@@ -12449,7 +12511,7 @@ function goToCourseImport(subjectId){
    resources | command-center | empty-state | window-drop. */
 function openImportCenter(opts){
   opts = opts || {};
-  if(ic){ icFocusHint("pick"); return ic; }                 // déjà ouvert : jamais deux
+  if(ic){ if(opts.pick) icOpenPicker(); else icFocusHint("pick"); return ic; }   // déjà ouvert : jamais deux
   if(courseImportHasActiveWork()){
     showToast(t("imp.resume_toast"));
     libGoto("import"); switchTab("library");
@@ -12484,7 +12546,10 @@ function openImportCenter(opts){
      successifs de la vue ne les dupliquent jamais. */
   back.addEventListener("click", icOnClick);
   back.addEventListener("input", icOnInput);
-  me.input.addEventListener("change", () => { const files = me.input.files; icAcceptFiles(files); me.input.value = ""; });
+  me.input.addEventListener("change", () => { const files = me.input.files; if(me.pickWatch) me.pickWatch.changed(); icAcceptFiles(files); me.input.value = ""; });
+  /* Annulation du sélecteur (Chrome ≥ 113, Safari/WebKit ≥ 16.4) : ce n'est PAS une panne — sauf si elle est instantanée et
+     qu'aucune fenêtre ne s'est ouverte (voir RevemImport.pickerVerdict). */
+  me.input.addEventListener("cancel", () => { if(me.pickWatch) me.pickWatch.cancelled(); });
   back.addEventListener("dragenter", icOnDragEnter);
   back.addEventListener("dragover", icOnDragOver);
   back.addEventListener("dragleave", icOnDragLeave);
@@ -12496,6 +12561,11 @@ function openImportCenter(opts){
   document.body.classList.add("ic-open");
   icRender();
   icFocusHint("pick");
+  /* « Importer un cours » mène DIRECTEMENT aux fichiers : le sélecteur s'ouvre dans le même geste (activation utilisateur
+     conservée : tout ceci est synchrone depuis le clic). L'Import Center reste derrière : il reçoit le fichier, le vérifie,
+     permet de le remplacer, ou de glisser / coller à la place. Jamais hors d'un geste réel (dépôt sur la fenêtre, appel
+     programmé) : un navigateur ignorerait l'appel en silence. */
+  if(opts.pick && !(navigator.userActivation && navigator.userActivation.isActive === false)) icOpenPicker();
   return me;
 }
 
@@ -12506,6 +12576,7 @@ function closeImportCenter(){
   if(me.signal) me.signal.cancelled = true;                 // une lecture en cours s'arrête réellement
   if(me.handoff) clearTimeout(me.handoff);
   document.removeEventListener("keydown", me.keydown, true);
+  if(me.pickWatch) me.pickWatch.stop();
   ic = null;
   me.back.remove();
   document.body.classList.remove("ic-open");
@@ -12532,6 +12603,7 @@ async function icAcceptFiles(fileList){
   if(!files.length) return;
   const m = me.machine, file = files[0];
   if(!m.beginValidate(file)) return;                        // doublon d'événement, ou traitement en cours
+  me.pickerIssue = null;
   me.note = files.length > 1 ? { key: "imp.multi_note", vars: { name: file.name } } : null;
 
   const meta = IMPORT.validateMeta(file);
@@ -12660,8 +12732,53 @@ function icOpenPicker(){
   const me = ic; if(!me) return;
   const st = me.machine.state;
   if(st === "PROCESSING" || st === "SUCCESS" || st === "VALIDATING") return;
+  if(me.pickerIssue){ me.pickerIssue = null; icRender(); }
+  icWatchPicker(me);
   me.input.value = "";
-  me.input.click();
+  try{ me.input.click(); }
+  catch(e){ console.warn("[REV-EM · Import] ouverture du sélecteur impossible", e); if(me.pickWatch) me.pickWatch.finish("unavailable"); }
+}
+
+/* `input.click()` ne dit jamais si une fenêtre s'est ouverte. On observe les signes d'une vraie fenêtre native (la page perd
+   le focus ou se cache), le retour d'un fichier, ou une annulation. Sans aucun signe, ou sur une annulation instantanée,
+   la fenêtre ne s'est PAS ouverte : on le dit, avec les solutions qui marchent (glisser le fichier, coller le texte), au lieu
+   d'un bouton qui semble ne rien faire. Cas réel : REV-EM.app (WKWebView) sans gestion native du panneau de fichiers. */
+function icWatchPicker(me){
+  if(me.pickWatch) me.pickWatch.stop();
+  const t0 = Date.now();
+  const ev = { blurred: false, hidden: false, changed: false, cancelled: false, cancelAt: null };
+  const onBlur = () => { ev.blurred = true; };
+  const onVis = () => { if(document.visibilityState === "hidden") ev.hidden = true; };
+  let timer = null, over = false;
+  const w = {
+    stop(){ over = true; if(timer) clearTimeout(timer); window.removeEventListener("blur", onBlur); document.removeEventListener("visibilitychange", onVis); if(me.pickWatch === w) me.pickWatch = null; },
+    finish(verdict){
+      if(over) return;
+      w.stop();
+      if(ic !== me) return;
+      if(verdict === "unavailable"){
+        me.pickerIssue = { app: IMPORT.isEmbeddedWebKit(navigator.userAgent, !!(window.webkit && window.webkit.messageHandlers)) };
+        console.warn("[REV-EM · Import] le sélecteur de fichiers ne s'est pas ouvert", { ua: navigator.userAgent, afterMs: Date.now() - t0 });
+        const st = me.machine.state;
+        if(st === "IDLE" || st === "READY" || st === "ERROR"){
+          const hadFocus = me.dialog.contains(document.activeElement);
+          icRender();
+          if(hadFocus || !document.activeElement || document.activeElement === document.body) icFocusHint(st === "READY" ? "primary" : "pick");   // le clavier retombe sur « Choisir un fichier » (réessayer)
+        }
+      }
+    },
+    decide(){
+      if(over) return;
+      const v = IMPORT.pickerVerdict(Object.assign({ elapsed: Date.now() - t0 }, ev));
+      if(v !== "pending") w.finish(v);
+    },
+    changed(){ ev.changed = true; w.decide(); },
+    cancelled(){ ev.cancelled = true; ev.cancelAt = Date.now() - t0; w.decide(); },
+  };
+  window.addEventListener("blur", onBlur);
+  document.addEventListener("visibilitychange", onVis);
+  timer = setTimeout(() => { timer = null; w.decide(); }, IMPORT.PICKER_WAIT_MS);
+  me.pickWatch = w;
 }
 
 function icHasFiles(e){
@@ -12781,6 +12898,12 @@ function icRender(){
 
   const alertBox = () => err ? `<div class="ic-alert" role="alert"><span class="ic-alert-icon">${dashIcon("alert")}</span><p>${escapeHtml(icErrorText(err))}</p></div>` : "";
   const noteBox = () => me.note ? `<p class="ic-note" role="status">${escapeHtml(t(me.note.key, me.note.vars))}</p>` : "";
+  /* Le sélecteur ne s'est pas ouvert : on le dit et on donne ce qui marche, jamais un bouton muet. */
+  const pickerBox = () => me.pickerIssue ? `<div class="ic-alert ic-alert--picker" role="alert" data-ic-picker-issue>
+      <span class="ic-alert-icon">${dashIcon("alert")}</span>
+      <div><p><b>${escapeHtml(t("imp.picker.title"))}</b> ${escapeHtml(t("imp.picker.body"))}</p>
+      ${me.pickerIssue.app ? `<p class="ic-note">${escapeHtml(t("imp.picker.app"))}</p>` : ""}</div>
+    </div>` : "";
 
   const pasteBlock = () => `<div class="ic-paste">
       <button type="button" class="btn-text ic-paste-toggle" data-ic="paste-toggle" aria-expanded="${me.pasteOpen ? "true" : "false"}" aria-controls="ic-paste-panel">${escapeHtml(t(me.pasteOpen ? "imp.paste.hide" : "imp.paste.toggle"))}</button>
@@ -12803,7 +12926,7 @@ function icRender(){
 
   let body = "", foot = "", live = "";
   if(st === "IDLE" || st === "DRAGGING"){
-    body = dropzone() + noteBox() + pasteBlock();
+    body = pickerBox() + dropzone() + noteBox() + pasteBlock();
     foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
             <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
   }else if(st === "VALIDATING"){
@@ -12813,7 +12936,7 @@ function icRender(){
   }else if(st === "READY"){
     body = fileCard("ready", `<div class="ic-file-status is-ok"><span class="ic-dot" aria-hidden="true"></span>${escapeHtml(t("imp.file.ready"))}</div>`,
       `<div class="ic-file-actions"><button type="button" class="btn-text" data-ic="replace">${escapeHtml(t("imp.file.replace"))}</button><button type="button" class="btn-text ic-remove" data-ic="remove">${escapeHtml(t("imp.file.remove"))}</button></div>`)
-      + noteBox();
+      + noteBox() + pickerBox();
     foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
             <button type="button" class="btn btn--primary" data-ic="primary">${escapeHtml(t("imp.cta"))}</button>`;
     live = t("imp.live.ready", { name: sum.name });
@@ -12841,7 +12964,7 @@ function icRender(){
       foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
               ${err.retry ? `<button type="button" class="btn btn--primary" data-ic="retry">${escapeHtml(t("imp.retry"))}</button>` : `<button type="button" class="btn btn--primary" data-ic="pick">${escapeHtml(t("imp.other"))}</button>`}`;
     }else{          // refus de VALIDATION : la zone reste utilisable, rien ne se ferme
-      body = alertBox() + dropzone() + pasteBlock();
+      body = alertBox() + pickerBox() + dropzone() + pasteBlock();
       foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
               <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
     }
@@ -12901,7 +13024,7 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest && e.target.closest("[data-import-center]");
   if(!b) return;
   e.preventDefault();
-  openImportCenter({ origin: b.getAttribute("data-import-center") || "unknown", contextSubjectId: b.getAttribute("data-import-subject") || null });
+  openImportCenter({ origin: b.getAttribute("data-import-center") || "unknown", contextSubjectId: b.getAttribute("data-import-subject") || null, pick: true });
 });
 
 function fmtFileSize(bytes){
@@ -13101,10 +13224,13 @@ function renderImportDetectOrReview(){
     ${item.warning ? `<p class="ai-hint" style="margin-top:12px;">${escapeHtml(item.warning)}</p>` : ""}
 
     <div class="actions" style="justify-content:flex-start;margin-top:16px;flex-wrap:wrap;">
-      <button class="btn red" id="import-confirm-generate-btn">Générer avec l'IA</button>
-      <button class="btn outline" id="import-save-noai-btn">Enregistrer sans IA</button>
+      ${state.aiStatus === "ready"
+        ? `<button class="btn red" id="import-confirm-generate-btn">Générer avec l'IA</button>
+      <button class="btn outline" id="import-save-noai-btn">Enregistrer sans IA</button>`
+        : `<button class="btn red" id="import-confirm-generate-btn">${escapeHtml(t("imp.review.import"))}</button>`}
       <button class="btn-text" id="import-skip-file-btn">Annuler ce fichier</button>
     </div>
+    ${state.aiStatus === "ready" ? "" : `<p class="ai-hint" id="import-noai-hint" style="margin-top:8px;">${escapeHtml(t("imp.review.no_ai"))}</p>`}
   </div>`;
   return html;
 }
@@ -13331,7 +13457,7 @@ function attachCourseImportEvents(){
   const backBtn = document.getElementById("import-back-btn");
   if(backBtn) backBtn.addEventListener("click", ()=> libGoto("subjects"));
   const newImportBtn = document.getElementById("import-new-btn");
-  if(newImportBtn) newImportBtn.addEventListener("click", ()=>{ courseImportStopTimer(); state.courseImport = freshCourseImportState(); libGoto("subjects"); openImportCenter({ origin: "result" }); });
+  if(newImportBtn) newImportBtn.addEventListener("click", ()=>{ courseImportStopTimer(); state.courseImport = freshCourseImportState(); libGoto("subjects"); openImportCenter({ origin: "result", pick: true }); });
 }
 
 /* ============================================================
@@ -15831,7 +15957,28 @@ let aiTransportPromise = null;
 let aiForceMain = false;             // vrai seulement après PREUVE que le worker n'a pas WebGPU
 let aiReqSeq = 0;
 let aiInit = null;                   // { id, resolve } — le chargement en cours
-let aiGen = null;                    // { id, asm (assembleur de sortie : le texte BRUT y vit), resolve, reject, onText, poll } — la génération en cours
+let aiGen = null;                    // { id, asm (assembleur de sortie : le texte BRUT y vit), resolve, reject, onText, poll, startedAt, lastActivity, stopping, stuck } — la génération en cours
+/* Fin RÉELLE d'une génération. Demander l'arrêt (ABORT) ne libère pas le moteur : il s'arrête au jeton suivant (ou après le
+   pré-remplissage du prompt). Tant que sa réponse n'est pas arrivée, `aiGen` reste occupé. Ceux qui attendent le moteur libre
+   (une étape suivante après un délai dépassé) sont prévenus ICI, après que la génération terminée a rendu son résultat. */
+let aiGenIdleWaiters = [];
+function aiGenRelease(g){
+  if(aiGen === g) aiGen = null;
+  if(g && g.poll) clearInterval(g.poll);
+  const w = aiGenIdleWaiters; aiGenIdleWaiters = [];
+  if(w.length) Promise.resolve().then(() => w.forEach(f => f()));
+}
+/* Attend que plus aucune génération ne tourne (borné). Résout `true` si le moteur est libre. */
+function aiWaitGenIdle(ms){
+  if(!aiGen) return Promise.resolve(true);
+  return new Promise(resolve => {
+    let done = false;
+    const fn = () => { if(done) return; done = true; clearTimeout(timer); resolve(!aiGen); };
+    const timer = setTimeout(() => { if(done) return; done = true; aiGenIdleWaiters = aiGenIdleWaiters.filter(f => f !== fn); resolve(!aiGen); }, ms);
+    aiGenIdleWaiters.push(fn);
+  });
+}
+const AI_STOP_WAIT_MS = 30000;        // délai maximal pour qu'une génération ARRÊTÉE rende la main (pré-remplissage d'un long prompt compris)
 const aiPending = new Map();         // id → { resolve, timer } pour GET_STATUS / RESET_AI_CACHE
 let aiAutoRestoreDone = false;
 let aiProgressRaf = 0;
@@ -15910,7 +16057,7 @@ function aiOnWorkerCrash(err){
   state.aiWorkerError = msg;
   aiDropTransport();
   if(aiInit){ const r = aiInit.resolve; aiInit = null; r({ type: "MODEL_ERROR", code: "WORKER_FAILED", message: msg, stage: "worker" }); }
-  if(aiGen){ const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll); const e = new Error(msg); e.code = "WORKER_FAILED"; g.reject(e); }
+  if(aiGen){ const g = aiGen; aiGenRelease(g); const e = new Error(msg); e.code = "WORKER_FAILED"; g.reject(e); }
 }
 
 function aiOnHostMessage(m){
@@ -15939,6 +16086,7 @@ function aiOnHostMessage(m){
       if(aiGen && aiGen.id === m.id){
         /* Un DELTA (WebLLM : choices[0].delta.content) est confié à l'assembleur : filtre du raisonnement, balises coupées entre deux
            chunks, jetons spéciaux. Le texte BRUT n'est jamais affiché. */
+        aiGen.lastActivity = Date.now();
         const r = aiGen.asm.push(m.delta);
         if(r.changed && aiGen.onText) aiGen.onText({ text: aiGen.asm.visible(), phase: aiGen.asm.state() });
         if(r.loop && !aiGen.loopAborted){ aiGen.loopAborted = true; aiLog("Boucle de génération détectée", "arrêt de la génération"); aiAbortGeneration(); }
@@ -15946,18 +16094,20 @@ function aiOnHostMessage(m){
       break;
     case "GENERATION_COMPLETE":
       if(aiGen && aiGen.id === m.id){
-        const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll);
+        const g = aiGen; if(aiGen === g) aiGen = null;
         state.aiPerf = { ttftMs: m.ttftMs, totalMs: m.totalMs, chars: m.chars, tier: m.tier, finishReason: m.finishReason || null, at: Date.now() };
         aiLog("Génération terminée", "premier jeton " + Math.round(m.ttftMs || 0) + " ms · total " + m.totalMs + " ms");
         const proc = g.asm.finish({ finishReason: m.finishReason || null, aborted: !!m.aborted, loopAborted: !!g.loopAborted });
         g.resolve({ text: proc.text, raw: proc.raw, proc, loopAborted: !!g.loopAborted, aborted: !!m.aborted, ttftMs: m.ttftMs, totalMs: m.totalMs, finishReason: m.finishReason || null });
+        aiGenRelease(g);
       }
       break;
     case "GENERATION_ERROR":
       if(aiGen && aiGen.id === m.id){
-        const g = aiGen; aiGen = null; if(g.poll) clearInterval(g.poll);
+        const g = aiGen; if(aiGen === g) aiGen = null;
         const e = new Error(m.message || "génération impossible"); e.code = m.code; e.contextExceeded = !!m.contextExceeded;
         g.reject(e);
+        aiGenRelease(g);
       }
       break;
     case "DEVICE_LOST": aiOnDeviceLost(m); break;
@@ -16500,10 +16650,23 @@ function aiBuildDiagnostic(res){
 
 /* Génération : envoie l'historique COMPACT à l'hôte et relaie le flux. Un seul
    appel à la fois (l'hôte refuse le second de toute façon). */
-function aiHostGenerate(turns, { task, temperature, topP, maxTokens: maxTokensOpt, budgetTokens, onText, signal } = {}){
+function aiHostGenerate(turns, opts){
+  /* Une génération précédente a été ARRÊTÉE (délai dépassé, annulation, boucle) mais n'a pas encore rendu la main : on attend sa fin
+     réelle (bornée) au lieu d'échouer aussitôt. Sans cette attente, un seul délai dépassé faisait échouer en cascade toutes les étapes
+     suivantes (fiche → résumé → quiz → flashcards → questions), sans qu'aucune n'atteigne le moteur. */
+  if(aiGen && aiGen.stopping && !aiGen.stuck){
+    const prev = aiGen;
+    return aiWaitGenIdle(AI_STOP_WAIT_MS).then(free => {
+      if(!free && aiGen === prev){ prev.stuck = true; aiLog("Le moteur ne rend pas la main", "génération " + prev.id + " arrêtée depuis " + Math.round(AI_STOP_WAIT_MS / 1000) + " s"); }
+      return aiHostGenerateNow(turns, opts);
+    });
+  }
+  return aiHostGenerateNow(turns, opts);
+}
+function aiHostGenerateNow(turns, { task, temperature, topP, maxTokens: maxTokensOpt, budgetTokens, onText, signal } = {}){
   return new Promise((resolve, reject) => {
     if(!aiEngineReady()){ reject(new Error("Le modèle n'est pas chargé.")); return; }
-    if(aiGen){ reject(new Error("Une génération est déjà en cours.")); return; }
+    if(aiGen){ const e = new Error(aiGen.stopping ? "L'IA termine encore la génération précédente." : "Une génération est déjà en cours."); e.code = "ENGINE_BUSY"; reject(e); return; }
     const maxTokens = (typeof maxTokensOpt === "number" && maxTokensOpt > 0) ? maxTokensOpt : AIE.maxTokensFor(task || "chat");
     /* `budgetTokens` : le budget de prompt est alors celui de l'appelant (assistant-core : fenêtre réelle − réponse − marge). */
     const compact = AIE.compactHistory(turns.map(t0 => ({ role: t0.role, content: t0.content })), budgetTokens ? { budgetTokens } : { maxNewTokens: maxTokens });
@@ -16511,14 +16674,14 @@ function aiHostGenerate(turns, { task, temperature, topP, maxTokens: maxTokensOp
     const id = "gen-" + (++aiReqSeq);
     /* « chat » : pipeline complet (typographie, boucles, doublons) ; les autres tâches (cours, JSON…) : filtre du raisonnement et des balises SEULEMENT. */
     const tk = AIE.TIERS[state.aiTier];
-    const g = aiGen = { id, asm: RevemOutput.createAssembler({ reasoning: !!(tk && tk.reasoning), mode: (task || "chat") === "chat" ? "text" : "light" }), loopAborted: false, resolve, reject, onText };
+    const g = aiGen = { id, asm: RevemOutput.createAssembler({ reasoning: !!(tk && tk.reasoning), mode: (task || "chat") === "chat" ? "text" : "light" }), loopAborted: false, resolve, reject, onText, startedAt: Date.now(), lastActivity: Date.now(), stopping: false, stuck: false };
     if(signal) g.poll = setInterval(() => { if(signal.cancelled) aiAbortGeneration(); }, 150);
     aiLog("Génération commencée", "≈" + compact.tokens + " jetons de prompt");
     aiTransport.send({ type: "GENERATE", id, messages: compact.turns, temperature: typeof temperature === "number" ? temperature : 0.6, topP: typeof topP === "number" ? topP : undefined, maxTokens });
   });
 }
 function aiAbortGeneration(){
-  if(aiTransport && aiGen) aiTransport.send({ type: "ABORT", id: aiGen.id });
+  if(aiTransport && aiGen){ aiGen.stopping = true; aiTransport.send({ type: "ABORT", id: aiGen.id }); }
 }
 
 async function webllmChat(turns, { onText, signal, task, temperature, topP, maxTokens, budgetTokens } = {}){
@@ -16532,10 +16695,17 @@ async function webllmJsonChat(turns, { signal } = {}){
   if(!aiEngineReady()) throw new Error("Le modèle n'est pas chargé.");
   const res = await aiHostGenerate(turns, { task: "json", temperature: 0.4, signal });
   if(signal && signal.cancelled) return null;
-  if(res.aborted) return null;
-  const match = res.text.match(/\[[\s\S]*\]/);
-  if(!match) throw new Error("format inattendu");
-  return JSON.parse(match[0]);
+  if(res.aborted && !res.loopAborted) return null;
+  /* Lecture TOLÉRANTE (RevemOutput.parseJsonLenient) : texte ou bloc ```json autour, virgules traînantes, et réponse COUPÉE
+     (limite de jetons, fenêtre de contexte, boucle arrêtée) dont on garde les éléments complets — au lieu de tout rejeter. */
+  const arr = RevemOutput.parseJsonLenient(res.text, "array");
+  if(!Array.isArray(arr)){
+    const e = new Error("format inattendu" + (res.finishReason === "length" ? " (réponse coupée)" : ""));
+    e.code = "BAD_FORMAT";
+    throw e;
+  }
+  if(res.finishReason === "length") aiLog("Réponse JSON coupée par la limite", arr.length + " élément(s) complet(s) conservé(s)");
+  return arr;
 }
 
 /* ============================================================
@@ -24007,7 +24177,7 @@ function handleNavGoto(ds){
     switchTab("fiches");
     return;
   }
-  if(goto === "import-course"){ openImportCenter({ origin: ds.origin || "nav" }); return; }
+  if(goto === "import-course"){ openImportCenter({ origin: ds.origin || "nav", pick: true }); return; }
   if(goto === "flash"){ state.flashScreen = "picker"; return switchTab("flash"); }
   if(goto === "quiz"){ state.screen = "picker"; return switchTab("quiz"); }
   if(goto === "exam"){ state.exam.screen = "setup"; return switchTab("exam"); }

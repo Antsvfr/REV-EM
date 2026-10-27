@@ -82,6 +82,78 @@ Changement de compte : `resetUserStateInMemory()` remplace `state.courseGen` ; l
 boucle de `courseHubPump` s'arrête dès que `state.courseGen !== gen` — rien n'est
 écrit dans les chapitres du compte suivant.
 
+## Panne « Erreur — à relancer » sur les cinq supports (corrigée)
+
+**Symptôme.** Après l'import d'un PDF, Fiche, Résumé, Quiz, Quiz Flash et Flashcards affichaient tous
+« Erreur — à relancer » ; seul « Questions » (qui ne génère rien) restait utilisable. Réessayer reproduisait la même chose.
+
+**Cause (reproduite avec le vrai code, moteur simulé au débit d'un modèle « Avancé » sur un Mac modeste).**
+1. *Délais fixes sur le temps TOTAL.* `withGenTimeout` coupait la fiche à 90 s (résumé 60 s, lot de quiz 75 s) même quand le
+   modèle écrivait encore. À 10–20 jetons/s, une fiche de ~1 600 jetons dépasse 90 s.
+2. *Cascade.* À l'expiration, l'arrêt était **demandé** au moteur (ABORT), mais l'échec était signalé AVANT que le moteur ait
+   réellement rendu la main. L'étape suivante trouvait `aiGen` encore occupé → « Une génération est déjà en cours. » → échec
+   immédiat, puis la suivante… **Un seul délai dépassé mettait les cinq supports en erreur, sans qu'aucune autre étape n'atteigne
+   le moteur.** Les suites existantes remplaçaient `webllmChat`/`webllmJsonChat` par un double : elles ne pouvaient pas voir ce
+   défaut, qui vit entre ces fonctions et le moteur.
+3. *Fragilités aggravantes.* Le budget de prompt (`promptBudgetTokens`) plafonnait la réponse à 1 000 jetons alors que la fiche et
+   les JSON en demandent 1 600 : prompt + réponse pouvaient dépasser la fenêtre de **4 096** jetons des trois modèles (vérifié dans
+   WebLLM 0.2.85 : au-delà, la réponse est coupée, `finish_reason: "length"`). Un JSON coupé, ou entouré de ```json, était
+   rejeté en entier. Enfin, la carte n'affichait jamais la cause.
+
+**Correction (dans l'existant, aucune nouvelle file, aucun nouveau module).**
+- `withGenTimeout` : `ms` = durée maximale **sans progrès** (jusqu'au 1er jeton, puis entre deux jetons), plafond absolu 10 min.
+  Au dépassement : ABORT puis **attente de l'arrêt réel** (`aiWaitGenIdle`, ≤ 30 s) avant de signaler l'échec ; une fois le délai
+  déclaré, l'issue est toujours « délai dépassé » (jamais la réponse vide de la génération arrêtée).
+- `aiHostGenerate` : si la génération précédente est en cours d'ARRÊT, on attend sa fin (bornée) au lieu d'échouer ; si le moteur
+  ne rend jamais la main, l'étape échoue avec `ENGINE_BUSY` (« Assistant IA occupé ») et les suivantes n'attendent pas une
+  seconde fois. Une demande pendant une génération ACTIVE (assistant) reste refusée immédiatement, comme avant.
+- `aiGenRelease` : la fin réelle d'une génération (terminée, en erreur, worker mort) prévient ceux qui attendent.
+- `promptBudgetTokens` : fenêtre − réponse réellement demandée (≤ 2 000) − marge.
+- `RevemOutput.parseJsonLenient` (pur, testé sous Node) : texte et clôtures retirés, virgules traînantes, et réponse coupée →
+  éléments COMPLETS gardés (un élément partiel n'est jamais complété ni inventé). Utilisé par `webllmJsonChat` et
+  `extractJsonObject` (fiche).
+- Cause par étape (`item.stepErrors`) et nouveaux codes `ENGINE_BUSY`, `BAD_FORMAT` ; la carte en erreur affiche une raison
+  courte traduite (`hub.reason.<CODE>`, 5 langues) : « Délai dépassé », « Assistant IA indisponible », « Réponse illisible »…
+
+**Preuve.** `tests/course-generation-engine.test.mjs` : vrai PDF → vraie extraction pdf.js → vrai pipeline → moteur simulé
+fidèle au protocole d'`ai-host.js` (horloge accélérée). Avant la correction : `fiche: TIMEOUT`, les quatre autres
+`GENERATION_FAILED`, un seul appel au moteur. Après : les cinq supports produits ; moteur figé → seule la fiche échoue ;
+moteur qui ne rend jamais la main → échec borné et cause claire ; réponses coupées ou en ```json → éléments complets gardés.
+**PASS MOCK** : NOT TESTED avec un vrai WebLLM / GPU / Mac.
+
+## Import sans IA chargée (corrigé) : le cours est importé ET révisable tout de suite
+
+**Symptôme.** « L'importation dans la bibliothèque ne fonctionne toujours pas » : après « Importer le cours », l'écran
+restait sur « Analyse du contenu… » ; aucun cours n'apparaissait.
+
+**Causes (reproduites avec le vrai code).**
+1. L'étape de détection appelait `tryEnsureImportAIReady()` → `aiLoadModel()` : quand le modèle n'était pas encore chargé
+   (cas normal au premier import), **l'import lançait le téléchargement du modèle (0,9 à 5 Go)** et l'attendait —
+   des minutes, ou indéfiniment dans l'app Mac — sans l'avoir demandé (contraire à la règle « jamais de téléchargement
+   implicite », `revem-ai`). Essai : chargement simulé interminable → toujours « detecting » après 90 s, 0 cours.
+2. Même enregistré « sans IA », un cours rédigé en phrases (un PDF, presque toujours) n'avait **ni quiz ni flashcards** :
+   le mode simplifié ne reconnaissait que les définitions « Terme : … » / « Terme est … » en DÉBUT de ligne.
+
+**Correction.**
+- Détection : l'IA n'est utilisée que si `state.aiStatus === "ready"` ; sinon détection simple, immédiate. L'import ne
+  déclenche plus jamais le chargement du modèle.
+- Écran de confirmation, IA pas prête : un seul bouton « Importer le cours » (même `id`, `import-confirm-generate-btn`) +
+  une phrase d'explication ; `courseImportGenerate` passe alors par `courseImportSaveWithoutAI` (le chemin existant). IA
+  prête : inchangé (« Générer avec l'IA » / « Enregistrer sans IA »).
+- Mode simplifié enrichi, **extractif, jamais inventé** : `RevemBank.extractiveBank(texte)` (pur, `revision-bank.js`) —
+  notions = groupes nominaux qui reviennent dans le cours ; chaque flashcard / question = une PHRASE EXACTE du cours avec
+  une notion à compléter ; mauvais choix = autres notions réelles du cours, absentes de la phrase ; validation par
+  `parseQuizBatch` / `parseCardBatch` (mêmes contrôles que l'IA), `heuristic: true`. Résumé simplifié (`heuristicSummary`)
+  et « Phrases clés du cours » dans la fiche.
+- La version IA reste à un clic : « Générer tout » sur la page du cours (le cours est en `heuristicMode` : les cinq
+  supports sont régénérés, voir `libGenerateChapterAI`).
+
+**Preuve.** `tests/import-without-ai.test.mjs` (vrai PDF, vrai bouton de la bibliothèque, chargement du modèle simulé
+interminable) : confirmation en < 10 s, 0 chargement de modèle, cours + PDF enregistrés, ≥ 5 questions et ≥ 5 flashcards,
+une question jouée, Quiz Flash et Flashcards ouverts, tout présent après rechargement. `tests/revision-bank.test.js` :
+aucune invention (citations exactes, bonne réponse dans la phrase, mauvais choix absents de la phrase), déterminisme.
+**PASS MOCK** pour l'état du modèle ; NOT TESTED Safari / REV-EM.app.
+
 ## Après un import
 
 `courseImportFinishAfterGeneration` : pour **un seul** fichier importé, on

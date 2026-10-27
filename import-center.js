@@ -347,7 +347,35 @@
   }
   function kindLabel(kind){ return { pdf: "PDF", docx: "DOCX", text: "TXT" }[kind] || ""; }
 
+  /* ── 7. LE SÉLECTEUR DE FICHIERS A-T-IL VRAIMENT ÉTÉ OUVERT ? ─────────────────
+     `input.click()` ne renvoie rien et ne lève jamais d'erreur : si le navigateur (ou l'application hôte) n'ouvre pas de
+     fenêtre, la page ne le sait pas. Cas RÉEL : dans une application macOS fondée sur WKWebView, aucun panneau n'est
+     ouvert tant que l'application n'implémente pas `webView(_:runOpenPanelWith:initiatedByFrame:completionHandler:)`
+     (WKUIDelegate) — WebKit se comporte alors comme si l'utilisateur avait cliqué « Annuler », sans rien afficher.
+     Les signes qu'une fenêtre native s'est ouverte : la page perd le focus (`blur`) ou devient cachée. Verdict :
+       • "chosen"      un fichier est revenu (événement change) ;
+       • "cancelled"   annulation APRÈS l'ouverture d'une fenêtre → l'utilisateur a renoncé, ce n'est PAS une panne ;
+       • "unavailable" annulation instantanée sans fenêtre, ou rien du tout après `waitMs` → la fenêtre ne s'est pas ouverte ;
+       • "pending"     on ne sait pas encore. */
+  var PICKER_WAIT_MS = 1500, PICKER_INSTANT_CANCEL_MS = 500;
+  function pickerVerdict(ev){
+    ev = ev || {};
+    var opened = !!(ev.blurred || ev.hidden);
+    if(ev.changed) return "chosen";
+    if(ev.cancelled) return (!opened && (ev.cancelAt == null || ev.cancelAt < PICKER_INSTANT_CANCEL_MS)) ? "unavailable" : "cancelled";
+    if(opened) return "pending";
+    return (ev.elapsed || 0) >= PICKER_WAIT_MS ? "unavailable" : "pending";
+  }
+  /* L'application REV-EM pour Mac (WKWebView) : WebKit sur macOS SANS le jeton « Safari/ » du navigateur Safari, ou un pont
+     natif `window.webkit.messageHandlers`. Sert seulement à choisir le bon message — jamais à désactiver une fonction. */
+  function isEmbeddedWebKit(ua, hasNativeBridge){
+    ua = String(ua || "");
+    if(hasNativeBridge) return true;
+    return /Macintosh/.test(ua) && /AppleWebKit\//.test(ua) && !/Safari\//.test(ua) && !/Chrome|Chromium|Edg\/|Firefox|OPR\//.test(ua);
+  }
+
   global.RevemImport = {
+    PICKER_WAIT_MS: PICKER_WAIT_MS, PICKER_INSTANT_CANCEL_MS: PICKER_INSTANT_CANCEL_MS, pickerVerdict: pickerVerdict, isEmbeddedWebKit: isEmbeddedWebKit,
     MAX_BYTES: MAX_BYTES, MIN_TEXT_CHARS: MIN_TEXT_CHARS, MAX_PDF_PAGES: MAX_PDF_PAGES, ACCEPT: ACCEPT,
     KINDS: KINDS, STATES: STATES, DUPLICATE_WINDOW_MS: DUPLICATE_WINDOW_MS,
     extOf: extOf, kindOfName: kindOfName, kindOfMime: kindOfMime,
