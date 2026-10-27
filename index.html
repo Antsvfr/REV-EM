@@ -12740,7 +12740,11 @@ function icWatchPicker(me){
         me.pickerIssue = { app: IMPORT.isEmbeddedWebKit(navigator.userAgent, !!(window.webkit && window.webkit.messageHandlers)) };
         console.warn("[REV-EM · Import] le sélecteur de fichiers ne s'est pas ouvert", { ua: navigator.userAgent, afterMs: Date.now() - t0 });
         const st = me.machine.state;
-        if(st === "IDLE" || st === "READY" || st === "ERROR") icRender();
+        if(st === "IDLE" || st === "READY" || st === "ERROR"){
+          const hadFocus = me.dialog.contains(document.activeElement);
+          icRender();
+          if(hadFocus || !document.activeElement || document.activeElement === document.body) icFocusHint(st === "READY" ? "primary" : "pick");   // le clavier retombe sur « Choisir un fichier » (réessayer)
+        }
       }
     },
     decide(){

@@ -114,6 +114,11 @@ async function open({ ua, viewport } = {}) {
 }
 const icState = (p) => p.evaluate(() => ic ? ic.machine.state : null);
 const waitIc = (p, st, ms = 8000) => p.waitForFunction((s) => ic && ic.machine.state === s, st, { timeout: ms });
+/* Un bouton « Importer un cours » ouvre DIRECTEMENT le sélecteur : on le prend en charge (sinon Chromium le garde ouvert). */
+/* Chromium libère un sélecteur fermé de façon ASYNCHRONE : un second input.click() quelques millisecondes après est annulé
+   d'office (la page affiche alors, à juste titre, « Aucune fenêtre ne s'est ouverte »). On lui laisse ce temps. */
+const releaseChooser = (p) => p.waitForTimeout(600);
+const clickDirect = async (p, sel, f) => { const [chooser] = await Promise.all([p.waitForEvent("filechooser", { timeout: 5000 }), p.click(sel)]); await chooser.setFiles(f || []); await releaseChooser(p); return chooser; };
 const pick = async (p, f) => { const [chooser] = await Promise.all([p.waitForEvent("filechooser"), p.click('#import-center [data-ic="pick"]')]); await chooser.setFiles(f); };
 const errText = (p) => p.evaluate(() => { const a = document.querySelector("#import-center .ic-alert"); return a ? a.innerText.trim() : ""; });
 /* Vrais événements de glisser-déposer (DragEvent + DataTransfer + File). */
@@ -131,8 +136,10 @@ async function dragFiles(p, files, target = "#ic-dialog", phases = ["dragenter",
 await scenario("1. Tableau de bord → « Importer un cours » → l'Import Center s'ouvre (sans quitter le tableau de bord)", async () => {
   const { ctx, page } = await open();
   eq("on démarre sur le tableau de bord", await page.evaluate(() => state.tab), "dashboard");
-  await page.click('[data-qa="import_course"]');
+  const direct = await clickDirect(page, '[data-qa="import_course"]');
+  check("le clic ouvre DIRECTEMENT le sélecteur de fichiers", !!direct);
   await page.waitForSelector("#import-center");
+  await page.waitForFunction(() => ic && !ic.pickWatch);
   eq("l'Import Center est ouvert", await page.$$eval("#import-center", e => e.length), 1);
   eq("l'onglet reste « dashboard » (pas de saut vers la bibliothèque)", await page.evaluate(() => state.tab), "dashboard");
   eq("état initial IDLE", await icState(page), "IDLE");
@@ -374,9 +381,9 @@ await scenario("9b. Fermer pendant la lecture arrête RÉELLEMENT la lecture", a
 
 await scenario("10. Import depuis le tableau de bord → pipeline existant (analyse → confirmation)", async () => {
   const { ctx, page } = await open();
-  await page.click('[data-qa="import_course"]');
+  await clickDirect(page, '[data-qa="import_course"]', PDF_FILE);              // le sélecteur s'ouvre directement depuis le bouton
   await page.waitForSelector("#import-center");
-  await pick(page, PDF_FILE); await waitIc(page, "READY");
+  await waitIc(page, "READY");
   await page.click('[data-ic="primary"]');
   await page.waitForSelector(".ic-success", { timeout: 15000 });
   check("état SUCCESS : nombre de pages et de caractères réels", /3 pages/.test(await page.innerText(".ic-success")) && /caractères/.test(await page.innerText(".ic-success")), await page.innerText(".ic-success"));
@@ -399,17 +406,17 @@ await scenario("11. Import depuis Mes matières, depuis une matière (contexte),
   const closeIt = () => page.evaluate(() => closeImportCenter());
   // Mes matières
   await page.evaluate(() => { libGoto("subjects"); switchTab("library"); });
-  await page.click("#lib-import-course-btn");
+  await clickDirect(page, "#lib-import-course-btn");
   eq("Mes matières → Import Center (origine « subjects »)", await origin(), "subjects");
   eq("… sans quitter Mes matières", await page.evaluate(() => [state.tab, state.library.view]), ["library", "subjects"]);
   await closeIt();
   // Une matière : le contexte est transmis
   const sid = await page.evaluate(() => { const s = allSubjects()[0]; libGoto("subjectDetail", { subjectId: s.id }); switchTab("library"); return s.id; });
-  await page.click("#lib-import-into-subject-btn");
+  await clickDirect(page, "#lib-import-into-subject-btn", PDF_FILE);
   eq("Matière → Import Center avec contextSubjectId", await page.evaluate(() => ic.opts.contextSubjectId), sid);
   const subjName = await page.evaluate((id) => findSubject(id).name, sid);
   check("le contexte est affiché (« Dans la matière : … »)", (await page.innerText(".ic-context")).includes(subjName), await page.innerText(".ic-context"));
-  await pick(page, PDF_FILE); await waitIc(page, "READY");
+  await waitIc(page, "READY");
   await page.click('[data-ic="primary"]');
   await page.waitForFunction(() => state.courseImport.files.length === 1, null, { timeout: 15000 });
   eq("le contexte est imposé au pipeline (matière verrouillée)", await page.evaluate(() => state.courseImport.lockedSubjectId), sid);
@@ -417,7 +424,7 @@ await scenario("11. Import depuis Mes matières, depuis une matière (contexte),
   await page.evaluate(() => { state.courseImport = freshCourseImportState(); libGoto("subjects"); });
   // Ressources
   await page.evaluate(() => switchTab("fiches"));
-  await page.click("#resources-import-btn");
+  await clickDirect(page, "#resources-import-btn");
   eq("Ressources → Import Center", await origin(), "resources");
   check("Ressources n'a plus sa propre zone de dépôt", (await page.$$(".automate-card .import-dropzone")).length === 0);
   await closeIt();
@@ -460,18 +467,23 @@ await scenario("12. Responsive : mobile 375 px (feuille), tablette, grand écran
 
 await scenario("13. Navigation au clavier : focus, Tab piégé, Échap, Entrée/Espace", async () => {
   const { ctx, page } = await open();
-  await page.focus('[data-qa="import_course"]');
-  const [direct] = await Promise.all([page.waitForEvent("filechooser"), page.keyboard.press("Enter")]);
+  const [direct] = await Promise.all([page.waitForEvent("filechooser"), page.press('[data-qa="import_course"]', "Enter")]);
   check("Entrée sur « Importer un cours » ouvre DIRECTEMENT le sélecteur de fichiers", !!direct);
   await direct.setFiles([]);                                 // l'utilisateur referme le sélecteur : l'Import Center reste ouvert
+  await releaseChooser(page);
   await page.waitForSelector("#import-center");
+  await page.waitForFunction(() => ic && !ic.pickWatch);     // la surveillance de l'ouverture est terminée (voir icWatchPicker)
   eq("le focus arrive dans la fenêtre, sur « Choisir un fichier »", await page.evaluate(() => document.activeElement.getAttribute("data-ic")), "pick");
   const order = [];
   for (let i = 0; i < 6; i++) { order.push(await page.evaluate(() => document.activeElement.getAttribute("data-ic") || document.activeElement.tagName)); await page.keyboard.press("Tab"); }
   check("Tab reste DANS la fenêtre (piège à focus)", order.every(x => x && x !== "BODY"), order);
   check("l'ordre est logique : choisir → coller → annuler → (importer désactivé sauté) → fermer", order.includes("pick") && order.includes("close"), order);
-  await page.focus('[data-ic="pick"]');
-  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.keyboard.press("Enter")]);
+  /* Quirk de l'interception Playwright : un sélecteur ouvert juste après un autre fermé « à vide » (setFiles([])) est parfois
+     annulé d'office par Chromium — la page affiche alors « Aucune fenêtre ne s'est ouverte » et l'utilisateur réessaie ; on
+     fait de même, UNE fois. */
+  const pressPick = async () => { await page.focus('[data-ic="pick"]'); const [c] = await Promise.all([page.waitForEvent("filechooser", { timeout: 4000 }), page.keyboard.press("Enter")]); return c; };
+  let chooser = await pressPick().catch(() => null);
+  if (!chooser) { await page.waitForTimeout(800); chooser = await pressPick(); }
   check("Entrée sur « Choisir un fichier » ouvre le sélecteur natif", !!chooser);
   await chooser.setFiles(PDF_FILE);
   await waitIc(page, "READY");

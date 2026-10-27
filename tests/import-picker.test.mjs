@@ -98,20 +98,20 @@ await scenario("1. Chaque bouton « Importer un cours » ouvre DIRECTEMENT le s�
     check(`${label} : un clic ouvre le sélecteur de fichiers`, !!chooser);
     check(`${label} : l'Import Center est là pour recevoir le fichier`, await page.evaluate(() => !!document.getElementById("import-center")));
     check(`${label} : le sélecteur accepte PDF, Word et texte`, chooser && /\.pdf/.test(await page.evaluate(() => document.getElementById("ic-file-input").accept)));
-    if (chooser) await chooser.setFiles([]);
+    if (chooser) { await chooser.setFiles([]); await page.waitForTimeout(600); }   // Chromium libère le sélecteur de façon asynchrone
     await page.evaluate(() => closeImportCenter());
   }
   /* Menu de navigation (bouton du menu déroulant, même logique centralisée) */
   const navChooser = await (async () => { try { const [c] = await Promise.all([page.waitForEvent("filechooser", { timeout: 5000 }), page.evaluate(() => document.querySelector('[data-goto="import-course"]').click())]); return c; } catch (e) { return null; } })();
   check("Navigation « Importer un cours » : ouvre le sélecteur", !!navChooser);
-  if (navChooser) await navChooser.setFiles([]);
+  if (navChooser) { await navChooser.setFiles([]); await page.waitForTimeout(600); }
   await page.evaluate(() => closeImportCenter());
   /* Un appel SANS geste (programmé) n'essaie pas d'ouvrir le sélecteur — le navigateur l'ignorerait en silence. */
   await page.evaluate(() => openImportCenter({ origin: "test", pick: true }));
   check("appel programmé, sans clic : l'Import Center s'ouvre, le bouton « Choisir un fichier » est prêt", await page.evaluate(() => !!document.querySelector('#import-center [data-ic="pick"]') && document.activeElement.getAttribute("data-ic") === "pick"));
   const again = await clickExpectChooser(page, '#import-center [data-ic="pick"]');
   check("« Choisir un fichier » ouvre le sélecteur", !!again);
-  await again.setFiles([]);
+  await again.setFiles([]); await page.waitForTimeout(600);
   eq("un seul champ fichier, identifiant unique", await page.evaluate(() => [document.querySelectorAll("input[type=file]#ic-file-input").length, document.querySelectorAll("#ic-file-input").length]), [1, 1]);
   check("aucune erreur JavaScript", page.errors.length === 0, page.errors);
   await ctx.close();
@@ -174,7 +174,7 @@ await scenario("4. Annuler le sélecteur n'est PAS une panne ; le même fichier 
   for (let i = 0; i < 3; i++) {
     await page.evaluate(() => switchTab("dashboard"));
     const k = await clickExpectChooser(page, '[data-qa="import_course"]');
-    await k.setFiles([]);
+    await k.setFiles([]); await page.waitForTimeout(600);
     await page.evaluate(() => closeImportCenter());
   }
   check("après 3 ouvertures/fermetures : plus aucun Import Center ni champ fichier orphelin", await page.evaluate(() => !document.getElementById("import-center") && document.querySelectorAll("input[type=file]").length === document.querySelectorAll("input[type=file]:not(#ic-file-input)").length));
