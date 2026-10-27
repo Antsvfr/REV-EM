@@ -208,34 +208,63 @@ réellement la lecture entre deux pages et **conserve le fichier**.
   `lockedSubjectId` (matière imposée) — le contexte « import depuis Finance » est déjà
   transmis de bout en bout.
 
-## 9. WKWebView / REV-EM.app
+## 9. WKWebView / REV-EM.app — le sélecteur de fichiers
 
-**Vérifié ici (PASS)** : aucune API réservée à Chromium ; `<input type="file">` réel avec
-`accept` (extensions + MIME) ; repli `FileReader` si `Blob.arrayBuffer` manque ; input non
-`display:none` ; parcours complet avec un User-Agent de WKWebView (**simulation du UA
-seulement**).
+### Cause du bouton « Importer un cours » qui n'ouvrait rien sur Mac
+Sur **macOS**, WKWebView n'ouvre **aucun** panneau de fichiers par lui-même. `input.click()` (ou un clic sur
+`<input type="file">`) demande à l'application hôte d'afficher le panneau via
+`WKUIDelegate.webView(_:runOpenPanelWith:initiatedByFrame:completionHandler:)`. **Si l'application n'implémente pas cette
+méthode, WebKit se comporte comme si l'utilisateur avait cliqué « Annuler »** (documentation Apple de cette méthode) :
+rien ne s'ouvre, aucune erreur n'est levée, la page ne reçoit rien. Le code de la page était correct (un seul
+`<input type="file">` présent dans le DOM, jamais supprimé par un rendu, identifiant unique, non désactivé, non
+`display:none`, `input.click()` appelé dans le geste de l'utilisateur, `change` écouté) — la correction est **native**.
 
-**NOT TESTED WKWEBVIEW / NOT TESTED WEBKIT** : ni Safari/WebKit ni `REV-EM.app` ne sont
-disponibles ici. Je ne peux donc **pas** affirmer que l'import fonctionne dans l'app.
+L'ancienne version de cette section affirmait « aucun code Swift n'est requis pour un `<input type="file">` simple » :
+**c'était faux pour macOS** (vrai sur iOS, où WKWebView a un sélecteur par défaut).
 
-### ACTION MANUELLE XCODE REQUISE — **conditionnelle**
-Le projet Xcode n'est pas dans ce dépôt ; il n'a **pas** été modifié. Rien ne permet
-d'affirmer aujourd'hui qu'une modification native soit nécessaire. **Uniquement si**, au
-test F ci-dessous, « Choisir un fichier » n'ouvre pas de sélecteur, ou si le fichier
-choisi/déposé est illisible :
-- **fichier** : le fichier `*.entitlements` de la cible macOS de REV-EM.app
-  (Xcode → cible → *Signing & Capabilities* → *App Sandbox* → *File Access*) ;
-- **modification exacte** : activer *User Selected File : Read Only*, soit la clé
-  `com.apple.security.files.user-selected.read-only` = `YES` ;
-- **raison** : une app macOS sandboxée n'a accès qu'aux fichiers que l'utilisateur
-  désigne *si* cette permission est accordée ; sans elle, le sélecteur ou la lecture du
-  fichier peut échouer. Aucun code Swift n'est requis pour un `<input type="file">` simple.
-Si l'app n'est **pas** sandboxée, aucune action n'est nécessaire.
+### ACTION XCODE REQUISE (le projet macOS n'est pas dans ce dépôt)
+Fichier prêt à intégrer : **`macos/REVEMOpenPanel.swift`** (non compilé ici : aucun compilateur Swift dans cet
+environnement — à compiler dans Xcode).
+1. Ajouter `macos/REVEMOpenPanel.swift` à la cible macOS de REV-EM.app (Xcode → *File → Add Files to…*, cocher la cible).
+2. Dans la classe qui est le `WKUIDelegate` du WKWebView (là où `webView.uiDelegate = …` est défini), ajouter :
+   ```swift
+   func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+       REVEMOpenPanel.present(for: webView, parameters: parameters, completionHandler: completionHandler)
+   }
+   ```
+   S'il n'existe **aucun** `WKUIDelegate` : `webView.uiDelegate = REVEMWebUIDelegate.shared` (gère aussi `alert()` /
+   `confirm()`, que WKWebView macOS ignore sinon). Ne pas créer un second délégué s'il en existe déjà un : il
+   remplacerait celui qui gère les autres panneaux.
+3. **Seulement si l'app est sandboxée** (*Signing & Capabilities → App Sandbox*) : *File Access → User Selected File* =
+   **Read Only**, soit `com.apple.security.files.user-selected.read-only` = `YES`. C'est la seule permission nécessaire :
+   le fichier choisi dans le panneau est alors lisible, rien d'autre sur le disque. Pas d'accès global, pas d'écriture.
+4. Recompiler, puis faire le test F ci-dessous.
+
+Le glisser-déposer depuis le Finder et « Coller le texte » ne dépendent PAS de cette méthode : ils fonctionnent déjà.
+
+### Ce que fait la page en attendant (et pour toujours, comme filet de sécurité)
+- « Importer un cours » ouvre **directement** le sélecteur, dans le même geste (l'Import Center s'affiche derrière pour
+  recevoir le fichier, le vérifier, le remplacer, ou accepter un dépôt / un texte collé).
+- Chaque ouverture est **surveillée** (`icWatchPicker`, verdict pur `RevemImport.pickerVerdict`) : une vraie fenêtre fait
+  perdre le focus à la page ; un fichier revient (`change`) ; ou l'utilisateur annule (`cancel`, ce n'est **pas** une
+  panne). Annulation instantanée sans fenêtre, ou aucun signe après 1,5 s → alerte « Aucune fenêtre de sélection ne s'est
+  ouverte » avec ce qui marche (glisser le fichier, coller le texte, réessayer) ; dans l'app Mac (détectée par
+  `RevemImport.isEmbeddedWebKit`), l'alerte précise qu'une mise à jour de l'application est nécessaire.
+- Limite connue : dans un navigateur qui ne signalerait pas la perte de focus à l'ouverture de sa fenêtre, l'alerte
+  pourrait apparaître derrière une fenêtre réellement ouverte si l'utilisateur met plus de 1,5 s à choisir ; elle
+  disparaît dès qu'un fichier arrive. Formulation volontairement non alarmante.
+
+**NOT TESTED WKWEBVIEW / NOT TESTED SAFARI** : ni Safari/WebKit ni `REV-EM.app` ne sont disponibles ici. Le comportement
+« le sélecteur ne s'ouvre pas » est SIMULÉ dans Chromium (`tests/import-picker.test.mjs`, scénario 5).
 
 ## 10. Test manuel (très court)
-- **A** Tableau de bord → « Importer un cours » : la fenêtre s'ouvre par-dessus la page.
+- **A** Tableau de bord → « Importer un cours » : le sélecteur de fichiers s'ouvre aussitôt ; l'Import Center est derrière.
 - **B** « Choisir un fichier » → un PDF → « Fichier prêt » → « Importer le cours ».
 - **C** Glisser un PDF depuis le Finder sur la fenêtre (et aussi hors de la fenêtre).
 - **D** Un `.pptx` et un PDF protégé : message clair, la fenêtre reste ouverte.
 - **E** Mobile / fenêtre étroite : feuille en bas, bouton pleine largeur.
-- **F — REV-EM.app (macOS)** : refaire B et C dans l'app ; si B échoue → voir l'action Xcode conditionnelle.
+- **F — REV-EM.app (macOS)** : après l'action Xcode du §9 — « Importer un cours » → le panneau du Finder s'ouvre → choisir
+  un PDF → « Fichier prêt » → « Importer le cours » → page du cours ; puis Annuler le panneau (aucune alerte) ; puis
+  glisser un PDF depuis le Finder. Avant l'action Xcode : le panneau ne s'ouvre pas et l'alerte « Aucune fenêtre de
+  sélection ne s'est ouverte » apparaît — c'est le comportement attendu tant que l'app n'est pas mise à jour.

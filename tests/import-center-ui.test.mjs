@@ -461,7 +461,9 @@ await scenario("12. Responsive : mobile 375 px (feuille), tablette, grand écran
 await scenario("13. Navigation au clavier : focus, Tab piégé, Échap, Entrée/Espace", async () => {
   const { ctx, page } = await open();
   await page.focus('[data-qa="import_course"]');
-  await page.keyboard.press("Enter");
+  const [direct] = await Promise.all([page.waitForEvent("filechooser"), page.keyboard.press("Enter")]);
+  check("Entrée sur « Importer un cours » ouvre DIRECTEMENT le sélecteur de fichiers", !!direct);
+  await direct.setFiles([]);                                 // l'utilisateur referme le sélecteur : l'Import Center reste ouvert
   await page.waitForSelector("#import-center");
   eq("le focus arrive dans la fenêtre, sur « Choisir un fichier »", await page.evaluate(() => document.activeElement.getAttribute("data-ic")), "pick");
   const order = [];

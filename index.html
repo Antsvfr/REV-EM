@@ -12483,7 +12483,7 @@ function courseImportHasActiveWork(){
 /* API historique, conservée : « goToCourseImport(subjectId) » ouvre maintenant
    l'Import Center (plus une page de la bibliothèque). */
 function goToCourseImport(subjectId){
-  openImportCenter({ contextSubjectId: subjectId || null, origin: subjectId ? "subject" : "legacy" });
+  openImportCenter({ contextSubjectId: subjectId || null, origin: subjectId ? "subject" : "legacy", pick: true });
 }
 
 /* opts : { contextSubjectId, origin }
@@ -12491,7 +12491,7 @@ function goToCourseImport(subjectId){
    resources | command-center | empty-state | window-drop. */
 function openImportCenter(opts){
   opts = opts || {};
-  if(ic){ icFocusHint("pick"); return ic; }                 // déjà ouvert : jamais deux
+  if(ic){ if(opts.pick) icOpenPicker(); else icFocusHint("pick"); return ic; }   // déjà ouvert : jamais deux
   if(courseImportHasActiveWork()){
     showToast(t("imp.resume_toast"));
     libGoto("import"); switchTab("library");
@@ -12526,7 +12526,10 @@ function openImportCenter(opts){
      successifs de la vue ne les dupliquent jamais. */
   back.addEventListener("click", icOnClick);
   back.addEventListener("input", icOnInput);
-  me.input.addEventListener("change", () => { const files = me.input.files; icAcceptFiles(files); me.input.value = ""; });
+  me.input.addEventListener("change", () => { const files = me.input.files; if(me.pickWatch) me.pickWatch.changed(); icAcceptFiles(files); me.input.value = ""; });
+  /* Annulation du sélecteur (Chrome ≥ 113, Safari/WebKit ≥ 16.4) : ce n'est PAS une panne — sauf si elle est instantanée et
+     qu'aucune fenêtre ne s'est ouverte (voir RevemImport.pickerVerdict). */
+  me.input.addEventListener("cancel", () => { if(me.pickWatch) me.pickWatch.cancelled(); });
   back.addEventListener("dragenter", icOnDragEnter);
   back.addEventListener("dragover", icOnDragOver);
   back.addEventListener("dragleave", icOnDragLeave);
@@ -12538,6 +12541,11 @@ function openImportCenter(opts){
   document.body.classList.add("ic-open");
   icRender();
   icFocusHint("pick");
+  /* « Importer un cours » mène DIRECTEMENT aux fichiers : le sélecteur s'ouvre dans le même geste (activation utilisateur
+     conservée : tout ceci est synchrone depuis le clic). L'Import Center reste derrière : il reçoit le fichier, le vérifie,
+     permet de le remplacer, ou de glisser / coller à la place. Jamais hors d'un geste réel (dépôt sur la fenêtre, appel
+     programmé) : un navigateur ignorerait l'appel en silence. */
+  if(opts.pick && !(navigator.userActivation && navigator.userActivation.isActive === false)) icOpenPicker();
   return me;
 }
 
@@ -12548,6 +12556,7 @@ function closeImportCenter(){
   if(me.signal) me.signal.cancelled = true;                 // une lecture en cours s'arrête réellement
   if(me.handoff) clearTimeout(me.handoff);
   document.removeEventListener("keydown", me.keydown, true);
+  if(me.pickWatch) me.pickWatch.stop();
   ic = null;
   me.back.remove();
   document.body.classList.remove("ic-open");
@@ -12574,6 +12583,7 @@ async function icAcceptFiles(fileList){
   if(!files.length) return;
   const m = me.machine, file = files[0];
   if(!m.beginValidate(file)) return;                        // doublon d'événement, ou traitement en cours
+  me.pickerIssue = null;
   me.note = files.length > 1 ? { key: "imp.multi_note", vars: { name: file.name } } : null;
 
   const meta = IMPORT.validateMeta(file);
@@ -12702,8 +12712,49 @@ function icOpenPicker(){
   const me = ic; if(!me) return;
   const st = me.machine.state;
   if(st === "PROCESSING" || st === "SUCCESS" || st === "VALIDATING") return;
+  if(me.pickerIssue){ me.pickerIssue = null; icRender(); }
+  icWatchPicker(me);
   me.input.value = "";
-  me.input.click();
+  try{ me.input.click(); }
+  catch(e){ console.warn("[REV-EM · Import] ouverture du sélecteur impossible", e); if(me.pickWatch) me.pickWatch.finish("unavailable"); }
+}
+
+/* `input.click()` ne dit jamais si une fenêtre s'est ouverte. On observe les signes d'une vraie fenêtre native (la page perd
+   le focus ou se cache), le retour d'un fichier, ou une annulation. Sans aucun signe, ou sur une annulation instantanée,
+   la fenêtre ne s'est PAS ouverte : on le dit, avec les solutions qui marchent (glisser le fichier, coller le texte), au lieu
+   d'un bouton qui semble ne rien faire. Cas réel : REV-EM.app (WKWebView) sans gestion native du panneau de fichiers. */
+function icWatchPicker(me){
+  if(me.pickWatch) me.pickWatch.stop();
+  const t0 = Date.now();
+  const ev = { blurred: false, hidden: false, changed: false, cancelled: false, cancelAt: null };
+  const onBlur = () => { ev.blurred = true; };
+  const onVis = () => { if(document.visibilityState === "hidden") ev.hidden = true; };
+  let timer = null, over = false;
+  const w = {
+    stop(){ over = true; if(timer) clearTimeout(timer); window.removeEventListener("blur", onBlur); document.removeEventListener("visibilitychange", onVis); if(me.pickWatch === w) me.pickWatch = null; },
+    finish(verdict){
+      if(over) return;
+      w.stop();
+      if(ic !== me) return;
+      if(verdict === "unavailable"){
+        me.pickerIssue = { app: IMPORT.isEmbeddedWebKit(navigator.userAgent, !!(window.webkit && window.webkit.messageHandlers)) };
+        console.warn("[REV-EM · Import] le sélecteur de fichiers ne s'est pas ouvert", { ua: navigator.userAgent, afterMs: Date.now() - t0 });
+        const st = me.machine.state;
+        if(st === "IDLE" || st === "READY" || st === "ERROR") icRender();
+      }
+    },
+    decide(){
+      if(over) return;
+      const v = IMPORT.pickerVerdict(Object.assign({ elapsed: Date.now() - t0 }, ev));
+      if(v !== "pending") w.finish(v);
+    },
+    changed(){ ev.changed = true; w.decide(); },
+    cancelled(){ ev.cancelled = true; ev.cancelAt = Date.now() - t0; w.decide(); },
+  };
+  window.addEventListener("blur", onBlur);
+  document.addEventListener("visibilitychange", onVis);
+  timer = setTimeout(() => { timer = null; w.decide(); }, IMPORT.PICKER_WAIT_MS);
+  me.pickWatch = w;
 }
 
 function icHasFiles(e){
@@ -12823,6 +12874,12 @@ function icRender(){
 
   const alertBox = () => err ? `<div class="ic-alert" role="alert"><span class="ic-alert-icon">${dashIcon("alert")}</span><p>${escapeHtml(icErrorText(err))}</p></div>` : "";
   const noteBox = () => me.note ? `<p class="ic-note" role="status">${escapeHtml(t(me.note.key, me.note.vars))}</p>` : "";
+  /* Le sélecteur ne s'est pas ouvert : on le dit et on donne ce qui marche, jamais un bouton muet. */
+  const pickerBox = () => me.pickerIssue ? `<div class="ic-alert ic-alert--picker" role="alert" data-ic-picker-issue>
+      <span class="ic-alert-icon">${dashIcon("alert")}</span>
+      <div><p><b>${escapeHtml(t("imp.picker.title"))}</b> ${escapeHtml(t("imp.picker.body"))}</p>
+      ${me.pickerIssue.app ? `<p class="ic-note">${escapeHtml(t("imp.picker.app"))}</p>` : ""}</div>
+    </div>` : "";
 
   const pasteBlock = () => `<div class="ic-paste">
       <button type="button" class="btn-text ic-paste-toggle" data-ic="paste-toggle" aria-expanded="${me.pasteOpen ? "true" : "false"}" aria-controls="ic-paste-panel">${escapeHtml(t(me.pasteOpen ? "imp.paste.hide" : "imp.paste.toggle"))}</button>
@@ -12845,7 +12902,7 @@ function icRender(){
 
   let body = "", foot = "", live = "";
   if(st === "IDLE" || st === "DRAGGING"){
-    body = dropzone() + noteBox() + pasteBlock();
+    body = pickerBox() + dropzone() + noteBox() + pasteBlock();
     foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
             <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
   }else if(st === "VALIDATING"){
@@ -12855,7 +12912,7 @@ function icRender(){
   }else if(st === "READY"){
     body = fileCard("ready", `<div class="ic-file-status is-ok"><span class="ic-dot" aria-hidden="true"></span>${escapeHtml(t("imp.file.ready"))}</div>`,
       `<div class="ic-file-actions"><button type="button" class="btn-text" data-ic="replace">${escapeHtml(t("imp.file.replace"))}</button><button type="button" class="btn-text ic-remove" data-ic="remove">${escapeHtml(t("imp.file.remove"))}</button></div>`)
-      + noteBox();
+      + noteBox() + pickerBox();
     foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
             <button type="button" class="btn btn--primary" data-ic="primary">${escapeHtml(t("imp.cta"))}</button>`;
     live = t("imp.live.ready", { name: sum.name });
@@ -12883,7 +12940,7 @@ function icRender(){
       foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
               ${err.retry ? `<button type="button" class="btn btn--primary" data-ic="retry">${escapeHtml(t("imp.retry"))}</button>` : `<button type="button" class="btn btn--primary" data-ic="pick">${escapeHtml(t("imp.other"))}</button>`}`;
     }else{          // refus de VALIDATION : la zone reste utilisable, rien ne se ferme
-      body = alertBox() + dropzone() + pasteBlock();
+      body = alertBox() + pickerBox() + dropzone() + pasteBlock();
       foot = `<button type="button" class="btn btn--tertiary" data-ic="close">${escapeHtml(t("imp.cancel"))}</button>
               <button type="button" class="btn btn--primary" data-ic="primary" disabled>${escapeHtml(t("imp.cta"))}</button>`;
     }
@@ -12943,7 +13000,7 @@ document.addEventListener("click", (e) => {
   const b = e.target.closest && e.target.closest("[data-import-center]");
   if(!b) return;
   e.preventDefault();
-  openImportCenter({ origin: b.getAttribute("data-import-center") || "unknown", contextSubjectId: b.getAttribute("data-import-subject") || null });
+  openImportCenter({ origin: b.getAttribute("data-import-center") || "unknown", contextSubjectId: b.getAttribute("data-import-subject") || null, pick: true });
 });
 
 function fmtFileSize(bytes){
@@ -13373,7 +13430,7 @@ function attachCourseImportEvents(){
   const backBtn = document.getElementById("import-back-btn");
   if(backBtn) backBtn.addEventListener("click", ()=> libGoto("subjects"));
   const newImportBtn = document.getElementById("import-new-btn");
-  if(newImportBtn) newImportBtn.addEventListener("click", ()=>{ courseImportStopTimer(); state.courseImport = freshCourseImportState(); libGoto("subjects"); openImportCenter({ origin: "result" }); });
+  if(newImportBtn) newImportBtn.addEventListener("click", ()=>{ courseImportStopTimer(); state.courseImport = freshCourseImportState(); libGoto("subjects"); openImportCenter({ origin: "result", pick: true }); });
 }
 
 /* ============================================================
@@ -24093,7 +24150,7 @@ function handleNavGoto(ds){
     switchTab("fiches");
     return;
   }
-  if(goto === "import-course"){ openImportCenter({ origin: ds.origin || "nav" }); return; }
+  if(goto === "import-course"){ openImportCenter({ origin: ds.origin || "nav", pick: true }); return; }
   if(goto === "flash"){ state.flashScreen = "picker"; return switchTab("flash"); }
   if(goto === "quiz"){ state.screen = "picker"; return switchTab("quiz"); }
   if(goto === "exam"){ state.exam.screen = "setup"; return switchTab("exam"); }

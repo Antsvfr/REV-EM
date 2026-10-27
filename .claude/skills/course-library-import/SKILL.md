@@ -60,7 +60,9 @@ cloisonnement de stockage + RLS, jamais d'un `userId` stocké côté client).
 ## Import Center — le SEUL point d'entrée de l'import (Phase 1)
 
 Tous les boutons « Importer un cours » appellent `openImportCenter({contextSubjectId,
-origin})` (ou portent `data-import-center="<origine>"`, géré par UN écouteur global) :
+origin, pick})` (ou portent `data-import-center="<origine>"`, géré par UN écouteur global ; `pick: true` ouvre le
+sélecteur de fichiers DANS le même geste, et chaque ouverture est surveillée par `icWatchPicker` — sur macOS, WKWebView
+n'ouvre rien sans `webView(_:runOpenPanelWith:…)` côté app, voir `IMPORT_CENTER.md` §9 et `macos/REVEMOpenPanel.swift`) :
 jamais une zone de dépôt ou un `<input type="file">` de plus. La fenêtre choisit et
 **valide** le fichier (`import-center.js`, moteur pur : `validateMeta`, `validateContent`,
 machine d'états `IDLE/DRAGGING/VALIDATING/READY/PROCESSING/SUCCESS/ERROR`), en lit le

@@ -171,14 +171,12 @@ modifier du code dans son domaine, pas après :
 
 ## Déploiement (GitHub Pages)
 
-**GitHub Pages ne publie PAS `main`** : il publie la branche
-`claude/REV-EM-rebrand-restructure-ddinml` (constaté dans les exécutions
-« pages build and deployment »). Pousser sur `main` seul ne met rien en ligne :
-une série entière de correctifs y est restée invisible pour l'utilisateur.
-Après chaque livraison validée, avancer aussi cette branche, sans forcer :
-`git push origin main:refs/heads/claude/REV-EM-rebrand-restructure-ddinml`
-(avancement simple), puis vérifier que l'exécution Pages a réussi. Si le
-réglage Pages est un jour repointé sur `main`, supprimer cette section.
+**GitHub Pages publie `main`** (constaté : l'exécution « pages build and deployment » n° 125 du 8 octobre 2026 a été
+construite depuis `main`, commit `763ad74` ; les précédentes venaient de `claude/REV-EM-rebrand-restructure-ddinml`,
+qui n'est plus publiée). Un correctif n'est donc en ligne qu'une fois **fusionné dans `main`** — une branche de travail
+poussée seule ne change rien pour l'utilisateur, ni dans le navigateur ni dans REV-EM.app si elle charge le site publié.
+Après chaque fusion, vérifier que l'exécution Pages sur `main` a réussi. La page et les modules `.js` sont servis
+« réseau d'abord » par `sw.js` : aucune purge de cache ni de données n'est nécessaire pour recevoir une nouvelle version.
 
 ## Fin de tâche
 
